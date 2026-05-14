@@ -1,28 +1,55 @@
 name: Build iOS IPA
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
-  build:
-    runs-on: macos-14
+  build-ios-ipa:
+    name: Build clothes.ipa
+    runs-on: macos-15
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
+          channel: stable
           cache: true
 
-      - name: Build iOS IPA
-        run: flutter build ios --release
+      - name: Flutter pub get
+        run: flutter pub get
 
-      - name: Upload IPA artifact
+      - name: Build iOS app without code signing
+        run: flutter build ios --release --no-codesign
+
+      - name: Package clothes.ipa
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IPA_DIR="$GITHUB_WORKSPACE/ipa apps"
+          PAYLOAD_DIR="$IPA_DIR/Payload"
+
+          rm -rf "$PAYLOAD_DIR" "$IPA_DIR/clothes.ipa"
+          mkdir -p "$PAYLOAD_DIR"
+
+          cp -R "$GITHUB_WORKSPACE/build/ios/iphoneos/Runner.app" "$PAYLOAD_DIR/Runner.app"
+
+          cd "$IPA_DIR"
+          /usr/bin/zip -qry clothes.ipa Payload
+          rm -rf Payload
+
+          ls -lh clothes.ipa
+
+      - name: Upload clothes.ipa artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-ipa
-          path: build/ios/iphoneos/Runner.ipa
+          name: clothes.ipa
+          path: ipa apps/clothes.ipa
+          if-no-files-found: error
+          retention-days: 14
