@@ -18,10 +18,6 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Install iOS dependencies
-        run: |
-          cd ios && pod install --repo-update
-
       - name: Build iOS IPA
         run: flutter build ios --release
 
