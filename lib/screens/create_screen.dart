@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:uuid/uuid.dart';
+
+import '../models/product.dart';
+import '../widgets/app_image.dart';
 
 class CreateScreen extends StatefulWidget {
   final double scale;
   final double sidePadding;
   final VoidCallback? onClose;
   final Function(int)? onTabChange;
+  final Future<bool> Function(Product product)? onPublish;
+  final Future<String?> Function(XFile imageFile, {String? folder})?
+  onUploadImage;
+  final String publishButtonText;
+  final String successMessage;
+  final String failureMessage;
 
   const CreateScreen({
     super.key,
@@ -12,6 +23,11 @@ class CreateScreen extends StatefulWidget {
     required this.sidePadding,
     this.onClose,
     this.onTabChange,
+    this.onPublish,
+    this.onUploadImage,
+    this.publishButtonText = 'Опубликовать вещь',
+    this.successMessage = 'Вещь опубликована',
+    this.failureMessage = 'Не удалось сохранить вещь в базе',
   });
 
   @override
@@ -19,6 +35,10 @@ class CreateScreen extends StatefulWidget {
 }
 
 class _CreateScreenState extends State<CreateScreen> {
+  final ImagePicker _picker = ImagePicker();
+  final Uuid _uuid = const Uuid();
+  final List<XFile?> _pickedImages = List<XFile?>.filled(10, null);
+  bool _isUploading = false;
   int _selectedCategoryIndex = 0;
   int _selectedColorIndex = 0;
   String _selectedItemType = 'Выберите тип вещи';
@@ -157,12 +177,125 @@ class _CreateScreenState extends State<CreateScreen> {
     );
   }
 
-  void _onPublish() {
+  List<XFile> get _selectedImages => _pickedImages.whereType<XFile>().toList();
+
+  int? get _firstEmptyImageIndex {
+    final index = _pickedImages.indexWhere((image) => image == null);
+    return index == -1 ? null : index;
+  }
+
+  Future<void> _pickNextImage(ImageSource source) async {
+    final index = _firstEmptyImageIndex;
+    if (index == null) {
+      _showSnackBar('Можно добавить до 10 фото');
+      return;
+    }
+    await _pickImage(source, slotIndex: index);
+  }
+
+  Future<void> _pickImage(
+    ImageSource source, {
+    bool isMain = false,
+    int? slotIndex,
+  }) async {
+    final XFile? pickedFile = await _picker.pickImage(
+      source: source,
+      maxWidth: 2048,
+      maxHeight: 2048,
+      imageQuality: 85,
+    );
+    if (pickedFile == null) return;
+
+    setState(() {
+      if (slotIndex != null) {
+        _pickedImages[slotIndex] = pickedFile;
+      } else if (isMain) {
+        _pickedImages[0] = pickedFile;
+      } else {
+        final index = _firstEmptyImageIndex;
+        if (index != null) _pickedImages[index] = pickedFile;
+      }
+    });
+  }
+
+  Future<void> _removeImage(int index) async {
+    setState(() => _pickedImages[index] = null);
+  }
+
+  Future<List<String>> _uploadImages() async {
+    final images = _selectedImages;
+    if (images.isEmpty) return [];
+    final List<String> urls = [];
+    for (final image in images) {
+      final url = await widget.onUploadImage?.call(image, folder: 'items');
+      if (url != null) urls.add(url);
+    }
+    return urls;
+  }
+
+  Future<void> _onPublish() async {
     if (_titleController.text.isEmpty || _priceController.text.isEmpty) {
       _showSnackBar('Заполните название и цену');
       return;
     }
-    _showSnackBar('Вещь опубликована');
+    final priceValue =
+        int.tryParse(_priceController.text.replaceAll(RegExp(r'[^0-9]'), '')) ??
+        0;
+    final category = _categories[_selectedCategoryIndex];
+    final title = _titleController.text.trim();
+    final description = _descriptionController.text.trim();
+
+    if (_selectedImages.isEmpty) {
+      _showSnackBar('Добавьте фото вещи');
+      return;
+    }
+
+    setState(() => _isUploading = true);
+    final imageUrls = await _uploadImages();
+    setState(() => _isUploading = false);
+
+    if (imageUrls.isEmpty) {
+      _showSnackBar('Не удалось загрузить фото в базу');
+      return;
+    }
+
+    final product = Product(
+      id: _uuid.v4(),
+      title: title,
+      detailTitle: title,
+      description: description,
+      price: '${_formatPrice(priceValue)} \u20BD',
+      detailPrice: priceValue.toString(),
+      priceValue: priceValue,
+      image: imageUrls.first,
+      images: imageUrls,
+      category: category,
+      brand: _brandController.text.trim().isEmpty
+          ? 'Brand'
+          : _brandController.text.trim(),
+      size: _selectedSize.startsWith('Выберите') ? 'One Size' : _selectedSize,
+      color: _allColors[_selectedColorIndex].name,
+      condition: _selectedCondition.startsWith('Выберите')
+          ? 'Хорошее'
+          : _selectedCondition,
+      dotsOnDark: _allColors[_selectedColorIndex].name != 'Белый',
+    );
+    final didPublish = await widget.onPublish?.call(product) ?? false;
+    if (!mounted) return;
+    _showSnackBar(didPublish ? widget.successMessage : widget.failureMessage);
+  }
+
+  String _formatPrice(int value) {
+    final raw = value.toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < raw.length; i++) {
+      final remaining = raw.length - i;
+      buffer.write(raw[i]);
+      if (remaining > 1 && remaining % 3 == 1) {
+        buffer.write(' ');
+      }
+    }
+    return buffer.toString();
   }
 
   void _showSizePicker() {
@@ -421,9 +554,9 @@ class _CreateScreenState extends State<CreateScreen> {
           children: [
             _buildHeader(),
             const SizedBox(height: 18),
-            _buildUploadBox(),
+            _buildUploadBoxV2(),
             const SizedBox(height: 12),
-            _buildThumbs(),
+            _buildThumbsV2(),
             const SizedBox(height: 22),
             _buildTitleField(),
             const SizedBox(height: 20),
@@ -464,9 +597,9 @@ class _CreateScreenState extends State<CreateScreen> {
     );
   }
 
-  Widget _buildUploadBox() {
+  Widget _buildUploadBoxV2() {
     return GestureDetector(
-      onTap: () => _showSnackBar('Выбор фото'),
+      onTap: () => _showImageSourcePickerV2(),
       child: Container(
         width: double.infinity,
         height: 96,
@@ -474,10 +607,10 @@ class _CreateScreenState extends State<CreateScreen> {
           border: Border.all(color: const Color(0xFFE7E7EA)),
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Column(
+        child: const Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text(
+            Text(
               '+',
               style: TextStyle(
                 fontSize: 24,
@@ -485,8 +618,8 @@ class _CreateScreenState extends State<CreateScreen> {
                 color: Color(0xFF0B0B0B),
               ),
             ),
-            const SizedBox(height: 8),
-            const Text(
+            SizedBox(height: 8),
+            Text(
               'Добавить фото',
               style: TextStyle(
                 fontSize: 12.5,
@@ -494,10 +627,10 @@ class _CreateScreenState extends State<CreateScreen> {
                 color: Color(0xFF0B0B0B),
               ),
             ),
-            const SizedBox(height: 4),
+            SizedBox(height: 4),
             Text(
-              'PNG, JPG до 10 МБ',
-              style: TextStyle(fontSize: 10.5, color: const Color(0xFF8F8F94)),
+              'Можно добавить до 10 фото',
+              style: TextStyle(fontSize: 10.5, color: Color(0xFF8F8F94)),
             ),
           ],
         ),
@@ -505,35 +638,133 @@ class _CreateScreenState extends State<CreateScreen> {
     );
   }
 
-  Widget _buildThumbs() {
-    return Row(
-      children: List.generate(4, (index) {
-        final isFirst = index == 0;
-        return Expanded(
-          child: GestureDetector(
-            onTap: () => _showSnackBar('Выбор фото ${index + 1}'),
+  Widget _buildThumbsV2() {
+    return SizedBox(
+      height: 64,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        itemCount: _pickedImages.length,
+        separatorBuilder: (context, index) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final image = _pickedImages[index];
+          return GestureDetector(
+            onTap: () => _showImageSourcePickerV2(slotIndex: index),
             child: Container(
+              width: 64,
               height: 64,
-              margin: EdgeInsets.only(right: index < 3 ? 10 : 0),
               decoration: BoxDecoration(
                 border: Border.all(color: const Color(0xFFE7E7EA)),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Center(
-                child: Text(
-                  isFirst ? '+' : '${index + 1}',
-                  style: TextStyle(
-                    fontSize: isFirst ? 22 : 14,
-                    color: isFirst
-                        ? const Color(0xFF111111)
-                        : const Color(0xFF9A9A9F),
-                  ),
+              clipBehavior: Clip.antiAlias,
+              child: image == null
+                  ? Center(
+                      child: Text(
+                        '${index + 1}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF9A9A9F),
+                        ),
+                      ),
+                    )
+                  : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        AppImage(
+                          imageUrl: image.path,
+                          width: 64,
+                          height: 64,
+                          fit: BoxFit.cover,
+                        ),
+                        Positioned(
+                          top: 2,
+                          right: 2,
+                          child: GestureDetector(
+                            onTap: () => _removeImage(index),
+                            child: Container(
+                              width: 18,
+                              height: 18,
+                              decoration: const BoxDecoration(
+                                color: Colors.black54,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.close,
+                                size: 12,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  void _showImageSourcePickerV2({int? slotIndex}) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: const EdgeInsets.all(20),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Добавить фото',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF0B0B0B),
                 ),
               ),
-            ),
+              const SizedBox(height: 6),
+              const Text(
+                'Можно добавить до 10 фото',
+                style: TextStyle(fontSize: 12, color: Color(0xFF8F8F94)),
+              ),
+              const SizedBox(height: 20),
+              _SheetOption(
+                label: 'Сделать фото',
+                icon: Icons.camera_alt_outlined,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (slotIndex == null) {
+                    _pickNextImage(ImageSource.camera);
+                  } else {
+                    _pickImage(ImageSource.camera, slotIndex: slotIndex);
+                  }
+                },
+              ),
+              _SheetOption(
+                label: 'Выбрать из галереи',
+                icon: Icons.photo_library_outlined,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  if (slotIndex == null) {
+                    _pickNextImage(ImageSource.gallery);
+                  } else {
+                    _pickImage(ImageSource.gallery, slotIndex: slotIndex);
+                  }
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
           ),
-        );
-      }),
+        ),
+      ),
     );
   }
 
@@ -801,7 +1032,7 @@ class _CreateScreenState extends State<CreateScreen> {
               ),
             ),
             Text(
-              '₽',
+              '\u20BD',
               style: TextStyle(fontSize: 12.5, color: const Color(0xFF0B0B0B)),
             ),
           ],
@@ -974,23 +1205,71 @@ class _CreateScreenState extends State<CreateScreen> {
 
   Widget _buildPublishButton() {
     return GestureDetector(
-      onTap: _onPublish,
+      onTap: _isUploading ? null : _onPublish,
       child: Container(
         width: double.infinity,
         height: 50,
         decoration: BoxDecoration(
-          color: const Color(0xFF000000),
+          color: _isUploading
+              ? const Color(0xFF888888)
+              : const Color(0xFF000000),
           borderRadius: BorderRadius.circular(25),
         ),
-        child: const Center(
-          child: Text(
-            'Опубликовать вещь',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
+        child: Center(
+          child: _isUploading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : Text(
+                  widget.publishButtonText,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetOption extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _SheetOption({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 52,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(
+          children: [
+            Icon(icon, size: 22, color: const Color(0xFF0B0B0B)),
+            const SizedBox(width: 14),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF0B0B0B),
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );

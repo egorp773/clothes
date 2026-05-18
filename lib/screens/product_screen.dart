@@ -1,12 +1,50 @@
-import 'package:flutter/cupertino.dart';
+﻿import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+
+import '../widgets/app_image.dart';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 class ProductDetailData {
   const ProductDetailData({
     required this.id,
     required this.title,
+    required this.description,
     required this.price,
     required this.image,
+    required this.images,
     required this.brand,
     required this.size,
     required this.condition,
@@ -15,8 +53,10 @@ class ProductDetailData {
 
   final String id;
   final String title;
+  final String description;
   final String price;
   final String image;
+  final List<String> images;
   final String brand;
   final String size;
   final String condition;
@@ -123,6 +163,20 @@ class _ProductScreenState extends State<ProductScreen>
     super.dispose();
   }
 
+  String _buildDescriptionText(ProductDetailData product) {
+    final lines = <String>[];
+    final description = product.description.trim();
+    if (description.isNotEmpty) {
+      lines.add(description);
+    }
+    lines.add('Размер: ${product.size}');
+    lines.add('Состояние: ${product.condition}');
+    if (product.brand.trim().isNotEmpty) {
+      lines.add('Бренд: ${product.brand}');
+    }
+    return lines.join('\n');
+  }
+
   @override
   Widget build(BuildContext context) {
     final product = widget.product;
@@ -194,10 +248,9 @@ class _ProductScreenState extends State<ProductScreen>
                                     top: Radius.circular(28),
                                   ),
                                   child: _HeroImageGallery(
-                                    gallery: List<String>.filled(
-                                      4,
-                                      product.image,
-                                    ),
+                                    gallery: product.images.isNotEmpty
+                                        ? product.images
+                                        : [product.image],
                                   ),
                                 ),
                               ),
@@ -315,9 +368,7 @@ class _ProductScreenState extends State<ProductScreen>
                                         Align(
                                           alignment: Alignment.centerLeft,
                                           child: Text(
-                                            'Размер: ${product.size}\n'
-                                            'Состояние: ${product.condition}\n'
-                                            'Бренд: ${product.brand}',
+                                            _buildDescriptionText(product),
                                             style: TextStyle(
                                               fontSize: 13.5,
                                               height: 1.5,
@@ -447,14 +498,13 @@ class _HeroImageGallery extends StatefulWidget {
 class _HeroImageGalleryState extends State<_HeroImageGallery> {
   int _currentPage = 0;
   late final PageController _pageController;
+  late final List<String> _gallery;
 
   @override
   void initState() {
     super.initState();
+    _gallery = List.unmodifiable(widget.gallery);
     _pageController = PageController();
-    _pageController.addListener(() {
-      setState(() => _currentPage = _pageController.page?.round() ?? 0);
-    });
   }
 
   @override
@@ -471,22 +521,21 @@ class _HeroImageGalleryState extends State<_HeroImageGallery> {
         children: [
           PageView.builder(
             controller: _pageController,
-            itemCount: widget.gallery.length,
+            onPageChanged: (index) => setState(() => _currentPage = index),
+            itemCount: _gallery.length,
             itemBuilder: (context, index) {
               return Container(
                 color: const Color(0xFFD9D9DB),
-                child: Image.asset(
-                  widget.gallery[index],
+                child: AppImage(
+                  key: ValueKey(_gallery[index]),
+                  imageUrl: _gallery[index],
                   fit: BoxFit.cover,
                   alignment: Alignment.topCenter,
-                  errorBuilder: (context, error, stackTrace) {
-                    return const Center(child: Icon(Icons.image_not_supported));
-                  },
                 ),
               );
             },
           ),
-          if (widget.gallery.length > 1)
+          if (_gallery.length > 1)
             Positioned(
               bottom: 16,
               left: 0,
@@ -494,7 +543,7 @@ class _HeroImageGalleryState extends State<_HeroImageGallery> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(
-                  widget.gallery.length,
+                  _gallery.length,
                   (index) => Container(
                     width: 8,
                     height: 8,
@@ -516,15 +565,10 @@ class _HeroImageGalleryState extends State<_HeroImageGallery> {
 }
 
 class _TopIcon extends StatelessWidget {
-  const _TopIcon({
-    required this.icon,
-    required this.onTap,
-    this.isWishlist = false,
-  });
+  const _TopIcon({required this.icon, required this.onTap});
 
   final IconData icon;
   final VoidCallback onTap;
-  final bool isWishlist;
 
   @override
   Widget build(BuildContext context) {
@@ -539,9 +583,7 @@ class _TopIcon extends StatelessWidget {
           child: Icon(
             icon,
             size: 26,
-            color: isWishlist && icon == CupertinoIcons.heart_fill
-                ? Colors.red
-                : Colors.black.withValues(alpha: 0.9),
+            color: Colors.black.withValues(alpha: 0.9),
           ),
         ),
       ),

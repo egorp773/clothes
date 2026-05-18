@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:uuid/uuid.dart';
 
 import '../models/created_outfit.dart';
+import '../models/product.dart';
+import '../widgets/app_image.dart';
 
 class PublishOutfitScreen extends StatefulWidget {
   const PublishOutfitScreen({
@@ -9,75 +13,120 @@ class PublishOutfitScreen extends StatefulWidget {
     required this.onClose,
     required this.onPublish,
     required this.onAddItem,
+    required this.products,
+    this.onUploadImage,
   });
 
   final double sidePadding;
   final VoidCallback onClose;
-  final ValueChanged<CreatedOutfit> onPublish;
+  final Future<void> Function(CreatedOutfit outfit) onPublish;
   final VoidCallback onAddItem;
+  final List<Product> products;
+  final Future<String?> Function(XFile imageFile, {String? folder})?
+  onUploadImage;
 
   @override
   State<PublishOutfitScreen> createState() => _PublishOutfitScreenState();
 }
 
 class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
-  static const List<String> _photoAssets = [
-    'assets/mock/outfit_hero.jpg',
-    'assets/mock/outfit_hero_premium.jpg',
-    'assets/mock/outfit_ref_hero_clean.png',
-    'assets/mock/outfit_ref_hero.png',
-  ];
-
-  static const List<OutfitItem> _myItems = [
-    OutfitItem(
-      id: 'rebirth-longsleeve',
-      name: 'Лонгслив Rebirth',
-      price: '8 400 ₽',
-      image: 'assets/mock/item_longsleeve.jpg',
-    ),
-    OutfitItem(
-      id: 'shadow-shorts',
-      name: 'Шорты Shadow',
-      price: '7 200 ₽',
-      image: 'assets/mock/item_shorts.jpg',
-    ),
-    OutfitItem(
-      id: 'track-boots',
-      name: 'Ботинки Track',
-      price: '14 900 ₽',
-      image: 'assets/mock/item_boots.jpg',
-    ),
-    OutfitItem(
-      id: 'cross-necklace',
-      name: 'Подвеска Cross',
-      price: '6 900 ₽',
-      image: 'assets/mock/item_cross.jpg',
-    ),
-  ];
-
-  final List<String?> _photos = List<String?>.filled(4, null);
+  final ImagePicker _picker = ImagePicker();
+  final List<XFile?> _photos = List<XFile?>.filled(10, null);
+  final Map<int, String> _uploadedPhotos = {};
   final Set<String> _selectedIds = {};
+  final Uuid _uuid = const Uuid();
+  bool _isPublishing = false;
 
-  int _nextPhotoAssetIndex = 0;
+  Map<String, Product> get _productsById {
+    return {for (final product in widget.products) product.id: product};
+  }
 
-  List<OutfitItem> get _selectedItems {
-    return _myItems
-        .where((item) => _selectedIds.contains(item.id))
+  List<OutfitItem> get _myItems {
+    return widget.products
+        .map(
+          (product) => OutfitItem(
+            id: product.id,
+            name: product.title,
+            price: product.price,
+            image: product.outfitDisplayImage,
+          ),
+        )
         .toList();
   }
 
-  bool get _canPublish =>
-      _photos.any((photo) => photo != null) && _selectedIds.isNotEmpty;
+  List<OutfitItem> get _selectedItems {
+    return _myItems.where((item) => _selectedIds.contains(item.id)).toList();
+  }
 
-  void _addPhoto(int index) {
+  bool get _canPublish =>
+      !_isPublishing &&
+      _photos.any((photo) => photo != null) &&
+      _selectedIds.isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  @override
+  void didUpdateWidget(covariant PublishOutfitScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
+  bool _isProductProcessing(String productId) {
+    final product = _productsById[productId];
+    if (product == null || product.isLocal) return false;
+    return product.outfitImages.isEmpty;
+  }
+
+  String? _photoPath(int index) {
+    return _uploadedPhotos[index] ?? _photos[index]?.path;
+  }
+
+  int? get _firstEmptyPhotoIndex {
+    final index = _photos.indexWhere((photo) => photo == null);
+    return index == -1 ? null : index;
+  }
+
+  Future<void> _pickNextPhoto() async {
+    final index = _firstEmptyPhotoIndex;
+    if (index == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Можно добавить до 10 фото'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    await _pickPhoto(index);
+  }
+
+  Future<void> _pickPhoto(int index) async {
+    final picked = await _picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1800,
+      maxHeight: 1800,
+      imageQuality: 86,
+    );
+    if (picked == null || !mounted) return;
     setState(() {
-      _photos[index] = _photoAssets[_nextPhotoAssetIndex % _photoAssets.length];
-      _nextPhotoAssetIndex += 1;
+      _photos[index] = picked;
+      _uploadedPhotos.remove(index);
     });
   }
 
   void _removePhoto(int index) {
-    setState(() => _photos[index] = null);
+    setState(() {
+      _photos[index] = null;
+      _uploadedPhotos.remove(index);
+    });
   }
 
   void _toggleItem(OutfitItem item) {
@@ -90,7 +139,28 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
     });
   }
 
-  void _publish() {
+  Future<List<OutfitItem>?> _prepareSelectedItems() async {
+    final productsById = _productsById;
+    final prepared = <OutfitItem>[];
+
+    for (final item in _selectedItems) {
+      final product = productsById[item.id];
+      final image = product?.outfitDisplayImage ?? item.image;
+
+      prepared.add(
+        OutfitItem(
+          id: item.id,
+          name: item.name,
+          price: item.price,
+          image: image,
+        ),
+      );
+    }
+
+    return prepared;
+  }
+
+  Future<void> _publish() async {
     if (!_canPublish) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -102,13 +172,58 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
       return;
     }
 
-    widget.onPublish(
+    setState(() => _isPublishing = true);
+    final uploadedPhotos = <String>[];
+
+    for (var index = 0; index < _photos.length; index++) {
+      final photo = _photos[index];
+      if (photo == null) continue;
+
+      final uploaded =
+          _uploadedPhotos[index] ??
+          await widget.onUploadImage?.call(photo, folder: 'outfits/photos');
+      if (uploaded == null) {
+        if (!mounted) return;
+        setState(() => _isPublishing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось загрузить фото образа'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
+
+      _uploadedPhotos[index] = uploaded;
+      uploadedPhotos.add(uploaded);
+    }
+
+    final preparedItems = await _prepareSelectedItems();
+    if (preparedItems == null) {
+      if (!mounted) return;
+      setState(() => _isPublishing = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось подготовить вещи для образа'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    await widget.onPublish(
       CreatedOutfit(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        photos: _photos.whereType<String>().toList(),
-        items: _selectedItems,
+        id: _uuid.v4(),
+        photos: uploadedPhotos,
+        items: preparedItems,
       ),
     );
+
+    if (mounted) {
+      setState(() => _isPublishing = false);
+    }
   }
 
   @override
@@ -128,9 +243,9 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
           children: [
             _buildHeader(),
             const SizedBox(height: 18),
-            _buildUploadBox(),
+            _buildUploadBoxV2(),
             const SizedBox(height: 12),
-            _buildThumbs(),
+            _buildThumbsV2(),
             const SizedBox(height: 22),
             _buildItemsSection(),
             const SizedBox(height: 24),
@@ -176,11 +291,9 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
     );
   }
 
-  Widget _buildUploadBox() {
-    final photo = _photos.first;
-
+  Widget _buildUploadBoxV2() {
     return GestureDetector(
-      onTap: () => _addPhoto(0),
+      onTap: _pickNextPhoto,
       child: Container(
         width: double.infinity,
         height: 96,
@@ -189,63 +302,52 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
           borderRadius: BorderRadius.circular(12),
         ),
         clipBehavior: Clip.antiAlias,
-        child: photo == null
-            ? const Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    '+',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w300,
-                      color: Color(0xFF0B0B0B),
-                    ),
-                  ),
-                  SizedBox(height: 8),
-                  Text(
-                    'Добавить фото образа',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF0B0B0B),
-                    ),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    'Покажите весь образ целиком',
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      color: Color(0xFF8F8F94),
-                    ),
-                  ),
-                ],
-              )
-            : Stack(
-                fit: StackFit.expand,
-                children: [
-                  Image.asset(photo, fit: BoxFit.cover),
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: _RemoveButton(onTap: () => _removePhoto(0)),
-                  ),
-                ],
+        child: const Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '+',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w300,
+                color: Color(0xFF0B0B0B),
               ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Добавить фото образа',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF0B0B0B),
+              ),
+            ),
+            SizedBox(height: 4),
+            Text(
+              'Можно добавить до 10 фото',
+              style: TextStyle(fontSize: 10.5, color: Color(0xFF8F8F94)),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildThumbs() {
-    return Row(
-      children: List.generate(4, (index) {
-        final photo = _photos[index];
-        final isFirst = index == 0;
-        return Expanded(
-          child: GestureDetector(
-            onTap: () => _addPhoto(index),
+  Widget _buildThumbsV2() {
+    return SizedBox(
+      height: 64,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        itemCount: _photos.length,
+        separatorBuilder: (context, index) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final photo = _photoPath(index);
+          return GestureDetector(
+            onTap: () => _pickPhoto(index),
             child: Container(
+              width: 64,
               height: 64,
-              margin: EdgeInsets.only(right: index < 3 ? 10 : 0),
               decoration: BoxDecoration(
                 border: Border.all(color: const Color(0xFFE7E7EA)),
                 borderRadius: BorderRadius.circular(8),
@@ -254,20 +356,18 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
               child: photo == null
                   ? Center(
                       child: Text(
-                        isFirst ? '+' : '${index + 1}',
-                        style: TextStyle(
-                          fontSize: isFirst ? 22 : 14,
+                        '${index + 1}',
+                        style: const TextStyle(
+                          fontSize: 14,
                           fontWeight: FontWeight.w500,
-                          color: isFirst
-                              ? const Color(0xFF111111)
-                              : const Color(0xFF9A9A9F),
+                          color: Color(0xFF9A9A9F),
                         ),
                       ),
                     )
                   : Stack(
                       fit: StackFit.expand,
                       children: [
-                        Image.asset(photo, fit: BoxFit.cover),
+                        AppImage(imageUrl: photo, fit: BoxFit.cover),
                         Positioned(
                           top: 5,
                           right: 5,
@@ -278,9 +378,9 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
                       ],
                     ),
             ),
-          ),
-        );
-      }),
+          );
+        },
+      ),
     );
   }
 
@@ -357,26 +457,42 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
           ),
         ),
         const SizedBox(height: 14),
-        GridView.builder(
-          padding: EdgeInsets.zero,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: _myItems.length,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            mainAxisExtent: 190,
+        if (_myItems.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF6F6F7),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Text(
+              'Сначала добавьте вещь, потом соберите из нее образ',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: Color(0xFF8F8F94)),
+            ),
+          )
+        else
+          GridView.builder(
+            padding: EdgeInsets.zero,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _myItems.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              crossAxisSpacing: 11,
+              mainAxisSpacing: 16,
+              mainAxisExtent: 266,
+            ),
+            itemBuilder: (context, index) {
+              final item = _myItems[index];
+              return _ItemCard(
+                item: item,
+                isSelected: _selectedIds.contains(item.id),
+                isProcessing: _isProductProcessing(item.id),
+                onTap: () => _toggleItem(item),
+              );
+            },
           ),
-          itemBuilder: (context, index) {
-            final item = _myItems[index];
-            return _ItemCard(
-              item: item,
-              isSelected: _selectedIds.contains(item.id),
-              onTap: () => _toggleItem(item),
-            );
-          },
-        ),
       ],
     );
   }
@@ -405,16 +521,13 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
             child: const Center(
               child: Text(
                 'Выберите вещи из списка выше',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF8F8F94),
-                ),
+                style: TextStyle(fontSize: 13, color: Color(0xFF8F8F94)),
               ),
             ),
           )
         else
           SizedBox(
-            height: 180,
+            height: 264,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               physics: const BouncingScrollPhysics(),
@@ -435,7 +548,7 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
 
   Widget _buildPublishButton() {
     return GestureDetector(
-      onTap: _publish,
+      onTap: _isPublishing ? null : _publish,
       child: Container(
         width: double.infinity,
         height: 50,
@@ -444,14 +557,23 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
           borderRadius: BorderRadius.circular(25),
         ),
         child: Center(
-          child: Text(
-            'Опубликовать образ',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: _canPublish ? Colors.white : const Color(0xFF8E8E93),
-            ),
-          ),
+          child: _isPublishing
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : Text(
+                  'Опубликовать образ',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: _canPublish ? Colors.white : const Color(0xFF8E8E93),
+                  ),
+                ),
         ),
       ),
     );
@@ -491,80 +613,75 @@ class _ItemCard extends StatelessWidget {
   const _ItemCard({
     required this.item,
     required this.isSelected,
+    required this.isProcessing,
     required this.onTap,
   });
 
   final OutfitItem item;
   final bool isSelected;
+  final bool isProcessing;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(
-            color: isSelected ? Colors.black : const Color(0xFFE7E7EA),
-            width: isSelected ? 2 : 1,
-          ),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: double.infinity,
         child: Stack(
+          clipBehavior: Clip.none,
           children: [
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Container(
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF8F8F8),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Center(
-                        child: Image.asset(
-                          item.image,
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: double.infinity,
+                  height: 256,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(5),
+                    border: isSelected
+                        ? Border.all(color: Colors.black, width: 2)
+                        : null,
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(1),
+                        child: AppImage(
+                          imageUrl: item.image,
                           fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) =>
-                              const Icon(Icons.checkroom_outlined, size: 40),
+                          alignment: Alignment.center,
+                          placeholderColor: Colors.white,
                         ),
                       ),
-                    ),
+                      if (isProcessing)
+                        Container(
+                          color: Colors.white.withValues(alpha: 0.74),
+                          child: const Center(
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Color(0xFF111111),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    item.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF111111),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    item.price,
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF111111),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
             Positioned(
-              top: 10,
-              right: 10,
+              top: 8,
+              right: 8,
               child: Container(
-                width: 26,
-                height: 26,
+                width: 24,
+                height: 24,
                 decoration: BoxDecoration(
                   color: isSelected ? Colors.black : Colors.white,
                   shape: BoxShape.circle,
@@ -586,86 +703,55 @@ class _ItemCard extends StatelessWidget {
 }
 
 class _SelectedItemCard extends StatelessWidget {
-  const _SelectedItemCard({
-    required this.item,
-    required this.onRemove,
-  });
+  const _SelectedItemCard({required this.item, required this.onRemove});
 
   final OutfitItem item;
   final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 130,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: const Color(0xFFE7E7EA)),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      clipBehavior: Clip.antiAlias,
+    return SizedBox(
+      width: 188,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              decoration: const BoxDecoration(
-                color: Color(0xFFF8F8F8),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(13)),
-              ),
-              child: Stack(
-                children: [
-                  Center(
-                    child: Image.asset(
-                      item.image,
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) =>
-                          const Icon(Icons.checkroom_outlined, size: 32),
-                    ),
-                  ),
-                  Positioned(
-                    top: 6,
-                    right: 6,
-                    child: GestureDetector(
-                      onTap: onRemove,
-                      child: Container(
-                        width: 22,
-                        height: 22,
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.close, size: 14, color: Color(0xFF111111)),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+          Container(
+            width: double.infinity,
+            height: 256,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(5),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
               children: [
-                Text(
-                  item.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111111),
+                Padding(
+                  padding: const EdgeInsets.all(1),
+                  child: AppImage(
+                    imageUrl: item.image,
+                    fit: BoxFit.contain,
+                    alignment: Alignment.center,
+                    placeholderColor: Colors.white,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  item.price,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111111),
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: GestureDetector(
+                    onTap: onRemove,
+                    child: Container(
+                      width: 22,
+                      height: 22,
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        size: 14,
+                        color: Color(0xFF111111),
+                      ),
+                    ),
                   ),
                 ),
               ],

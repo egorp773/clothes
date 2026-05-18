@@ -1,15 +1,25 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
+import '../models/product.dart';
+import '../widgets/app_image.dart';
 import 'product_screen.dart';
 
 class CatalogScreen extends StatefulWidget {
   final double scale;
   final double sidePadding;
+  final List<Product> products;
+  final Future<void> Function(String productId) onToggleLike;
+  final Future<void> Function(String productId) onHideProduct;
+  final Future<void> Function(Product product) onContactSeller;
 
   const CatalogScreen({
     super.key,
     required this.scale,
     required this.sidePadding,
+    required this.products,
+    required this.onToggleLike,
+    required this.onHideProduct,
+    required this.onContactSeller,
   });
 
   @override
@@ -31,71 +41,10 @@ class _CatalogScreenState extends State<CatalogScreen>
     'Низ',
   ];
 
-  final List<Product> _products = [
-    Product(
-      id: 'baggy-jeans',
-      title: 'Багги джинсы',
-      detailTitle: 'Black Panelled Vapor Jacket',
-      price: '12 300 ₽',
-      detailPrice: '8990',
-      priceValue: 12300,
-      image: 'assets/products/baggy_jeans.jpg',
-      category: 'Деним',
-      brand: 'Acne Studios',
-      size: 'M',
-      color: 'Синий',
-      condition: 'Отличное',
-      dotsOnDark: true,
-    ),
-    Product(
-      id: 'camo-skirt',
-      title: 'Камуфляжная мини-юбка',
-      detailTitle: 'Camo Mini Skirt',
-      price: '7 400 ₽',
-      detailPrice: '7400',
-      priceValue: 7400,
-      image: 'assets/products/camo_skirt.jpg',
-      category: 'Низ',
-      brand: 'Diesel',
-      size: 'S',
-      color: 'Хаки',
-      condition: 'Хорошее',
-      dotsOnDark: true,
-    ),
-    Product(
-      id: 'open-shoulder-top',
-      title: 'Топ с открытыми плечами',
-      detailTitle: 'Open Shoulder Top',
-      price: '5 500 ₽',
-      detailPrice: '5500',
-      priceValue: 5500,
-      image: 'assets/products/open_shoulder_top.jpg',
-      category: 'Топы',
-      brand: 'Jacquemus',
-      size: 'XS',
-      color: 'Белый',
-      condition: 'Новое без бирки',
-      dotsOnDark: false,
-    ),
-    Product(
-      id: 'graphic-hoodie',
-      title: 'Графические худи',
-      detailTitle: 'Graphic Hoodie',
-      price: '8 800 ₽',
-      detailPrice: '8800',
-      priceValue: 8800,
-      image: 'assets/products/graphic_hoodie.jpg',
-      category: 'Верх',
-      brand: 'Stussy',
-      size: 'L',
-      color: 'Серый',
-      condition: 'Отличное',
-      dotsOnDark: false,
-    ),
-  ];
-
   List<Product> get _visibleProducts {
-    final products = _products.where((product) => !product.isHidden).toList();
+    final products = widget.products
+        .where((product) => !product.isHidden)
+        .toList();
     switch (_selectedSort) {
       case 'Сначала дешёвые':
         products.sort((a, b) => a.priceValue.compareTo(b.priceValue));
@@ -306,9 +255,9 @@ class _CatalogScreenState extends State<CatalogScreen>
         itemCount: products.length,
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          crossAxisSpacing: 9 * scale,
-          mainAxisSpacing: 22 * scale,
-          mainAxisExtent: 408 * scale,
+          crossAxisSpacing: 7 * scale,
+          mainAxisSpacing: 4 * scale,
+          mainAxisExtent: 350 * scale,
         ),
         itemBuilder: (context, index) {
           final product = products[index];
@@ -325,18 +274,12 @@ class _CatalogScreenState extends State<CatalogScreen>
     );
   }
 
-  void _toggleLike(String productId) {
-    setState(() {
-      final product = _products.firstWhere((item) => item.id == productId);
-      product.isLiked = !product.isLiked;
-    });
+  Future<void> _toggleLike(String productId) async {
+    await widget.onToggleLike(productId);
   }
 
-  void _hideProduct(String productId) {
-    setState(() {
-      final product = _products.firstWhere((item) => item.id == productId);
-      product.isHidden = true;
-    });
+  Future<void> _hideProduct(String productId) async {
+    await widget.onHideProduct(productId);
   }
 
   void _showProductDetails(Product product) {
@@ -350,11 +293,11 @@ class _CatalogScreenState extends State<CatalogScreen>
           return ProductScreen(
             product: ProductDetailData(
               id: product.id,
-              title: product.detailTitle.isNotEmpty
-                  ? product.detailTitle
-                  : product.title,
+              title: product.title,
+              description: product.description,
               price: product.price,
               image: product.image,
+              images: product.images.isNotEmpty ? product.images : [product.image],
               brand: product.brand,
               size: product.size,
               condition: product.condition,
@@ -362,7 +305,10 @@ class _CatalogScreenState extends State<CatalogScreen>
             ),
             onLike: () => _toggleLike(product.id),
             onAddToCart: () => _showSnackBar('Добавлено в корзину'),
-            onContactSeller: () => _showSnackBar('Открываем чат с продавцом'),
+            onContactSeller: () async {
+              await widget.onContactSeller(product);
+              _showSnackBar('Чат с продавцом создан');
+            },
           );
         },
       ),
@@ -599,13 +545,16 @@ class ProductCard extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: SizedBox(
-        height: 408 * scale,
+        height: 350 * scale,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildImage(),
-            SizedBox(height: 9 * scale),
-            SizedBox(height: 64 * scale, child: _buildInfo()),
+            SizedBox(height: 2 * scale),
+            Padding(
+              padding: EdgeInsets.only(left: 2 * scale),
+              child: SizedBox(height: 50 * scale, child: _buildInfo()),
+            ),
           ],
         ),
       ),
@@ -615,7 +564,7 @@ class ProductCard extends StatelessWidget {
   Widget _buildImage() {
     return SizedBox(
       width: double.infinity,
-      height: 335 * scale,
+      height: 296 * scale,
       child: Container(
         decoration: BoxDecoration(
           color: const Color(0xFFF8F8F9),
@@ -626,12 +575,10 @@ class ProductCard extends StatelessWidget {
             Positioned.fill(
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(5 * scale),
-                child: Image.asset(
-                  product.image,
+                child: AppImage(
+                  imageUrl: product.image,
                   fit: BoxFit.cover,
                   alignment: Alignment.topCenter,
-                  errorBuilder: (context, error, stackTrace) =>
-                      Container(color: const Color(0xFFF8F8F9)),
                 ),
               ),
             ),
@@ -657,52 +604,52 @@ class ProductCard extends StatelessWidget {
   }
 
   Widget _buildInfo() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                product.title,
-                style: TextStyle(
-                  fontSize: 13.5 * scale,
-                  height: 1.15,
-                  fontWeight: FontWeight.w400,
-                  color: const Color(0xFF070707),
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              SizedBox(height: 5 * scale),
-              Text(
+        Text(
+          product.title,
+          style: TextStyle(
+            fontSize: 13.5 * scale,
+            height: 1.08,
+            fontWeight: FontWeight.w400,
+            color: const Color(0xFF070707),
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        SizedBox(height: 1 * scale),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              child: Text(
                 product.price,
                 style: TextStyle(
                   fontSize: 13.5 * scale,
+                  height: 1,
                   fontWeight: FontWeight.w500,
                   color: const Color(0xFF070707),
                 ),
               ),
-            ],
-          ),
-        ),
-        SizedBox(width: 8 * scale),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _IconTapTarget(
-              onTap: onLike,
-              child: _OutlineHeartIcon(
-                size: 25 * scale,
-                isFilled: product.isLiked,
-              ),
             ),
-            SizedBox(width: 8 * scale),
-            _IconTapTarget(
-              onTap: onShare,
-              child: _PaperPlaneIcon(size: 25 * scale),
+            SizedBox(width: 6 * scale),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _IconTapTarget(
+                  onTap: onLike,
+                  child: _OutlineHeartIcon(
+                    size: 23 * scale,
+                    isFilled: product.isLiked,
+                  ),
+                ),
+                SizedBox(width: 4 * scale),
+                _IconTapTarget(
+                  onTap: onShare,
+                  child: _PaperPlaneIcon(size: 23 * scale),
+                ),
+              ],
             ),
           ],
         ),
@@ -722,7 +669,7 @@ class _IconTapTarget extends StatelessWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      child: SizedBox(width: 32, height: 32, child: Center(child: child)),
+      child: SizedBox(width: 28, height: 28, child: Center(child: child)),
     );
   }
 }
@@ -795,12 +742,10 @@ class ProductDetailsSheet extends StatelessWidget {
         SizedBox(
           width: double.infinity,
           height: 460,
-          child: Image.asset(
-            product.image,
+          child: AppImage(
+            imageUrl: product.image,
             fit: BoxFit.cover,
             alignment: Alignment.center,
-            errorBuilder: (context, error, stackTrace) =>
-                Container(color: const Color(0xFFF5F5F5)),
           ),
         ),
 
@@ -1351,39 +1296,4 @@ class _PaperPlanePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class Product {
-  final String id;
-  final String title;
-  final String detailTitle;
-  final String price;
-  final String detailPrice;
-  final int priceValue;
-  final String image;
-  final String category;
-  final String brand;
-  final String size;
-  final String color;
-  final String condition;
-  final bool dotsOnDark;
-  bool isLiked;
-  bool isHidden;
-
-  Product({
-    required this.id,
-    required this.title,
-    required this.detailTitle,
-    required this.price,
-    required this.detailPrice,
-    required this.priceValue,
-    required this.image,
-    required this.category,
-    required this.brand,
-    required this.size,
-    required this.color,
-    required this.condition,
-    required this.dotsOnDark,
-  }) : isLiked = false,
-       isHidden = false;
 }

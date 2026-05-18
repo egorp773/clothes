@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../models/created_outfit.dart';
+import '../models/product.dart';
+import '../widgets/app_image.dart';
 import 'product_screen.dart';
 
 class OutfitsScreen extends StatefulWidget {
   final double scale;
   final double sidePadding;
   final List<CreatedOutfit> createdOutfits;
+  final List<Product> products;
   final VoidCallback onCreateTap;
 
   const OutfitsScreen({
@@ -14,6 +17,7 @@ class OutfitsScreen extends StatefulWidget {
     required this.scale,
     required this.sidePadding,
     this.createdOutfits = const [],
+    this.products = const [],
     required this.onCreateTap,
   });
 
@@ -32,21 +36,25 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
       icon: Icons.diamond_outlined,
       name: 'Подвеска Cross',
       price: '6 900 ₽',
+      image: 'assets/mock/item_cross.jpg',
     ),
     const _OutfitProduct(
       icon: Icons.checkroom_outlined,
       name: 'Лонгслив Rebirth',
       price: '8 400 ₽',
+      image: 'assets/mock/item_longsleeve.jpg',
     ),
     const _OutfitProduct(
       icon: Icons.dry_cleaning_outlined,
       name: 'Шорты Shadow',
       price: '7 200 ₽',
+      image: 'assets/mock/item_shorts.jpg',
     ),
     const _OutfitProduct(
       icon: Icons.hiking_outlined,
       name: 'Ботинки Track',
       price: '14 900 ₽',
+      image: 'assets/mock/item_boots.jpg',
     ),
   ];
 
@@ -144,8 +152,10 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
             product: ProductDetailData(
               id: product.name.toLowerCase().replaceAll(' ', '_'),
               title: product.name,
+              description: '',
               price: product.price,
-              image: 'assets/products/placeholder.jpg',
+              image: product.image ?? '',
+              images: product.image == null ? const [] : [product.image!],
               brand: 'Brand',
               size: 'M',
               condition: 'Отличное',
@@ -198,24 +208,28 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                 child: _PublishedOutfitCard(
                   scale: widget.scale,
                   outfit: outfit,
+                  products: widget.products,
+                  onAuthorTap: _showAuthorProfile,
+                  onProductTap: _showProductDetails,
                 ),
               ),
             ),
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: widget.sidePadding),
-              child: _OutfitCard(
-                scale: widget.scale,
-                products: _products,
-                isLiked: _isLiked,
-                likesCount: _likesCount,
-                currentPhotoIndex: _currentPhotoIndex,
-                pageController: _pageController,
-                onLikeTap: _toggleLike,
-                onAuthorTap: _showAuthorProfile,
-                onPageChanged: _onPageChanged,
-                onProductTap: _showProductDetails,
+            if (widget.createdOutfits.isEmpty)
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: widget.sidePadding),
+                child: _OutfitCard(
+                  scale: widget.scale,
+                  products: _products,
+                  isLiked: _isLiked,
+                  likesCount: _likesCount,
+                  currentPhotoIndex: _currentPhotoIndex,
+                  pageController: _pageController,
+                  onLikeTap: _toggleLike,
+                  onAuthorTap: _showAuthorProfile,
+                  onPageChanged: _onPageChanged,
+                  onProductTap: _showProductDetails,
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -266,124 +280,101 @@ class _Header extends StatelessWidget {
   }
 }
 
-class _PublishedOutfitCard extends StatelessWidget {
-  const _PublishedOutfitCard({required this.scale, required this.outfit});
+class _PublishedOutfitCard extends StatefulWidget {
+  const _PublishedOutfitCard({
+    required this.scale,
+    required this.outfit,
+    required this.products,
+    required this.onAuthorTap,
+    required this.onProductTap,
+  });
 
   final double scale;
   final CreatedOutfit outfit;
+  final List<Product> products;
+  final VoidCallback onAuthorTap;
+  final void Function(_OutfitProduct) onProductTap;
+
+  @override
+  State<_PublishedOutfitCard> createState() => _PublishedOutfitCardState();
+}
+
+class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
+  late final PageController _pageController;
+  int _currentPhotoIndex = 0;
+
+  Map<String, Product> get _productsById {
+    return {for (final product in widget.products) product.id: product};
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final heroPhoto = outfit.photos.isNotEmpty ? outfit.photos.first : null;
-
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24 * scale),
-        border: Border.all(color: const Color(0xFFEFEFF1)),
+        borderRadius: BorderRadius.circular(30 * widget.scale),
+        border: Border.all(color: const Color(0xFFF0F0F2), width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.045),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
+            color: Colors.black.withValues(alpha: 0.055),
+            blurRadius: 30,
+            offset: const Offset(0, 14),
           ),
         ],
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          SizedBox(
-            height: 280 * scale,
-            width: double.infinity,
-            child: heroPhoto == null
-                ? Container(
-                    color: const Color(0xFFF5F5F6),
-                    child: Icon(
-                      Icons.checkroom_outlined,
-                      size: 72 * scale,
-                      color: const Color(0xFFB8B8BE),
-                    ),
-                  )
-                : Image.asset(
-                    heroPhoto,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => Container(
-                      color: const Color(0xFFF5F5F6),
-                      child: Icon(
-                        Icons.checkroom_outlined,
-                        size: 72 * scale,
-                        color: const Color(0xFFB8B8BE),
-                      ),
-                    ),
-                  ),
+          Column(
+            children: [
+              _HeroMedia(
+                scale: widget.scale,
+                photos: widget.outfit.photos,
+                pageController: _pageController,
+                currentPhotoIndex: _currentPhotoIndex,
+                onPageChanged: (index) {
+                  setState(() => _currentPhotoIndex = index);
+                },
+              ),
+              _ProductsSection(
+                scale: widget.scale,
+                products: widget.outfit.items.map((item) {
+                  final product = _productsById[item.id];
+                  return _OutfitProduct(
+                    icon: Icons.checkroom_outlined,
+                    name: item.name,
+                    price: item.price,
+                    image: product?.outfitDisplayImage ?? item.image,
+                  );
+                }).toList(),
+                onProductTap: widget.onProductTap,
+              ),
+            ],
           ),
-          Padding(
-            padding: EdgeInsets.all(14 * scale),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Образ',
-                  style: TextStyle(
-                    fontSize: 16 * scale,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF111111),
-                  ),
-                ),
-                SizedBox(height: 10 * scale),
-                SizedBox(
-                  height: 76 * scale,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    itemCount: outfit.items.length,
-                    separatorBuilder: (context, index) =>
-                        SizedBox(width: 10 * scale),
-                    itemBuilder: (context, index) {
-                      final item = outfit.items[index];
-                      return SizedBox(
-                        width: 78 * scale,
-                        child: Column(
-                          children: [
-                            Expanded(
-                              child: Container(
-                                width: double.infinity,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF6F6F7),
-                                  borderRadius: BorderRadius.circular(
-                                    10 * scale,
-                                  ),
-                                ),
-                                clipBehavior: Clip.antiAlias,
-                                child: Image.asset(
-                                  item.image,
-                                  fit: BoxFit.contain,
-                                  errorBuilder: (context, error, stackTrace) =>
-                                      Icon(
-                                        Icons.checkroom_outlined,
-                                        size: 22 * scale,
-                                      ),
-                                ),
-                              ),
-                            ),
-                            SizedBox(height: 5 * scale),
-                            Text(
-                              item.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10.5 * scale,
-                                color: const Color(0xFF111111),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
+          Positioned(
+            left: 16 * widget.scale,
+            right: 16 * widget.scale,
+            top: 488 * widget.scale,
+            child: _AuthorCard(
+              scale: widget.scale,
+              authorName: widget.outfit.authorName,
+              authorHandle: widget.outfit.authorHandle,
+              isLiked: false,
+              likesCount: 0,
+              onLikeTap: () {},
+              onAuthorTap: widget.onAuthorTap,
             ),
           ),
         ],
@@ -453,9 +444,11 @@ class _OutfitCard extends StatelessWidget {
           Positioned(
             left: 16 * scale,
             right: 16 * scale,
-            top: 478 * scale,
+            top: 488 * scale,
             child: _AuthorCard(
               scale: scale,
+              authorName: 'Nightshade',
+              authorHandle: '@nightshade',
               isLiked: isLiked,
               likesCount: likesCount,
               onLikeTap: onLikeTap,
@@ -471,12 +464,14 @@ class _OutfitCard extends StatelessWidget {
 class _HeroMedia extends StatelessWidget {
   const _HeroMedia({
     required this.scale,
+    this.photos = const [],
     required this.pageController,
     required this.currentPhotoIndex,
     required this.onPageChanged,
   });
 
   final double scale;
+  final List<String> photos;
   final PageController pageController;
   final int currentPhotoIndex;
   final ValueChanged<int> onPageChanged;
@@ -494,8 +489,15 @@ class _HeroMedia extends StatelessWidget {
             PageView.builder(
               controller: pageController,
               onPageChanged: onPageChanged,
-              itemCount: 2,
+              itemCount: photos.isEmpty ? 2 : photos.length,
               itemBuilder: (context, index) {
+                if (photos.isNotEmpty) {
+                  return AppImage(
+                    imageUrl: photos[index],
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                  );
+                }
                 return const DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
@@ -512,34 +514,13 @@ class _HeroMedia extends StatelessWidget {
               },
             ),
             Positioned(
-              left: 36 * scale,
-              right: 36 * scale,
-              top: 38 * scale,
-              bottom: 88 * scale,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.50),
-                  borderRadius: BorderRadius.circular(26 * scale),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.76),
-                    width: 1,
-                  ),
-                ),
-                child: Icon(
-                  Icons.checkroom_outlined,
-                  size: 92 * scale,
-                  color: const Color(0xFFB5B5BA),
-                ),
-              ),
-            ),
-            Positioned(
               left: 0,
               right: 0,
               bottom: 62 * scale,
               child: _PaginationDots(
                 scale: scale,
                 currentIndex: currentPhotoIndex,
-                totalDots: 2,
+                totalDots: photos.isEmpty ? 2 : photos.length,
               ),
             ),
           ],
@@ -584,6 +565,8 @@ class _PaginationDots extends StatelessWidget {
 class _AuthorCard extends StatelessWidget {
   const _AuthorCard({
     required this.scale,
+    required this.authorName,
+    required this.authorHandle,
     required this.isLiked,
     required this.likesCount,
     required this.onLikeTap,
@@ -591,6 +574,8 @@ class _AuthorCard extends StatelessWidget {
   });
 
   final double scale;
+  final String authorName;
+  final String authorHandle;
   final bool isLiked;
   final int likesCount;
   final VoidCallback onLikeTap;
@@ -601,11 +586,11 @@ class _AuthorCard extends StatelessWidget {
     return GestureDetector(
       onTap: onAuthorTap,
       child: Container(
-        height: 84 * scale,
-        padding: EdgeInsets.symmetric(horizontal: 16 * scale),
+        height: 64 * scale,
+        padding: EdgeInsets.symmetric(horizontal: 12 * scale),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(22 * scale),
+          borderRadius: BorderRadius.circular(18 * scale),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.13),
@@ -617,43 +602,43 @@ class _AuthorCard extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 50 * scale,
-              height: 50 * scale,
+              width: 38 * scale,
+              height: 38 * scale,
               decoration: const BoxDecoration(
                 shape: BoxShape.circle,
                 color: Color(0xFFE9E9EC),
               ),
               child: Icon(
                 Icons.person_outline,
-                size: 25 * scale,
+                size: 20 * scale,
                 color: const Color(0xFF8F8F94),
               ),
             ),
-            SizedBox(width: 14 * scale),
+            SizedBox(width: 10 * scale),
             Expanded(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Nightshade',
+                    authorName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 16 * scale,
+                      fontSize: 14 * scale,
                       fontWeight: FontWeight.w600,
                       letterSpacing: -0.15,
                       height: 1.05,
                       color: const Color(0xFF111111),
                     ),
                   ),
-                  SizedBox(height: 6 * scale),
+                  SizedBox(height: 3 * scale),
                   Text(
-                    '28 июля 2025 · $likesCount лайков',
+                    '$authorHandle · $likesCount лайков',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 13.5 * scale,
+                      fontSize: 11.5 * scale,
                       fontWeight: FontWeight.w400,
                       height: 1,
                       color: const Color(0xFF8F8F94),
@@ -662,13 +647,13 @@ class _AuthorCard extends StatelessWidget {
                 ],
               ),
             ),
-            SizedBox(width: 10 * scale),
+            SizedBox(width: 8 * scale),
             GestureDetector(
               onTap: onLikeTap,
               behavior: HitTestBehavior.opaque,
               child: Icon(
                 isLiked ? Icons.favorite : Icons.favorite_outline,
-                size: 25 * scale,
+                size: 22 * scale,
                 color: isLiked
                     ? const Color(0xFFFF3B30)
                     : const Color(0xFF8F8F94),
@@ -746,7 +731,7 @@ class _ProductsSectionState extends State<_ProductsSection> {
       child: Column(
         children: [
           SizedBox(
-            height: 99 * widget.scale,
+            height: 172 * widget.scale,
             child: Stack(
               children: [
                 ListView.separated(
@@ -810,56 +795,29 @@ class _ProductCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: SizedBox(
-        width: 110 * scale,
-        child: Container(
-          padding: EdgeInsets.all(6 * scale),
+        width: 160 * scale,
+        child: DecoratedBox(
           decoration: BoxDecoration(
-            color: const Color(0xFFFCFCFC),
-            borderRadius: BorderRadius.circular(14 * scale),
-            border: Border.all(color: const Color(0xFFEFEFF1), width: 1),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(5 * scale),
           ),
-          child: Column(
-            children: [
-              Container(
-                height: 38 * scale,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10 * scale),
-                ),
-                child: Icon(
-                  product.icon,
-                  size: 22 * scale,
-                  color: const Color(0xFFB8B8BD),
-                ),
-              ),
-              SizedBox(height: 5 * scale),
-              SizedBox(
-                height: 22 * scale,
-                child: Text(
-                  product.name,
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 10.2 * scale,
-                    fontWeight: FontWeight.w500,
-                    height: 1.05,
-                    color: const Color(0xFF111111),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(5 * scale),
+            child: product.image == null || product.image!.isEmpty
+                ? Container(
+                    color: Colors.white,
+                    child: Icon(
+                      product.icon,
+                      size: 28 * scale,
+                      color: const Color(0xFFB8B8BD),
+                    ),
+                  )
+                : AppImage(
+                    imageUrl: product.image!,
+                    fit: BoxFit.contain,
+                    alignment: Alignment.center,
+                    placeholderColor: Colors.white,
                   ),
-                ),
-              ),
-              SizedBox(height: 2 * scale),
-              Text(
-                product.price,
-                maxLines: 1,
-                style: TextStyle(
-                  fontSize: 10.8 * scale,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF707076),
-                ),
-              ),
-            ],
           ),
         ),
       ),
@@ -904,9 +862,11 @@ class _OutfitProduct {
     required this.icon,
     required this.name,
     required this.price,
+    this.image,
   });
 
   final IconData icon;
   final String name;
   final String price;
+  final String? image;
 }

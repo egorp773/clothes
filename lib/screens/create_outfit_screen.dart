@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 import '../models/created_outfit.dart';
+import '../widgets/app_image.dart';
 
 class CreateOutfitScreen extends StatefulWidget {
   const CreateOutfitScreen({
@@ -261,10 +262,7 @@ class _CreateOutfitScreenState extends State<CreateOutfitScreen> {
             child: const Center(
               child: Text(
                 'Выберите вещи из списка выше',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF8F8F94),
-                ),
+                style: TextStyle(fontSize: 13, color: Color(0xFF8F8F94)),
               ),
             ),
           )
@@ -391,11 +389,9 @@ class _ItemCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Center(
-                        child: Image.asset(
-                          item.image,
+                        child: AppImage(
+                          imageUrl: item.image,
                           fit: BoxFit.contain,
-                          errorBuilder: (context, error, stackTrace) =>
-                              const Icon(Icons.checkroom_outlined, size: 40),
                         ),
                       ),
                     ),
@@ -450,10 +446,7 @@ class _ItemCard extends StatelessWidget {
 }
 
 class _SelectedItemCard extends StatelessWidget {
-  const _SelectedItemCard({
-    required this.item,
-    required this.onRemove,
-  });
+  const _SelectedItemCard({required this.item, required this.onRemove});
 
   final OutfitItem item;
   final VoidCallback onRemove;
@@ -481,11 +474,9 @@ class _SelectedItemCard extends StatelessWidget {
               child: Stack(
                 children: [
                   Center(
-                    child: Image.asset(
-                      item.image,
+                    child: AppImage(
+                      imageUrl: item.image,
                       fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) =>
-                          const Icon(Icons.checkroom_outlined, size: 32),
                     ),
                   ),
                   Positioned(
@@ -500,7 +491,11 @@ class _SelectedItemCard extends StatelessWidget {
                           color: Colors.white,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.close, size: 14, color: Color(0xFF111111)),
+                        child: const Icon(
+                          Icons.close,
+                          size: 14,
+                          color: Color(0xFF111111),
+                        ),
                       ),
                     ),
                   ),
