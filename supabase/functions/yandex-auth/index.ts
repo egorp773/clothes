@@ -51,17 +51,18 @@ function redirectToYandex(url: URL) {
 
 async function handleYandexCallback(url: URL) {
   const error = url.searchParams.get("error");
+  const state = decodeState(url.searchParams.get("state"));
+  const redirectTo = safeRedirectTo(state.redirectTo);
   if (error) {
-    return renderMessage(
-      "Yandex login failed",
+    return redirectWithError(
+      redirectTo,
       url.searchParams.get("error_description") ?? error,
-      401,
     );
   }
 
   const code = url.searchParams.get("code");
   if (!code) {
-    return renderMessage("Yandex login failed", "Missing authorization code.", 400);
+    return redirectWithError(redirectTo, "Missing authorization code.");
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -77,8 +78,6 @@ async function handleYandexCallback(url: URL) {
     );
   }
 
-  const state = decodeState(url.searchParams.get("state"));
-  const redirectTo = safeRedirectTo(state.redirectTo);
   const callbackUrl = yandexCallbackUrl(url);
   const token = await exchangeCodeForYandexToken({
     code,
@@ -88,12 +87,12 @@ async function handleYandexCallback(url: URL) {
   });
 
   if (!token.ok) {
-    return renderMessage("Yandex login failed", token.error, 500);
+    return redirectWithError(redirectTo, token.error);
   }
 
   const profile = await fetchYandexProfile(token.accessToken);
   if (!profile.ok) {
-    return renderMessage("Yandex login failed", profile.error, 500);
+    return redirectWithError(redirectTo, profile.error);
   }
 
   const session = await createSupabaseSession({
@@ -102,7 +101,7 @@ async function handleYandexCallback(url: URL) {
     profile: profile.data,
   });
   if (!session.ok) {
-    return renderMessage("Supabase login failed", session.error, 500);
+    return redirectWithError(redirectTo, session.error);
   }
 
   return redirectWithSession(redirectTo, session.data);
@@ -305,11 +304,16 @@ function redirectWithSession(
     type: "magiclink",
   }).toString();
 
-  if (uri.protocol === "http:" || uri.protocol === "https:") {
-    return Response.redirect(uri.toString(), 302);
-  }
+  return Response.redirect(uri.toString(), 302);
+}
 
-  return renderAppRedirect(uri.toString());
+function redirectWithError(redirectTo: string, message: string) {
+  const uri = new URL(redirectTo);
+  uri.hash = new URLSearchParams({
+    error: "auth_failed",
+    error_description: message,
+  }).toString();
+  return Response.redirect(uri.toString(), 302);
 }
 
 function yandexCallbackUrl(url: URL) {

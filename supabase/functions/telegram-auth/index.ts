@@ -53,7 +53,7 @@ async function handleTelegramCallback(params: URLSearchParams) {
     params.get("redirect_to") ?? "com.example.clothes://login-callback/";
   const verification = await verifyTelegramPayload(params, botToken);
   if (!verification.ok) {
-    return renderMessage("Telegram login failed", verification.error, 401);
+    return redirectWithError(redirectTo, verification.error);
   }
 
   const telegramId = params.get("id")!;
@@ -91,23 +91,18 @@ async function handleTelegramCallback(params: URLSearchParams) {
       hashedToken?: string;
     }
     | undefined;
-  const actionLink = properties?.action_link ?? properties?.actionLink ?? "";
   const hashedToken = properties?.hashed_token ?? properties?.hashedToken ?? "";
 
   if (error || !hashedToken) {
-    return renderMessage(
-      "Supabase login failed",
+    return redirectWithError(
+      redirectTo,
       error?.message ?? "Could not create Telegram session.",
-      500,
     );
   }
 
   const session = await createSupabaseSession(supabaseUrl, serviceRoleKey, hashedToken);
   if (!session.ok) {
-    if (actionLink) {
-      return Response.redirect(actionLink, 302);
-    }
-    return renderMessage("Supabase login failed", session.error, 500);
+    return redirectWithError(redirectTo, session.error);
   }
 
   return redirectWithSession(redirectTo, session.data);
@@ -181,6 +176,15 @@ function redirectWithSession(
     type: "magiclink",
   }).toString();
 
+  return Response.redirect(uri.toString(), 302);
+}
+
+function redirectWithError(redirectTo: string, message: string) {
+  const uri = new URL(redirectTo);
+  uri.hash = new URLSearchParams({
+    error: "auth_failed",
+    error_description: message,
+  }).toString();
   return Response.redirect(uri.toString(), 302);
 }
 
