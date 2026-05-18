@@ -714,6 +714,13 @@ class AppRepository extends ChangeNotifier {
     );
     final existing = threadById(threadId);
     if (existing != null) return existing;
+    final remoteExisting = await _fetchThreadFromSupabase(threadId);
+    if (remoteExisting != null) {
+      _upsertLocalThread(remoteExisting);
+      await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+      notifyListeners();
+      return remoteExisting;
+    }
 
     final now = DateTime.now();
     final sellerName = product.sellerName.trim().isEmpty

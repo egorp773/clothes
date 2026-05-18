@@ -49,8 +49,7 @@ async function handleTelegramCallback(params: URLSearchParams) {
     );
   }
 
-  const redirectTo =
-    params.get("redirect_to") ?? "com.example.clothes://login-callback/";
+  const redirectTo = safeRedirectTo(params.get("redirect_to"));
   const verification = await verifyTelegramPayload(params, botToken);
   if (!verification.ok) {
     return redirectWithError(redirectTo, verification.error);
@@ -176,6 +175,10 @@ function redirectWithSession(
     type: "magiclink",
   }).toString();
 
+  if (isAppRedirect(uri)) {
+    return renderAppRedirect(uri.toString());
+  }
+
   return Response.redirect(uri.toString(), 302);
 }
 
@@ -185,6 +188,10 @@ function redirectWithError(redirectTo: string, message: string) {
     error: "auth_failed",
     error_description: message,
   }).toString();
+  if (isAppRedirect(uri)) {
+    return renderAppRedirect(uri.toString(), "Вход не выполнен", message);
+  }
+
   return Response.redirect(uri.toString(), 302);
 }
 
@@ -235,8 +242,7 @@ async function verifyTelegramPayload(params: URLSearchParams, botToken: string) 
 function renderLoginPage(url: URL) {
   const botId = Deno.env.get("TELEGRAM_BOT_ID") ?? fallbackTelegramBotId;
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const redirectTo =
-    url.searchParams.get("redirect_to") ?? "com.example.clothes://login-callback/";
+  const redirectTo = safeRedirectTo(url.searchParams.get("redirect_to"));
 
   if (!botId || !supabaseUrl) {
     return renderMessage(
@@ -256,6 +262,28 @@ function renderLoginPage(url: URL) {
   authUrl.searchParams.set("request_access", "write");
 
   return Response.redirect(authUrl.toString(), 302);
+}
+
+function isAppRedirect(uri: URL) {
+  return uri.protocol === "com.example.clothes:";
+}
+
+function safeRedirectTo(value: string | null | undefined) {
+  const defaultRedirectTo = "com.example.clothes://login-callback/";
+  if (!value) return defaultRedirectTo;
+  try {
+    const uri = new URL(value);
+    if (
+      uri.protocol === "com.example.clothes:" ||
+      uri.protocol === "http:" ||
+      uri.protocol === "https:"
+    ) {
+      return uri.toString();
+    }
+  } catch {
+    // Fall through to the app redirect.
+  }
+  return defaultRedirectTo;
 }
 
 function renderMessage(title: string, message: string, status = 200) {
@@ -279,7 +307,11 @@ function renderMessage(title: string, message: string, status = 200) {
 </html>`, status);
 }
 
-function renderAppRedirect(appUrl: string) {
+function renderAppRedirect(
+  appUrl: string,
+  title = "Вход выполнен",
+  message = "Сейчас вернём вас в приложение.",
+) {
   const encodedUrl = escapeHtml(appUrl);
   const jsUrl = JSON.stringify(appUrl);
   return html(`<!doctype html>
@@ -300,8 +332,8 @@ function renderAppRedirect(appUrl: string) {
 <body>
   <main>
     <section>
-      <h1>Вход выполнен</h1>
-      <p>Сейчас вернём вас в приложение.</p>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(message)}</p>
       <a href="${encodedUrl}">Открыть приложение</a>
     </section>
   </main>
