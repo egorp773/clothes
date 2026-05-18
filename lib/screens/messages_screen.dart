@@ -7,10 +7,16 @@ class MessagesScreen extends StatelessWidget {
     super.key,
     required this.threads,
     required this.onSendMessage,
+    required this.currentUserId,
+    required this.threadsListenable,
+    required this.resolveThread,
   });
 
   final List<MessageThread> threads;
   final Future<void> Function(String threadId, String text) onSendMessage;
+  final String currentUserId;
+  final Listenable threadsListenable;
+  final MessageThread? Function(String threadId) resolveThread;
 
   @override
   Widget build(BuildContext context) {
@@ -41,12 +47,16 @@ class MessagesScreen extends StatelessWidget {
                     final thread = threads[index];
                     return _ThreadTile(
                       thread: thread,
+                      currentUserId: currentUserId,
                       onTap: () {
                         Navigator.of(context, rootNavigator: true).push(
                           MaterialPageRoute<void>(
                             builder: (context) => ChatScreen(
                               thread: thread,
                               onSendMessage: onSendMessage,
+                              currentUserId: currentUserId,
+                              threadsListenable: threadsListenable,
+                              resolveThread: resolveThread,
                             ),
                           ),
                         );
@@ -65,10 +75,16 @@ class ChatScreen extends StatefulWidget {
     super.key,
     required this.thread,
     required this.onSendMessage,
+    required this.currentUserId,
+    required this.threadsListenable,
+    required this.resolveThread,
   });
 
   final MessageThread thread;
   final Future<void> Function(String threadId, String text) onSendMessage;
+  final String currentUserId;
+  final Listenable threadsListenable;
+  final MessageThread? Function(String threadId) resolveThread;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -78,25 +94,54 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _isSending = false;
+  late MessageThread _thread;
   late List<ChatMessage> _messages;
 
   @override
   void initState() {
     super.initState();
-    _messages = widget.thread.messages.isNotEmpty
-        ? List.of(widget.thread.messages)
+    _thread = widget.thread;
+    _messages = _thread.messages.isNotEmpty
+        ? List.of(_thread.messages)
         : [
             ChatMessage(
-              id: '${widget.thread.id}-initial',
-              text: widget.thread.lastMessage,
-              createdAt: widget.thread.updatedAt,
+              id: '${_thread.id}-initial',
+              text: _thread.lastMessage,
+              createdAt: _thread.updatedAt,
               isMine: true,
             ),
           ];
+    widget.threadsListenable.addListener(_refreshThread);
+  }
+
+  void _refreshThread() {
+    final latest = widget.resolveThread(_thread.id);
+    if (latest == null || !mounted) return;
+
+    final hasChanged =
+        latest.updatedAt != _thread.updatedAt ||
+        latest.messages.length != _thread.messages.length ||
+        latest.lastMessage != _thread.lastMessage;
+    if (!hasChanged) return;
+
+    setState(() {
+      _thread = latest;
+      _messages = latest.messages.isNotEmpty
+          ? List.of(latest.messages)
+          : [
+              ChatMessage(
+                id: '${latest.id}-initial',
+                text: latest.lastMessage,
+                createdAt: latest.updatedAt,
+                isMine: true,
+              ),
+            ];
+    });
   }
 
   @override
   void dispose() {
+    widget.threadsListenable.removeListener(_refreshThread);
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -120,7 +165,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _controller.clear();
     });
 
-    await widget.onSendMessage(widget.thread.id, text);
+    await widget.onSendMessage(_thread.id, text);
     if (!mounted) return;
     setState(() => _isSending = false);
     await Future<void>.delayed(const Duration(milliseconds: 30));
@@ -142,7 +187,7 @@ class _ChatScreenState extends State<ChatScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            _ChatHeader(thread: widget.thread),
+            _ChatHeader(thread: _thread, currentUserId: widget.currentUserId),
             Expanded(
               child: ListView.separated(
                 controller: _scrollController,
@@ -226,9 +271,14 @@ class _EmptyMessages extends StatelessWidget {
 }
 
 class _ThreadTile extends StatelessWidget {
-  const _ThreadTile({required this.thread, required this.onTap});
+  const _ThreadTile({
+    required this.thread,
+    required this.currentUserId,
+    required this.onTap,
+  });
 
   final MessageThread thread;
+  final String currentUserId;
   final VoidCallback onTap;
 
   @override
@@ -266,7 +316,7 @@ class _ThreadTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    thread.sellerName,
+                    thread.otherPartyName(currentUserId),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -307,9 +357,10 @@ class _ThreadTile extends StatelessWidget {
 }
 
 class _ChatHeader extends StatelessWidget {
-  const _ChatHeader({required this.thread});
+  const _ChatHeader({required this.thread, required this.currentUserId});
 
   final MessageThread thread;
+  final String currentUserId;
 
   @override
   Widget build(BuildContext context) {
@@ -331,7 +382,7 @@ class _ChatHeader extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  thread.sellerName,
+                  thread.otherPartyName(currentUserId),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -467,7 +518,11 @@ class _MessageComposer extends StatelessWidget {
                         ),
                       ),
                     )
-                  : const Icon(Icons.arrow_upward, size: 20, color: Colors.white),
+                  : const Icon(
+                      Icons.arrow_upward,
+                      size: 20,
+                      color: Colors.white,
+                    ),
             ),
           ),
         ],

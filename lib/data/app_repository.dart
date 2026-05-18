@@ -46,13 +46,38 @@ class AppRepository extends ChangeNotifier {
   bool get isReady => _isReady;
   List<Product> get products => List.unmodifiable(_products);
   List<CreatedOutfit> get outfits => List.unmodifiable(_outfits);
-  List<MessageThread> get threads => List.unmodifiable(_threads);
+  List<MessageThread> get threads {
+    if (!_hasSupabase || currentUserId.isEmpty) {
+      return List.unmodifiable(_threads);
+    }
+    return List.unmodifiable(
+      _threads.where(
+        (thread) =>
+            thread.buyerId == currentUserId || thread.sellerId == currentUserId,
+      ),
+    );
+  }
+
   AppProfile get profile => _profile;
   User? get currentUser => _currentUser;
   bool get isSignedIn => _currentUser != null;
   bool get isSigningIn => _isSigningIn;
   String? get authError => _authError;
   String get currentUserId => _currentUser?.id ?? '';
+  MessageThread? threadById(String threadId) {
+    for (final thread in _threads) {
+      if (thread.id != threadId) continue;
+      if (_hasSupabase &&
+          currentUserId.isNotEmpty &&
+          thread.buyerId != currentUserId &&
+          thread.sellerId != currentUserId) {
+        return null;
+      }
+      return thread;
+    }
+    return null;
+  }
+
   List<Product> get myProducts {
     if (currentUserId.isEmpty) return [];
     return _products
@@ -306,16 +331,22 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<void> _syncThreadsFromSupabase() async {
-    if (!_hasSupabase) return;
+    if (!_hasSupabase || currentUserId.isEmpty) return;
 
     try {
       final response = await _client
           .from('message_threads')
           .select()
+          .or('buyer_id.eq.$currentUserId,seller_id.eq.$currentUserId')
           .order('updated_at', ascending: false);
 
       final fetched = (response as List<dynamic>)
-          .map((item) => MessageThread.fromSupabase(item))
+          .map(
+            (item) => MessageThread.fromSupabase(
+              item as Map<String, dynamic>,
+              currentUserId: currentUserId,
+            ),
+          )
           .toList();
 
       if (fetched.isEmpty) return;
@@ -329,7 +360,8 @@ class AppRepository extends ChangeNotifier {
       _sortThreads();
       await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
       notifyListeners();
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Threads sync error: $e');
       // Optional table. Local chats remain fully usable without it.
     }
   }
@@ -513,19 +545,52 @@ class AppRepository extends ChangeNotifier {
 
   // ─── Messages ───
 
-  Future<void> contactSeller(Product product) async {
+  Future<MessageThread?> contactSeller(Product product) async {
+    final user = _hasSupabase
+        ? await _ensureAuthSession(
+            message: 'Войдите в профиль, чтобы написать продавцу',
+          )
+        : null;
+    if (_hasSupabase && user == null) return null;
+
+    final buyerId = user?.id ?? currentUserId;
+    final sellerId = product.ownerId;
+    if (_hasSupabase && sellerId.isEmpty) {
+      _authError = 'У объявления не указан продавец';
+      notifyListeners();
+      return null;
+    }
+    if (buyerId.isNotEmpty && sellerId == buyerId) {
+      _authError = 'Это ваше объявление';
+      notifyListeners();
+      return null;
+    }
+
+    final threadId = _messageThreadId(
+      productId: product.id,
+      buyerId: buyerId,
+      sellerId: sellerId,
+    );
+    final existing = threadById(threadId);
+    if (existing != null) return existing;
+
     final now = DateTime.now();
     final sellerName = product.brand.isEmpty ? 'Продавец' : product.brand;
     const firstMessage = 'Здравствуйте! Вещь ещё доступна?';
-    _threads.removeWhere((thread) => thread.id == product.id);
+    _threads.removeWhere((thread) => thread.id == threadId);
     _threads.insert(
       0,
       MessageThread(
-        id: product.id,
+        id: threadId,
         sellerName: sellerName,
+        buyerName: _profile.name,
         productTitle: product.title,
         lastMessage: firstMessage,
         updatedAt: now,
+        productId: product.id,
+        productImage: product.image,
+        buyerId: buyerId,
+        sellerId: sellerId,
         unreadCount: 0,
         messages: [
           ChatMessage(
@@ -533,30 +598,56 @@ class AppRepository extends ChangeNotifier {
             text: firstMessage,
             createdAt: now,
             isMine: true,
+            senderId: buyerId,
+            senderName: _profile.name,
           ),
         ],
       ),
     );
     _sortThreads();
     await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
-    await _upsertThread(_threads.first);
+    await _upsertThread(threadById(threadId) ?? _threads.first);
     notifyListeners();
+    return _threads.firstWhere((thread) => thread.id == threadId);
   }
 
   Future<void> sendMessage(String threadId, String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
+    final user = _hasSupabase
+        ? await _ensureAuthSession(
+            message: 'Войдите в профиль, чтобы отправить сообщение',
+          )
+        : null;
+    if (_hasSupabase && user == null) return;
+
+    if (_hasSupabase) {
+      final remoteThread = await _fetchThreadFromSupabase(threadId);
+      if (remoteThread != null) {
+        _upsertLocalThread(remoteThread);
+      }
+    }
+
     final index = _threads.indexWhere((thread) => thread.id == threadId);
     if (index == -1) return;
 
     final now = DateTime.now();
     final thread = _threads[index];
+    final senderId = user?.id ?? currentUserId;
+    if (_hasSupabase &&
+        senderId != thread.buyerId &&
+        senderId != thread.sellerId) {
+      return;
+    }
+
     final message = ChatMessage(
       id: _uuid.v4(),
       text: trimmed,
       createdAt: now,
       isMine: true,
+      senderId: senderId,
+      senderName: _profile.name,
     );
 
     _threads[index] = thread.copyWith(
@@ -570,6 +661,37 @@ class AppRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _upsertLocalThread(MessageThread thread) {
+    final index = _threads.indexWhere((item) => item.id == thread.id);
+    if (index == -1) {
+      _threads.insert(0, thread);
+    } else {
+      _threads[index] = thread;
+    }
+    _sortThreads();
+  }
+
+  Future<MessageThread?> _fetchThreadFromSupabase(String threadId) async {
+    if (!_hasSupabase || currentUserId.isEmpty) return null;
+
+    try {
+      final response = await _client
+          .from('message_threads')
+          .select()
+          .eq('id', threadId)
+          .limit(1);
+      final rows = response as List<dynamic>;
+      if (rows.isEmpty) return null;
+      return MessageThread.fromSupabase(
+        rows.first as Map<String, dynamic>,
+        currentUserId: currentUserId,
+      );
+    } catch (e) {
+      debugPrint('Thread fetch error: $e');
+      return null;
+    }
+  }
+
   Future<void> _upsertThread(MessageThread thread) async {
     if (!_hasSupabase) return;
 
@@ -577,14 +699,28 @@ class AppRepository extends ChangeNotifier {
       await _client
           .from('message_threads')
           .upsert(thread.toSupabaseJson(), onConflict: 'id');
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Thread upsert error: $e');
       // Optional table. Keep local chat flow responsive if it is absent.
     }
   }
 
-  Future<User?> _ensureAuthSession() async {
+  String _messageThreadId({
+    required String productId,
+    required String buyerId,
+    required String sellerId,
+  }) {
+    return 'product_${productId}_${buyerId}_$sellerId';
+  }
+
+  Future<User?> _ensureAuthSession({String? message}) async {
     final currentUser = _client.auth.currentUser;
     if (currentUser != null) return currentUser;
+    if (message != null) {
+      _authError = message;
+      notifyListeners();
+      return null;
+    }
     _authError = 'Войдите в профиль перед публикацией';
     notifyListeners();
     return null;

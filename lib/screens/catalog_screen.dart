@@ -1,7 +1,9 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 import '../models/product.dart';
 import '../widgets/app_image.dart';
+import '../models/message_thread.dart';
+import 'messages_screen.dart';
 import 'product_screen.dart';
 
 class CatalogScreen extends StatefulWidget {
@@ -10,7 +12,11 @@ class CatalogScreen extends StatefulWidget {
   final List<Product> products;
   final Future<void> Function(String productId) onToggleLike;
   final Future<void> Function(String productId) onHideProduct;
-  final Future<void> Function(Product product) onContactSeller;
+  final Future<MessageThread?> Function(Product product) onContactSeller;
+  final Future<void> Function(String threadId, String text) onSendMessage;
+  final String currentUserId;
+  final Listenable threadsListenable;
+  final MessageThread? Function(String threadId) resolveThread;
 
   const CatalogScreen({
     super.key,
@@ -20,6 +26,10 @@ class CatalogScreen extends StatefulWidget {
     required this.onToggleLike,
     required this.onHideProduct,
     required this.onContactSeller,
+    required this.onSendMessage,
+    required this.currentUserId,
+    required this.threadsListenable,
+    required this.resolveThread,
   });
 
   @override
@@ -297,7 +307,9 @@ class _CatalogScreenState extends State<CatalogScreen>
               description: product.description,
               price: product.price,
               image: product.image,
-              images: product.images.isNotEmpty ? product.images : [product.image],
+              images: product.images.isNotEmpty
+                  ? product.images
+                  : [product.image],
               brand: product.brand,
               size: product.size,
               condition: product.condition,
@@ -306,8 +318,26 @@ class _CatalogScreenState extends State<CatalogScreen>
             onLike: () => _toggleLike(product.id),
             onAddToCart: () => _showSnackBar('Добавлено в корзину'),
             onContactSeller: () async {
-              await widget.onContactSeller(product);
-              _showSnackBar('Чат с продавцом создан');
+              final navigator = Navigator.of(context, rootNavigator: true);
+              final thread = await widget.onContactSeller(product);
+              if (!mounted) return;
+              if (thread == null) {
+                _showSnackBar('Не удалось открыть чат');
+                return;
+              }
+              await navigator.maybePop();
+              if (!mounted) return;
+              navigator.push(
+                MaterialPageRoute<void>(
+                  builder: (context) => ChatScreen(
+                    thread: thread,
+                    onSendMessage: widget.onSendMessage,
+                    currentUserId: widget.currentUserId,
+                    threadsListenable: widget.threadsListenable,
+                    resolveThread: widget.resolveThread,
+                  ),
+                ),
+              );
             },
           );
         },

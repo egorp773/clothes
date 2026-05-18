@@ -300,6 +300,10 @@ class _AppShellState extends State<AppShell> {
                   onToggleLike: _repository.toggleProductLike,
                   onHideProduct: _repository.hideProduct,
                   onContactSeller: _repository.contactSeller,
+                  onSendMessage: _repository.sendMessage,
+                  currentUserId: _repository.currentUserId,
+                  threadsListenable: _repository,
+                  resolveThread: _repository.threadById,
                 ),
                 OutfitsScreen(
                   scale: 1.0,
@@ -312,6 +316,9 @@ class _AppShellState extends State<AppShell> {
                 MessagesScreen(
                   threads: _repository.threads,
                   onSendMessage: _repository.sendMessage,
+                  currentUserId: _repository.currentUserId,
+                  threadsListenable: _repository,
+                  resolveThread: _repository.threadById,
                 ),
                 ProfileScreen(
                   profile: _repository.profile,
