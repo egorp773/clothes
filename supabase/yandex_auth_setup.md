@@ -1,30 +1,47 @@
 # Yandex ID auth setup
 
-Flutter app provider id: `custom:yandex`
+The app uses the public Edge Function:
 
-Mobile app redirect URL: `com.example.clothes://login-callback/`
+`https://hbwzxtwcjlsfldjcqudt.supabase.co/functions/v1/yandex-auth`
 
-Supabase app URL: `https://hbwzxtwcjlsfldjcqudt.supabase.co`
+Mobile app redirect URL:
 
-## Supabase
+`com.example.clothes://login-callback/`
 
-1. Open Supabase Dashboard -> Authentication -> Providers.
-2. Add a Custom OAuth provider.
-3. Use identifier `custom:yandex`.
-4. Use OAuth2 manual configuration:
-   - Authorization URL: `https://oauth.yandex.ru/authorize`
-   - Token URL: `https://oauth.yandex.ru/token`
-   - UserInfo URL: `https://login.yandex.ru/info`
-5. Copy the Supabase callback URL shown by the provider form.
-6. Enable the provider.
-7. Add `com.example.clothes://login-callback/` to Authentication -> URL Configuration -> Redirect URLs.
+Yandex Client ID:
+
+`ce46da5616754944897dbb8b6a7116fe`
+
+Yandex Redirect URI:
+
+`https://hbwzxtwcjlsfldjcqudt.supabase.co/functions/v1/yandex-auth/callback`
+
+Yandex authorization page host:
+
+`hbwzxtwcjlsfldjcqudt.supabase.co`
 
 ## Yandex OAuth
 
-1. Create an authorization app in Yandex OAuth.
-2. Add the Supabase callback URL from the custom provider form as the Yandex Redirect URI.
-3. Enable access to login/user info and email.
-4. Copy Client ID and Client Secret into the Supabase custom provider.
+1. Open your app in Yandex OAuth.
+2. Add the Yandex Redirect URI above.
+3. Enable access to Yandex ID user info and email.
+
+## Supabase
+
+Set Edge Function secrets:
+
+```bash
+supabase secrets set YANDEX_CLIENT_ID=ce46da5616754944897dbb8b6a7116fe
+supabase secrets set YANDEX_CLIENT_SECRET=<CLIENT_SECRET>
+```
+
+Deploy without JWT verification:
+
+```bash
+supabase functions deploy yandex-auth --no-verify-jwt
+```
+
+Do not store the Client Secret in Flutter code or commit it to Git.
 
 ## Telegram
 

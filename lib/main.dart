@@ -256,16 +256,6 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
-  Future<void> _showYandexComingSoon() async {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Вход через Яндекс ID добавим позже'),
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: 2),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -334,7 +324,7 @@ class _AppShellState extends State<AppShell> {
                       ? _repository.profile.handle
                       : _repository.currentUser?.email,
                   authError: _repository.authError,
-                  onSignInWithYandex: _showYandexComingSoon,
+                  onSignInWithYandex: _repository.signInWithYandex,
                   onSignInWithTelegram: _repository.signInWithTelegram,
                   onSignOut: _repository.signOut,
                   onUpdateProfile: _repository.updateProfile,

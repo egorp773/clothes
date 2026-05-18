@@ -7,6 +7,7 @@ const corsHeaders = {
 };
 
 const maxAuthAgeSeconds = 24 * 60 * 60;
+const fallbackTelegramBotId = "8941747263";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -82,7 +83,18 @@ async function handleTelegramCallback(params: URLSearchParams) {
     },
   });
 
-  if (error || !data?.properties?.action_link) {
+  const properties = data?.properties as
+    | {
+      action_link?: string;
+      actionLink?: string;
+      hashed_token?: string;
+      hashedToken?: string;
+    }
+    | undefined;
+  const actionLink = properties?.action_link ?? properties?.actionLink ?? "";
+  const hashedToken = properties?.hashed_token ?? properties?.hashedToken ?? "";
+
+  if (error || !hashedToken) {
     return renderMessage(
       "Supabase login failed",
       error?.message ?? "Could not create Telegram session.",
@@ -90,7 +102,86 @@ async function handleTelegramCallback(params: URLSearchParams) {
     );
   }
 
-  return Response.redirect(data.properties.action_link, 302);
+  const session = await createSupabaseSession(supabaseUrl, serviceRoleKey, hashedToken);
+  if (!session.ok) {
+    if (actionLink) {
+      return Response.redirect(actionLink, 302);
+    }
+    return renderMessage("Supabase login failed", session.error, 500);
+  }
+
+  return redirectWithSession(redirectTo, session.data);
+}
+
+async function createSupabaseSession(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  tokenHash: string,
+) {
+  try {
+    const response = await fetch(`${supabaseUrl}/auth/v1/verify`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: serviceRoleKey,
+        authorization: `Bearer ${serviceRoleKey}`,
+      },
+      body: JSON.stringify({
+        type: "magiclink",
+        token_hash: tokenHash,
+      }),
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      return {
+        ok: false as const,
+        error: data?.msg ?? data?.message ?? "Could not verify Telegram session.",
+      };
+    }
+    if (!data?.access_token || !data?.refresh_token) {
+      return {
+        ok: false as const,
+        error: "Supabase did not return a session.",
+      };
+    }
+
+    return {
+      ok: true as const,
+      data: {
+        accessToken: String(data.access_token),
+        refreshToken: String(data.refresh_token),
+        expiresIn: String(data.expires_in ?? 3600),
+        tokenType: String(data.token_type ?? "bearer"),
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : "Could not create session.",
+    };
+  }
+}
+
+function redirectWithSession(
+  redirectTo: string,
+  session: {
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: string;
+    tokenType: string;
+  },
+) {
+  const uri = new URL(redirectTo);
+  uri.hash = new URLSearchParams({
+    access_token: session.accessToken,
+    refresh_token: session.refreshToken,
+    expires_in: session.expiresIn,
+    token_type: session.tokenType,
+    type: "magiclink",
+  }).toString();
+
+  return Response.redirect(uri.toString(), 302);
 }
 
 async function verifyTelegramPayload(params: URLSearchParams, botToken: string) {
@@ -138,50 +229,29 @@ async function verifyTelegramPayload(params: URLSearchParams, botToken: string) 
 }
 
 function renderLoginPage(url: URL) {
-  const botUsername = Deno.env.get("TELEGRAM_BOT_USERNAME");
+  const botId = Deno.env.get("TELEGRAM_BOT_ID") ?? fallbackTelegramBotId;
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const redirectTo =
     url.searchParams.get("redirect_to") ?? "com.example.clothes://login-callback/";
 
-  if (!botUsername || !supabaseUrl) {
+  if (!botId || !supabaseUrl) {
     return renderMessage(
       "Telegram login is not configured",
-      "Set TELEGRAM_BOT_USERNAME and SUPABASE_URL for the telegram-auth function.",
+      "Set TELEGRAM_BOT_ID and SUPABASE_URL for the telegram-auth function.",
       500,
     );
   }
 
-  const authUrl = new URL(`${supabaseUrl}/functions/v1/telegram-auth`);
-  authUrl.searchParams.set("redirect_to", redirectTo);
+  const callbackUrl = new URL(`${supabaseUrl}/functions/v1/telegram-auth`);
+  callbackUrl.searchParams.set("redirect_to", redirectTo);
 
-  return html(`<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Telegram login</title>
-  <style>
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#fff;color:#070707}
-    main{min-height:100vh;display:grid;place-items:center;padding:24px}
-    section{width:min(360px,100%);text-align:center}
-    h1{font-size:22px;margin:0 0 10px;font-weight:800}
-    p{font-size:14px;line-height:1.45;color:#72727a;margin:0 0 24px}
-  </style>
-</head>
-<body>
-  <main>
-    <section>
-      <h1>Telegram login</h1>
-      <p>Telegram will confirm your account and return you to the app.</p>
-      <script async src="https://telegram.org/js/telegram-widget.js?22"
-        data-telegram-login="${escapeHtml(botUsername)}"
-        data-size="large"
-        data-auth-url="${escapeHtml(authUrl.toString())}"
-        data-request-access="write"></script>
-    </section>
-  </main>
-</body>
-</html>`);
+  const authUrl = new URL("https://oauth.telegram.org/auth");
+  authUrl.searchParams.set("bot_id", botId);
+  authUrl.searchParams.set("origin", supabaseUrl);
+  authUrl.searchParams.set("return_to", callbackUrl.toString());
+  authUrl.searchParams.set("request_access", "write");
+
+  return Response.redirect(authUrl.toString(), 302);
 }
 
 function renderMessage(title: string, message: string, status = 200) {
@@ -203,6 +273,40 @@ function renderMessage(title: string, message: string, status = 200) {
   <main><section><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></section></main>
 </body>
 </html>`, status);
+}
+
+function renderAppRedirect(appUrl: string) {
+  const encodedUrl = escapeHtml(appUrl);
+  const jsUrl = JSON.stringify(appUrl);
+  return html(`<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Возвращаем в приложение</title>
+  <style>
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#fff;color:#070707}
+    main{min-height:100vh;display:grid;place-items:center;padding:24px}
+    section{width:min(420px,100%);text-align:center}
+    h1{font-size:22px;margin:0 0 10px;font-weight:800}
+    p{font-size:14px;line-height:1.45;color:#72727a;margin:0 0 22px}
+    a{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 18px;border-radius:8px;background:#050505;color:#fff;text-decoration:none;font-weight:700}
+  </style>
+</head>
+<body>
+  <main>
+    <section>
+      <h1>Вход выполнен</h1>
+      <p>Сейчас вернём вас в приложение.</p>
+      <a href="${encodedUrl}">Открыть приложение</a>
+    </section>
+  </main>
+  <script>
+    window.location.replace(${jsUrl});
+    setTimeout(function () { window.location.href = ${jsUrl}; }, 500);
+  </script>
+</body>
+</html>`);
 }
 
 function json(body: unknown, status = 200) {

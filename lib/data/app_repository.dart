@@ -144,14 +144,20 @@ class AppRepository extends ChangeNotifier {
     _authError = null;
     notifyListeners();
 
+    final redirectTo = kIsWeb
+        ? Uri.base.toString()
+        : SupabaseConfig.authRedirectUri;
+    final uri = Uri.parse(
+      SupabaseConfig.yandexAuthUrl,
+    ).replace(queryParameters: {'redirect_to': redirectTo});
+
     try {
-      final didOpen = await _client.auth.signInWithOAuth(
-        const OAuthProvider(SupabaseConfig.yandexProvider),
-        redirectTo: kIsWeb ? null : SupabaseConfig.authRedirectUri,
-        scopes: 'login:info login:email',
-        authScreenLaunchMode: kIsWeb
+      final didOpen = await launchUrl(
+        uri,
+        mode: kIsWeb
             ? LaunchMode.platformDefault
             : LaunchMode.externalApplication,
+        webOnlyWindowName: '_self',
       );
       if (!didOpen) {
         _authError = 'Не удалось открыть вход через Яндекс ID';
@@ -178,15 +184,9 @@ class AppRepository extends ChangeNotifier {
     final redirectTo = kIsWeb
         ? Uri.base.toString()
         : SupabaseConfig.authRedirectUri;
-    final callbackUri = Uri.parse(
+    final uri = Uri.parse(
       SupabaseConfig.telegramAuthUrl,
     ).replace(queryParameters: {'redirect_to': redirectTo});
-    final uri = Uri.https('oauth.telegram.org', '/auth', {
-      'bot_id': SupabaseConfig.telegramBotId,
-      'origin': SupabaseConfig.telegramOrigin,
-      'return_to': callbackUri.toString(),
-      'request_access': 'write',
-    });
 
     try {
       final didOpen = await launchUrl(
