@@ -7,6 +7,8 @@ alter table public.products
   add column if not exists outfit_images text[] not null default '{}',
   add column if not exists is_hidden boolean not null default false,
   add column if not exists seller_id uuid references auth.users(id) on delete set null,
+  add column if not exists seller_name text not null default 'Продавец',
+  add column if not exists seller_handle text not null default '@seller',
   add column if not exists background_status text not null default 'queued',
   add column if not exists background_error text;
 
@@ -31,6 +33,38 @@ create policy "Authenticated users can update product images"
   to authenticated
   using (bucket_id = 'product-images')
   with check (bucket_id = 'product-images');
+
+notify pgrst, 'reload schema';
+
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  name text not null,
+  handle text not null unique,
+  city text not null default 'Москва',
+  rating numeric not null default 4.8,
+  sales_count integer not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.profiles enable row level security;
+
+drop policy if exists "Public profiles are readable" on public.profiles;
+create policy "Public profiles are readable"
+  on public.profiles for select
+  using (true);
+
+drop policy if exists "Users can insert their profile" on public.profiles;
+create policy "Users can insert their profile"
+  on public.profiles for insert
+  to authenticated
+  with check (auth.uid() = id);
+
+drop policy if exists "Users can update their profile" on public.profiles;
+create policy "Users can update their profile"
+  on public.profiles for update
+  to authenticated
+  using (auth.uid() = id)
+  with check (auth.uid() = id);
 
 notify pgrst, 'reload schema';
 

@@ -31,7 +31,7 @@ class ProfileScreen extends StatelessWidget {
   final Future<void> Function() onSignInWithYandex;
   final VoidCallback onSignInWithTelegram;
   final Future<void> Function() onSignOut;
-  final Future<void> Function({required String name, required String handle})
+  final Future<String?> Function({required String name, required String handle})
   onUpdateProfile;
 
   @override
@@ -396,7 +396,7 @@ class _EditProfileButton extends StatelessWidget {
 
   final AppProfile profile;
   final bool isEnabled;
-  final Future<void> Function({required String name, required String handle})
+  final Future<String?> Function({required String name, required String handle})
   onSave;
 
   @override
@@ -446,7 +446,7 @@ class _EditProfileSheet extends StatefulWidget {
   const _EditProfileSheet({required this.profile, required this.onSave});
 
   final AppProfile profile;
-  final Future<void> Function({required String name, required String handle})
+  final Future<String?> Function({required String name, required String handle})
   onSave;
 
   @override
@@ -457,6 +457,7 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
   late final TextEditingController _nameController;
   late final TextEditingController _handleController;
   bool _isSaving = false;
+  String? _errorText;
 
   @override
   void initState() {
@@ -474,12 +475,22 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
 
   Future<void> _save() async {
     if (_isSaving) return;
-    setState(() => _isSaving = true);
-    await widget.onSave(
+    setState(() {
+      _isSaving = true;
+      _errorText = null;
+    });
+    final error = await widget.onSave(
       name: _nameController.text,
       handle: _handleController.text,
     );
     if (!mounted) return;
+    if (error != null) {
+      setState(() {
+        _isSaving = false;
+        _errorText = error;
+      });
+      return;
+    }
     Navigator.pop(context);
   }
 
@@ -518,6 +529,16 @@ class _EditProfileSheetState extends State<_EditProfileSheet> {
               controller: _handleController,
               hintText: '@username',
             ),
+            if (_errorText != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _errorText!,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  color: Color(0xFFB00020),
+                ),
+              ),
+            ],
             const SizedBox(height: 20),
             GestureDetector(
               onTap: _isSaving ? null : _save,
@@ -679,8 +700,8 @@ class _ProfileProductCard extends StatelessWidget {
             clipBehavior: Clip.antiAlias,
             child: AppImage(
               imageUrl: product.image,
-              fit: BoxFit.cover,
-              alignment: Alignment.topCenter,
+              fit: BoxFit.contain,
+              alignment: Alignment.center,
             ),
           ),
         ),

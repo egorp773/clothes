@@ -367,7 +367,7 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
                   : Stack(
                       fit: StackFit.expand,
                       children: [
-                        AppImage(imageUrl: photo, fit: BoxFit.cover),
+                        AppImage(imageUrl: photo, fit: BoxFit.contain),
                         Positioned(
                           top: 5,
                           right: 5,

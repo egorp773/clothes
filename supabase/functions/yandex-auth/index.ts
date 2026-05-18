@@ -7,7 +7,6 @@ const corsHeaders = {
 };
 
 const defaultRedirectTo = "com.example.clothes://login-callback/";
-const yandexRedirectPath = "/functions/v1/yandex-auth/callback";
 const yandexScopes = "login:info login:email";
 
 Deno.serve(async (req) => {
@@ -20,7 +19,7 @@ Deno.serve(async (req) => {
     return json({ error: "Method not allowed" }, 405);
   }
 
-  if (url.pathname.endsWith("/callback")) {
+  if (url.searchParams.has("code") || url.searchParams.has("error")) {
     return handleYandexCallback(url);
   }
 
@@ -317,7 +316,7 @@ function redirectWithError(redirectTo: string, message: string) {
 }
 
 function yandexCallbackUrl(url: URL) {
-  return `https://${url.host}${yandexRedirectPath}`;
+  return `https://${url.host}/functions/v1/yandex-auth`;
 }
 
 function safeRedirectTo(value: string | null | undefined) {

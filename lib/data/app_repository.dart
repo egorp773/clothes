@@ -213,12 +213,19 @@ class AppRepository extends ChangeNotifier {
     await _handleAuthState(null);
   }
 
-  Future<void> updateProfile({
+  Future<String?> updateProfile({
     required String name,
     required String handle,
   }) async {
     final cleanName = name.trim().isEmpty ? 'Ваш профиль' : name.trim();
     final cleanHandle = _normalizeHandle(handle);
+    if (!_isValidHandle(cleanHandle)) {
+      return 'Username должен быть 3-24 символа: латиница, цифры и _';
+    }
+    if (_hasSupabase && currentUserId.isNotEmpty) {
+      final isTaken = await _isHandleTaken(cleanHandle, currentUserId);
+      if (isTaken) return 'Такой username уже занят';
+    }
 
     _profile = _profile.copyWith(name: cleanName, handle: cleanHandle);
     await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
@@ -226,6 +233,10 @@ class AppRepository extends ChangeNotifier {
 
     if (_hasSupabase && _client.auth.currentUser != null) {
       try {
+        await _upsertProfile(
+          userId: _client.auth.currentUser!.id,
+          profile: _profile,
+        );
         final response = await _client.auth.updateUser(
           UserAttributes(
             data: {
@@ -237,10 +248,16 @@ class AppRepository extends ChangeNotifier {
           ),
         );
         _currentUser = response.user ?? _client.auth.currentUser;
+        await _syncOwnedProductSellerFields(
+          userId: _client.auth.currentUser!.id,
+          profile: _profile,
+        );
       } catch (e) {
         debugPrint('Profile update error: $e');
+        return 'Не удалось сохранить профиль';
       }
     }
+    return null;
   }
 
   Future<void> _handleAuthState(User? user) async {
@@ -261,6 +278,32 @@ class AppRepository extends ChangeNotifier {
       return;
     }
 
+    try {
+      final response = await _client
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .limit(1);
+      final rows = response as List<dynamic>;
+      if (rows.isNotEmpty) {
+        final row = rows.first as Map<String, dynamic>;
+        _profile = AppProfile(
+          name: row['name'] as String? ?? _profile.name,
+          handle: row['handle'] as String? ?? _profile.handle,
+          city: row['city'] as String? ?? _profile.city,
+          rating: (row['rating'] as num?)?.toDouble() ?? _profile.rating,
+          salesCount:
+              (row['sales_count'] as num?)?.toInt() ?? _profile.salesCount,
+        );
+        await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
+        await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
+        if (notify) notifyListeners();
+        return;
+      }
+    } catch (e) {
+      debugPrint('Profile fetch error: $e');
+    }
+
     final metadata = user.userMetadata ?? const <String, dynamic>{};
     final rawName =
         metadata['full_name'] ??
@@ -276,7 +319,10 @@ class AppRepository extends ChangeNotifier {
         metadata['login'] ??
         user.email?.split('@').first ??
         user.id.substring(0, 8);
-    final handle = '@${handleSource.toString().replaceAll('@', '').trim()}';
+    final handle = await _uniqueHandle(
+      _normalizeHandle(handleSource.toString()),
+      user.id,
+    );
 
     if (name != null && name.isNotEmpty) {
       _profile = AppProfile(
@@ -287,6 +333,8 @@ class AppRepository extends ChangeNotifier {
         salesCount: _profile.salesCount,
       );
       await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
+      await _upsertProfile(userId: user.id, profile: _profile);
+      await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
     }
 
     if (notify) notifyListeners();
@@ -297,9 +345,98 @@ class AppRepository extends ChangeNotifier {
         .trim()
         .replaceAll('@', '')
         .replaceAll(RegExp(r'\s+'), '_')
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '')
         .toLowerCase();
     if (raw.isEmpty) return '@user';
     return '@$raw';
+  }
+
+  bool _isValidHandle(String value) {
+    return RegExp(r'^@[a-z0-9_]{3,24}$').hasMatch(value);
+  }
+
+  Future<bool> _isHandleTaken(String handle, String currentUserId) async {
+    if (!_hasSupabase) return false;
+    try {
+      final response = await _client
+          .from('profiles')
+          .select('id')
+          .eq('handle', handle)
+          .limit(1);
+      final rows = response as List<dynamic>;
+      if (rows.isEmpty) return false;
+      return (rows.first as Map<String, dynamic>)['id'] != currentUserId;
+    } catch (e) {
+      debugPrint('Handle check error: $e');
+      return false;
+    }
+  }
+
+  Future<String> _uniqueHandle(String baseHandle, String userId) async {
+    var candidate = _isValidHandle(baseHandle) ? baseHandle : '@user';
+    if (!await _isHandleTaken(candidate, userId)) return candidate;
+
+    final raw = candidate.substring(1);
+    for (var i = 2; i < 100; i++) {
+      final suffix = '_$i';
+      final maxBaseLength = 24 - suffix.length;
+      final base = raw.substring(0, raw.length.clamp(0, maxBaseLength));
+      candidate = '@$base$suffix';
+      if (!await _isHandleTaken(candidate, userId)) return candidate;
+    }
+    return '@${userId.replaceAll('-', '').substring(0, 12)}';
+  }
+
+  Future<void> _upsertProfile({
+    required String userId,
+    required AppProfile profile,
+  }) async {
+    if (!_hasSupabase) return;
+    await _client.from('profiles').upsert({
+      'id': userId,
+      'name': profile.name,
+      'handle': profile.handle,
+      'city': profile.city,
+      'rating': profile.rating,
+      'sales_count': profile.salesCount,
+      'updated_at': DateTime.now().toIso8601String(),
+    }, onConflict: 'id');
+  }
+
+  Future<void> _syncOwnedProductSellerFields({
+    required String userId,
+    required AppProfile profile,
+  }) async {
+    if (userId.isEmpty) return;
+
+    if (_hasSupabase) {
+      try {
+        await _client
+            .from('products')
+            .update({
+              'seller_name': profile.name,
+              'seller_handle': profile.handle,
+            })
+            .eq('seller_id', userId);
+      } catch (e) {
+        debugPrint('Seller product sync error: $e');
+      }
+    }
+
+    var changed = false;
+    _products = _products.map((product) {
+      if (product.ownerId != userId) return product;
+      if (product.sellerName == profile.name &&
+          product.sellerHandle == profile.handle) {
+        return product;
+      }
+      changed = true;
+      return product.copyWith(
+        sellerName: profile.name,
+        sellerHandle: profile.handle,
+      );
+    }).toList();
+    if (changed) await _saveProducts();
   }
 
   Future<void> _syncFromSupabase() async {
@@ -464,7 +601,11 @@ class AppRepository extends ChangeNotifier {
       final user = await _ensureAuthSession();
       if (user == null) return false;
 
-      final ownedProduct = product.copyWith(ownerId: user.id);
+      final ownedProduct = product.copyWith(
+        ownerId: user.id,
+        sellerName: _profile.name,
+        sellerHandle: _profile.handle,
+      );
       final data = ownedProduct.toSupabaseJson(sellerId: user.id);
       await _client.from('products').insert(data);
       _queueBackgroundRemoval(ownedProduct);
@@ -575,7 +716,9 @@ class AppRepository extends ChangeNotifier {
     if (existing != null) return existing;
 
     final now = DateTime.now();
-    final sellerName = product.brand.isEmpty ? 'Продавец' : product.brand;
+    final sellerName = product.sellerName.trim().isEmpty
+        ? 'Продавец'
+        : product.sellerName;
     const firstMessage = 'Здравствуйте! Вещь ещё доступна?';
     _threads.removeWhere((thread) => thread.id == threadId);
     _threads.insert(

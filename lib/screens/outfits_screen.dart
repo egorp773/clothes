@@ -157,6 +157,8 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
               image: product.image ?? '',
               images: product.image == null ? const [] : [product.image!],
               brand: 'Brand',
+              sellerName: 'Продавец',
+              sellerHandle: '@seller',
               size: 'M',
               condition: 'Отличное',
               isLiked: false,
@@ -494,7 +496,7 @@ class _HeroMedia extends StatelessWidget {
                 if (photos.isNotEmpty) {
                   return AppImage(
                     imageUrl: photos[index],
-                    fit: BoxFit.cover,
+                    fit: BoxFit.contain,
                     alignment: Alignment.topCenter,
                   );
                 }

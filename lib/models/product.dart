@@ -13,6 +13,8 @@ class Product {
   final String color;
   final String condition;
   final String ownerId;
+  final String sellerName;
+  final String sellerHandle;
   final bool dotsOnDark;
   bool isLiked;
   bool isHidden;
@@ -35,6 +37,8 @@ class Product {
     required this.color,
     required this.condition,
     this.ownerId = '',
+    this.sellerName = 'Продавец',
+    this.sellerHandle = '@seller',
     required this.dotsOnDark,
     this.isLiked = false,
     this.isHidden = false,
@@ -64,6 +68,8 @@ class Product {
       color: json['color'] as String,
       condition: json['condition'] as String,
       ownerId: json['ownerId'] as String? ?? '',
+      sellerName: json['sellerName'] as String? ?? 'Продавец',
+      sellerHandle: json['sellerHandle'] as String? ?? '@seller',
       dotsOnDark: json['dotsOnDark'] as bool,
       isLiked: json['isLiked'] as bool? ?? false,
       isHidden: json['isHidden'] as bool? ?? false,
@@ -109,6 +115,8 @@ class Product {
       condition: json['condition'] as String? ?? 'Хорошее',
       ownerId:
           json['seller_id'] as String? ?? json['owner_id'] as String? ?? '',
+      sellerName: json['seller_name'] as String? ?? 'Продавец',
+      sellerHandle: json['seller_handle'] as String? ?? '@seller',
       dotsOnDark: json['dots_on_dark'] as bool? ?? false,
       isLiked: json['is_liked'] as bool? ?? false,
       isHidden: json['is_hidden'] as bool? ?? false,
@@ -169,6 +177,8 @@ class Product {
       'color': color,
       'condition': condition,
       'ownerId': ownerId,
+      'sellerName': sellerName,
+      'sellerHandle': sellerHandle,
       'dotsOnDark': dotsOnDark,
       'isLiked': isLiked,
       'isHidden': isHidden,
@@ -185,6 +195,8 @@ class Product {
     final data = {
       'id': id,
       'seller_id': sellerId,
+      'seller_name': sellerName,
+      'seller_handle': sellerHandle,
       'title': title,
       'description': description,
       'price': priceValue,
@@ -219,6 +231,8 @@ class Product {
     String? color,
     String? condition,
     String? ownerId,
+    String? sellerName,
+    String? sellerHandle,
     bool? dotsOnDark,
     bool? isLiked,
     bool? isHidden,
@@ -241,6 +255,8 @@ class Product {
       color: color ?? this.color,
       condition: condition ?? this.condition,
       ownerId: ownerId ?? this.ownerId,
+      sellerName: sellerName ?? this.sellerName,
+      sellerHandle: sellerHandle ?? this.sellerHandle,
       dotsOnDark: dotsOnDark ?? this.dotsOnDark,
       isLiked: isLiked ?? this.isLiked,
       isHidden: isHidden ?? this.isHidden,

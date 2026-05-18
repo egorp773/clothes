@@ -1,41 +1,7 @@
-﻿import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import '../widgets/app_image.dart';
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 class ProductDetailData {
   const ProductDetailData({
@@ -46,6 +12,8 @@ class ProductDetailData {
     required this.image,
     required this.images,
     required this.brand,
+    required this.sellerName,
+    required this.sellerHandle,
     required this.size,
     required this.condition,
     required this.isLiked,
@@ -58,6 +26,8 @@ class ProductDetailData {
   final String image;
   final List<String> images;
   final String brand;
+  final String sellerName;
+  final String sellerHandle;
   final String size;
   final String condition;
   final bool isLiked;
@@ -355,9 +325,8 @@ class _ProductScreenState extends State<ProductScreen>
                                       children: [
                                         _SellerCard(
                                           hairline: hairline,
-                                          name: 'Продавец',
-                                          handle:
-                                              '@${product.brand.toLowerCase().replaceAll(' ', '')}',
+                                          name: product.sellerName,
+                                          handle: product.sellerHandle,
                                           rating: 4.8,
                                           reviews: 126,
                                           onTap: () {},
@@ -529,8 +498,8 @@ class _HeroImageGalleryState extends State<_HeroImageGallery> {
                 child: AppImage(
                   key: ValueKey(_gallery[index]),
                   imageUrl: _gallery[index],
-                  fit: BoxFit.cover,
-                  alignment: Alignment.topCenter,
+                  fit: BoxFit.contain,
+                  alignment: Alignment.center,
                 ),
               );
             },

@@ -14,7 +14,7 @@ Yandex Client ID:
 
 Yandex Redirect URI:
 
-`https://hbwzxtwcjlsfldjcqudt.supabase.co/functions/v1/yandex-auth/callback`
+`https://hbwzxtwcjlsfldjcqudt.supabase.co/functions/v1/yandex-auth`
 
 Yandex authorization page host:
 

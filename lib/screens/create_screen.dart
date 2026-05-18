@@ -676,7 +676,7 @@ class _CreateScreenState extends State<CreateScreen> {
                           imageUrl: image.path,
                           width: 64,
                           height: 64,
-                          fit: BoxFit.cover,
+                          fit: BoxFit.contain,
                         ),
                         Positioned(
                           top: 2,

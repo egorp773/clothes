@@ -311,6 +311,8 @@ class _CatalogScreenState extends State<CatalogScreen>
                   ? product.images
                   : [product.image],
               brand: product.brand,
+              sellerName: product.sellerName,
+              sellerHandle: product.sellerHandle,
               size: product.size,
               condition: product.condition,
               isLiked: product.isLiked,
@@ -607,8 +609,8 @@ class ProductCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(5 * scale),
                 child: AppImage(
                   imageUrl: product.image,
-                  fit: BoxFit.cover,
-                  alignment: Alignment.topCenter,
+                  fit: BoxFit.contain,
+                  alignment: Alignment.center,
                 ),
               ),
             ),
@@ -774,7 +776,7 @@ class ProductDetailsSheet extends StatelessWidget {
           height: 460,
           child: AppImage(
             imageUrl: product.image,
-            fit: BoxFit.cover,
+            fit: BoxFit.contain,
             alignment: Alignment.center,
           ),
         ),
