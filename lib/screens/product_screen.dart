@@ -152,7 +152,8 @@ class _ProductScreenState extends State<ProductScreen>
     final product = widget.product;
     final hairline = 1 / MediaQuery.of(context).devicePixelRatio;
     final tExpand = _expandController.value;
-    final topGap = _topGapCard * (1 - tExpand);
+    final topGap =
+        (MediaQuery.of(context).viewPadding.top + _topGapCard) * (1 - tExpand);
     final topRadius = _topRadiusCard * (1 - tExpand);
     final bottomRadius = _bottomRadiusCard * (1 - tExpand);
     final spacing = _spacing;
@@ -205,6 +206,7 @@ class _ProductScreenState extends State<ProductScreen>
                           ),
                         ),
                         child: SafeArea(
+                          top: false,
                           bottom: false,
                           child: CustomScrollView(
                             controller: _scrollController,
@@ -258,7 +260,7 @@ class _ProductScreenState extends State<ProductScreen>
                                               textAlign: TextAlign.center,
                                               style: const TextStyle(
                                                 fontSize: 16,
-                                                fontWeight: FontWeight.w400,
+                                                fontWeight: FontWeight.w500,
                                                 letterSpacing: 0.15,
                                                 height: 1.2,
                                               ),
@@ -268,7 +270,7 @@ class _ProductScreenState extends State<ProductScreen>
                                               product.price,
                                               style: const TextStyle(
                                                 fontSize: 16,
-                                                fontWeight: FontWeight.w400,
+                                                fontWeight: FontWeight.w700,
                                                 letterSpacing: 0.15,
                                                 height: 1.0,
                                                 fontFeatures: [
@@ -414,7 +416,7 @@ class _ProductScreenState extends State<ProductScreen>
                                 'Написать продавцу',
                                 style: TextStyle(
                                   letterSpacing: 0,
-                                  fontWeight: FontWeight.w400,
+                                  fontWeight: FontWeight.w500,
                                 ),
                               ),
                             ),
@@ -427,11 +429,14 @@ class _ProductScreenState extends State<ProductScreen>
                       right: 0,
                       top: 0,
                       child: SafeArea(
+                        top: false,
                         bottom: false,
                         child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
+                          padding: EdgeInsets.fromLTRB(
+                            10,
+                            MediaQuery.of(context).viewPadding.top + 8,
+                            10,
+                            8,
                           ),
                           child: Row(
                             children: [
@@ -485,7 +490,7 @@ class _HeroImageGalleryState extends State<_HeroImageGallery> {
   @override
   Widget build(BuildContext context) {
     return AspectRatio(
-      aspectRatio: 3 / 4,
+      aspectRatio: 4 / 5,
       child: Stack(
         children: [
           PageView.builder(
@@ -498,7 +503,7 @@ class _HeroImageGalleryState extends State<_HeroImageGallery> {
                 child: AppImage(
                   key: ValueKey(_gallery[index]),
                   imageUrl: _gallery[index],
-                  fit: BoxFit.contain,
+                  fit: BoxFit.fill,
                   alignment: Alignment.center,
                 ),
               );
@@ -653,7 +658,7 @@ class _SellerCard extends StatelessWidget {
                         name,
                         style: const TextStyle(
                           fontSize: 13,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -667,7 +672,7 @@ class _SellerCard extends StatelessWidget {
                         rating.toStringAsFixed(1),
                         style: TextStyle(
                           fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w500,
                           color: Colors.black.withValues(alpha: 0.75),
                         ),
                       ),
@@ -718,7 +723,7 @@ class _SectionTitle extends StatelessWidget {
         style: TextStyle(
           fontSize: 15,
           letterSpacing: 0,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w500,
           color: Colors.black.withValues(alpha: 0.82),
         ),
       ),

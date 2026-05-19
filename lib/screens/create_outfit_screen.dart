@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 import '../models/created_outfit.dart';
 import '../widgets/app_image.dart';
@@ -162,7 +162,7 @@ class _CreateOutfitScreenState extends State<CreateOutfitScreen> {
                 'Создать образ',
                 style: TextStyle(
                   fontSize: 16,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w500,
                   color: Color(0xFF0B0B0B),
                 ),
               ),
@@ -412,7 +412,7 @@ class _ItemCard extends StatelessWidget {
                     item.price,
                     style: const TextStyle(
                       fontSize: 14,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                       color: Color(0xFF111111),
                     ),
                   ),
@@ -474,10 +474,7 @@ class _SelectedItemCard extends StatelessWidget {
               child: Stack(
                 children: [
                   Center(
-                    child: AppImage(
-                      imageUrl: item.image,
-                      fit: BoxFit.contain,
-                    ),
+                    child: AppImage(imageUrl: item.image, fit: BoxFit.contain),
                   ),
                   Positioned(
                     top: 6,
@@ -523,7 +520,7 @@ class _SelectedItemCard extends StatelessWidget {
                   item.price,
                   style: const TextStyle(
                     fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                     color: Color(0xFF111111),
                   ),
                 ),

@@ -7,6 +7,7 @@ class SupabaseConfig {
   static const String authRedirectUri = 'com.example.clothes://login-callback/';
   static const String yandexProvider = 'custom:yandex';
   static const String yandexAuthUrl = '$url/functions/v1/yandex-auth';
+  static const String vkAuthUrl = '$url/functions/v1/vk-auth';
   static const String telegramAuthUrl = '$url/functions/v1/telegram-auth';
   static const String telegramBotId = '8941747263';
   static const String telegramOrigin =

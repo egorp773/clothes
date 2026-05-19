@@ -54,6 +54,50 @@ class OutfitItem {
   }
 }
 
+class OutfitLayoutItem {
+  const OutfitLayoutItem({
+    required this.image,
+    required this.offsetX,
+    required this.offsetY,
+    required this.widthFactor,
+    required this.heightFactor,
+    required this.scale,
+    required this.rotation,
+  });
+
+  final String image;
+  final double offsetX;
+  final double offsetY;
+  final double widthFactor;
+  final double heightFactor;
+  final double scale;
+  final double rotation;
+
+  factory OutfitLayoutItem.fromJson(Map<String, dynamic> json) {
+    return OutfitLayoutItem(
+      image: json['image'] as String,
+      offsetX: (json['offsetX'] as num).toDouble(),
+      offsetY: (json['offsetY'] as num).toDouble(),
+      widthFactor: (json['widthFactor'] as num).toDouble(),
+      heightFactor: (json['heightFactor'] as num).toDouble(),
+      scale: (json['scale'] as num).toDouble(),
+      rotation: (json['rotation'] as num).toDouble(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'image': image,
+      'offsetX': offsetX,
+      'offsetY': offsetY,
+      'widthFactor': widthFactor,
+      'heightFactor': heightFactor,
+      'scale': scale,
+      'rotation': rotation,
+    };
+  }
+}
+
 class CreatedOutfit {
   const CreatedOutfit({
     required this.id,
@@ -62,6 +106,8 @@ class CreatedOutfit {
     this.ownerId = '',
     this.authorName = 'Автор',
     this.authorHandle = '@user',
+    this.previewBackgroundColor,
+    this.layoutItems = const [],
   });
 
   final String id;
@@ -70,6 +116,8 @@ class CreatedOutfit {
   final String ownerId;
   final String authorName;
   final String authorHandle;
+  final int? previewBackgroundColor;
+  final List<OutfitLayoutItem> layoutItems;
 
   factory CreatedOutfit.fromJson(Map<String, dynamic> json) {
     return CreatedOutfit(
@@ -81,10 +129,20 @@ class CreatedOutfit {
       ownerId: json['ownerId'] as String? ?? '',
       authorName: json['authorName'] as String? ?? 'Автор',
       authorHandle: json['authorHandle'] as String? ?? '@user',
+      previewBackgroundColor: (json['previewBackgroundColor'] as num?)?.toInt(),
+      layoutItems:
+          (json['layoutItems'] as List<dynamic>?)
+              ?.map(
+                (item) =>
+                    OutfitLayoutItem.fromJson(item as Map<String, dynamic>),
+              )
+              .toList() ??
+          const [],
     );
   }
 
   factory CreatedOutfit.fromSupabase(Map<String, dynamic> json) {
+    final previewJson = json['preview_layout'] as Map<String, dynamic>?;
     return CreatedOutfit(
       id: json['id'] as String,
       photos: (json['photos'] as List<dynamic>? ?? const []).cast<String>(),
@@ -94,6 +152,16 @@ class CreatedOutfit {
       ownerId: json['owner_id'] as String? ?? '',
       authorName: json['author_name'] as String? ?? 'Автор',
       authorHandle: json['author_handle'] as String? ?? '@user',
+      previewBackgroundColor: (previewJson?['backgroundColor'] as num?)
+          ?.toInt(),
+      layoutItems:
+          (previewJson?['items'] as List<dynamic>?)
+              ?.map(
+                (item) =>
+                    OutfitLayoutItem.fromJson(item as Map<String, dynamic>),
+              )
+              .toList() ??
+          const [],
     );
   }
 
@@ -105,6 +173,8 @@ class CreatedOutfit {
       'ownerId': ownerId,
       'authorName': authorName,
       'authorHandle': authorHandle,
+      'previewBackgroundColor': previewBackgroundColor,
+      'layoutItems': layoutItems.map((item) => item.toJson()).toList(),
     };
   }
 
@@ -115,6 +185,8 @@ class CreatedOutfit {
     String? ownerId,
     String? authorName,
     String? authorHandle,
+    int? previewBackgroundColor,
+    List<OutfitLayoutItem>? layoutItems,
   }) {
     return CreatedOutfit(
       id: id ?? this.id,
@@ -123,6 +195,9 @@ class CreatedOutfit {
       ownerId: ownerId ?? this.ownerId,
       authorName: authorName ?? this.authorName,
       authorHandle: authorHandle ?? this.authorHandle,
+      previewBackgroundColor:
+          previewBackgroundColor ?? this.previewBackgroundColor,
+      layoutItems: layoutItems ?? this.layoutItems,
     );
   }
 }

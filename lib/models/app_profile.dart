@@ -49,3 +49,26 @@ class AppProfile {
     );
   }
 }
+
+class AppUserProfile {
+  const AppUserProfile({
+    required this.id,
+    required this.name,
+    required this.handle,
+    this.avatarUrl = '',
+  });
+
+  final String id;
+  final String name;
+  final String handle;
+  final String avatarUrl;
+
+  factory AppUserProfile.fromSupabase(Map<String, dynamic> json) {
+    return AppUserProfile(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? 'Пользователь',
+      handle: json['handle'] as String? ?? '@user',
+      avatarUrl: json['avatar_url'] as String? ?? '',
+    );
+  }
+}

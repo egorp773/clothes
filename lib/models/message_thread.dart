@@ -70,6 +70,10 @@ class MessageThread {
     this.productImage = '',
     this.buyerId = '',
     this.sellerId = '',
+    this.buyerHandle = '',
+    this.sellerHandle = '',
+    this.buyerAvatar = '',
+    this.sellerAvatar = '',
     this.unreadCount = 0,
     this.messages = const [],
   });
@@ -84,6 +88,10 @@ class MessageThread {
   final String productImage;
   final String buyerId;
   final String sellerId;
+  final String buyerHandle;
+  final String sellerHandle;
+  final String buyerAvatar;
+  final String sellerAvatar;
   final int unreadCount;
   final List<ChatMessage> messages;
 
@@ -99,6 +107,10 @@ class MessageThread {
       productImage: json['productImage'] as String? ?? '',
       buyerId: json['buyerId'] as String? ?? '',
       sellerId: json['sellerId'] as String? ?? '',
+      buyerHandle: json['buyerHandle'] as String? ?? '',
+      sellerHandle: json['sellerHandle'] as String? ?? '',
+      buyerAvatar: json['buyerAvatar'] as String? ?? '',
+      sellerAvatar: json['sellerAvatar'] as String? ?? '',
       unreadCount: json['unreadCount'] as int? ?? 0,
       messages:
           (json['messages'] as List<dynamic>?)
@@ -127,6 +139,10 @@ class MessageThread {
       productImage: json['product_image'] as String? ?? '',
       buyerId: json['buyer_id'] as String? ?? '',
       sellerId: json['seller_id'] as String? ?? '',
+      buyerHandle: json['buyer_handle'] as String? ?? '',
+      sellerHandle: json['seller_handle'] as String? ?? '',
+      buyerAvatar: json['buyer_avatar'] as String? ?? '',
+      sellerAvatar: json['seller_avatar'] as String? ?? '',
       unreadCount: json['unread_count'] as int? ?? 0,
       messages:
           (json['messages'] as List<dynamic>?)
@@ -148,6 +164,22 @@ class MessageThread {
     return sellerName.isEmpty ? 'Продавец' : sellerName;
   }
 
+  String otherPartyHandle(String currentUserId) {
+    if (currentUserId.isNotEmpty && currentUserId == sellerId) {
+      return buyerHandle;
+    }
+    return sellerHandle;
+  }
+
+  String otherPartyAvatar(String currentUserId) {
+    if (currentUserId.isNotEmpty && currentUserId == sellerId) {
+      return buyerAvatar;
+    }
+    return sellerAvatar;
+  }
+
+  bool get isProductChat => productId.isNotEmpty;
+
   MessageThread copyWith({
     String? sellerName,
     String? buyerName,
@@ -158,6 +190,10 @@ class MessageThread {
     String? productImage,
     String? buyerId,
     String? sellerId,
+    String? buyerHandle,
+    String? sellerHandle,
+    String? buyerAvatar,
+    String? sellerAvatar,
     int? unreadCount,
     List<ChatMessage>? messages,
   }) {
@@ -172,6 +208,10 @@ class MessageThread {
       productImage: productImage ?? this.productImage,
       buyerId: buyerId ?? this.buyerId,
       sellerId: sellerId ?? this.sellerId,
+      buyerHandle: buyerHandle ?? this.buyerHandle,
+      sellerHandle: sellerHandle ?? this.sellerHandle,
+      buyerAvatar: buyerAvatar ?? this.buyerAvatar,
+      sellerAvatar: sellerAvatar ?? this.sellerAvatar,
       unreadCount: unreadCount ?? this.unreadCount,
       messages: messages ?? this.messages,
     );
@@ -189,6 +229,10 @@ class MessageThread {
       'productImage': productImage,
       'buyerId': buyerId,
       'sellerId': sellerId,
+      'buyerHandle': buyerHandle,
+      'sellerHandle': sellerHandle,
+      'buyerAvatar': buyerAvatar,
+      'sellerAvatar': sellerAvatar,
       'unreadCount': unreadCount,
       'messages': messages.map((message) => message.toJson()).toList(),
     };
@@ -204,6 +248,10 @@ class MessageThread {
       'buyer_name': buyerName,
       'product_title': productTitle,
       'product_image': productImage,
+      'buyer_handle': buyerHandle,
+      'seller_handle': sellerHandle,
+      'buyer_avatar': buyerAvatar,
+      'seller_avatar': sellerAvatar,
       'last_message': lastMessage,
       'updated_at': updatedAt.toIso8601String(),
       'unread_count': unreadCount,

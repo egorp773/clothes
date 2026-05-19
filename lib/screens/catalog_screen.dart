@@ -94,7 +94,7 @@ class _CatalogScreenState extends State<CatalogScreen>
   Widget _buildHeader(double scale) {
     return Padding(
       padding: EdgeInsets.only(
-        top: 14,
+        top: MediaQuery.of(context).viewPadding.top + 14,
         left: widget.sidePadding,
         right: widget.sidePadding,
         bottom: 18,
@@ -109,7 +109,7 @@ class _CatalogScreenState extends State<CatalogScreen>
                 'Каталог',
                 style: TextStyle(
                   fontSize: 22,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w500,
                   color: const Color(0xFF070707),
                 ),
               ),
@@ -167,8 +167,8 @@ class _CatalogScreenState extends State<CatalogScreen>
                       style: TextStyle(
                         fontSize: 13.5 * scale,
                         fontWeight: isActive
-                            ? FontWeight.w700
-                            : FontWeight.w400,
+                            ? FontWeight.w500
+                            : FontWeight.w500,
                         color: isActive
                             ? const Color(0xFF050505)
                             : const Color(0xFF706E82),
@@ -213,7 +213,7 @@ class _CatalogScreenState extends State<CatalogScreen>
                     'Фильтр',
                     style: TextStyle(
                       fontSize: 14.5 * scale,
-                      fontWeight: FontWeight.w400,
+                      fontWeight: FontWeight.w500,
                       color: const Color(0xFF0B0B0B),
                     ),
                   ),
@@ -235,7 +235,7 @@ class _CatalogScreenState extends State<CatalogScreen>
                     'Сорт',
                     style: TextStyle(
                       fontSize: 14.5 * scale,
-                      fontWeight: FontWeight.w400,
+                      fontWeight: FontWeight.w500,
                       color: const Color(0xFF0B0B0B),
                     ),
                   ),
@@ -267,7 +267,7 @@ class _CatalogScreenState extends State<CatalogScreen>
           crossAxisCount: 2,
           crossAxisSpacing: 7 * scale,
           mainAxisSpacing: 4 * scale,
-          mainAxisExtent: 350 * scale,
+          mainAxisExtent: 320 * scale,
         ),
         itemBuilder: (context, index) {
           final product = products[index];
@@ -577,7 +577,7 @@ class ProductCard extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: SizedBox(
-        height: 350 * scale,
+        height: 320 * scale,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -596,7 +596,7 @@ class ProductCard extends StatelessWidget {
   Widget _buildImage() {
     return SizedBox(
       width: double.infinity,
-      height: 296 * scale,
+      height: 266 * scale,
       child: Container(
         decoration: BoxDecoration(
           color: const Color(0xFFF8F8F9),
@@ -609,7 +609,9 @@ class ProductCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(5 * scale),
                 child: AppImage(
                   imageUrl: product.image,
-                  fit: BoxFit.contain,
+                  width: double.infinity,
+                  height: double.infinity,
+                  fit: BoxFit.fill,
                   alignment: Alignment.center,
                 ),
               ),
@@ -644,7 +646,7 @@ class ProductCard extends StatelessWidget {
           style: TextStyle(
             fontSize: 13.5 * scale,
             height: 1.08,
-            fontWeight: FontWeight.w400,
+            fontWeight: FontWeight.w500,
             color: const Color(0xFF070707),
           ),
           maxLines: 1,
@@ -660,7 +662,7 @@ class ProductCard extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 13.5 * scale,
                   height: 1,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: FontWeight.w700,
                   color: const Color(0xFF070707),
                 ),
               ),
@@ -773,10 +775,10 @@ class ProductDetailsSheet extends StatelessWidget {
         // Image
         SizedBox(
           width: double.infinity,
-          height: 460,
+          height: 410,
           child: AppImage(
             imageUrl: product.image,
-            fit: BoxFit.contain,
+            fit: BoxFit.fill,
             alignment: Alignment.center,
           ),
         ),
@@ -854,7 +856,7 @@ class ProductDetailsSheet extends StatelessWidget {
         textAlign: TextAlign.center,
         style: const TextStyle(
           fontSize: 17,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w700,
           color: Color(0xFF111111),
         ),
       ),
@@ -925,7 +927,7 @@ class ProductDetailsSheet extends StatelessWidget {
                         '126 отзывов',
                         style: TextStyle(
                           fontSize: 13,
-                          fontWeight: FontWeight.w400,
+                          fontWeight: FontWeight.w500,
                           color: Color(0xFF8F8F94),
                         ),
                       ),
@@ -936,7 +938,7 @@ class ProductDetailsSheet extends StatelessWidget {
                     '@${product.brand.toLowerCase().replaceAll(' ', '')}',
                     style: const TextStyle(
                       fontSize: 13,
-                      fontWeight: FontWeight.w400,
+                      fontWeight: FontWeight.w500,
                       color: Color(0xFF8F8F94),
                     ),
                   ),
@@ -968,7 +970,7 @@ class ProductDetailsSheet extends StatelessWidget {
               'НАПИСАТЬ ПРОДАВЦУ',
               style: TextStyle(
                 fontSize: 15,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w500,
                 letterSpacing: 2.5,
                 color: Colors.white,
               ),
@@ -1045,7 +1047,7 @@ class _FilterRow extends StatelessWidget {
               title,
               style: const TextStyle(
                 fontSize: 14.5,
-                fontWeight: FontWeight.w400,
+                fontWeight: FontWeight.w500,
                 color: Color(0xFF0B0B0B),
               ),
             ),
@@ -1096,7 +1098,7 @@ class _SheetOption extends StatelessWidget {
                 label,
                 style: const TextStyle(
                   fontSize: 15,
-                  fontWeight: FontWeight.w400,
+                  fontWeight: FontWeight.w500,
                   color: Color(0xFF0B0B0B),
                 ),
                 maxLines: 1,

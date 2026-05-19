@@ -228,13 +228,15 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final topInset = MediaQuery.of(context).viewPadding.top;
+
     return GestureDetector(
       onTap: () => FocusScope.of(context).unfocus(),
       child: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
         padding: EdgeInsets.fromLTRB(
           widget.sidePadding,
-          14,
+          topInset + 14,
           widget.sidePadding,
           110,
         ),
@@ -279,7 +281,7 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
                 'Опубликовать образ',
                 style: TextStyle(
                   fontSize: 16,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w500,
                   color: Color(0xFF0B0B0B),
                 ),
               ),
@@ -309,7 +311,7 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
               '+',
               style: TextStyle(
                 fontSize: 24,
-                fontWeight: FontWeight.w300,
+                fontWeight: FontWeight.w500,
                 color: Color(0xFF0B0B0B),
               ),
             ),

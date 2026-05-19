@@ -3,15 +3,19 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'core/app_typography.dart';
 import 'core/supabase_config.dart';
 import 'data/app_repository.dart';
 import 'models/created_outfit.dart';
 import 'models/product.dart';
 import 'screens/catalog_screen.dart';
 import 'screens/create_screen.dart';
+import 'screens/login_screen.dart';
 import 'screens/messages_screen.dart';
+import 'screens/outfit_create_screen.dart';
 import 'screens/outfits_screen.dart';
 import 'screens/outfit_only_item_screen.dart';
+import 'screens/phone_login_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/publish_outfit_screen.dart';
 import 'widgets/app_bottom_nav.dart';
@@ -47,7 +51,11 @@ class FashionApp extends StatelessWidget {
       title: 'Fashion App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        fontFamily: '.SF Pro Text',
+        fontFamily: 'Montserrat',
+        textTheme: _montserratMediumTextTheme(ThemeData.light().textTheme),
+        primaryTextTheme: _montserratMediumTextTheme(
+          ThemeData.light().primaryTextTheme,
+        ),
         scaffoldBackgroundColor: Colors.white,
         colorScheme: const ColorScheme.light(
           primary: Color(0xFF070707),
@@ -69,6 +77,32 @@ class FashionAppWithPreview extends StatelessWidget {
       builder: (context) => const FashionApp(),
     );
   }
+}
+
+TextTheme _montserratMediumTextTheme(TextTheme base) {
+  TextStyle? medium(TextStyle? style) => style?.copyWith(
+    fontFamily: AppTypography.fontFamily,
+    fontWeight: AppTypography.medium,
+    letterSpacing: 0,
+  );
+
+  return base.copyWith(
+    displayLarge: medium(base.displayLarge),
+    displayMedium: medium(base.displayMedium),
+    displaySmall: medium(base.displaySmall),
+    headlineLarge: medium(base.headlineLarge),
+    headlineMedium: medium(base.headlineMedium),
+    headlineSmall: medium(base.headlineSmall),
+    titleLarge: medium(base.titleLarge),
+    titleMedium: medium(base.titleMedium),
+    titleSmall: medium(base.titleSmall),
+    bodyLarge: medium(base.bodyLarge),
+    bodyMedium: medium(base.bodyMedium),
+    bodySmall: medium(base.bodySmall),
+    labelLarge: medium(base.labelLarge),
+    labelMedium: medium(base.labelMedium),
+    labelSmall: medium(base.labelSmall),
+  );
 }
 
 enum _CreateMode {
@@ -109,6 +143,10 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _changeTab(int index) {
+    if (!_repository.isSignedIn && (index == 3 || index == 4)) {
+      _openLoginScreen(onSignedIn: () => _changeTab(index));
+      return;
+    }
     setState(() {
       _currentIndex = index;
       _createMode = _CreateMode.none;
@@ -118,15 +156,36 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _openCreateOutfit() {
-    setState(() {
-      _createMode = _CreateMode.createOutfit;
-      _currentIndex = 2;
-      _returnToPublishOutfitAfterItem = false;
-      _createItemForOutfitOnly = false;
-    });
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (routeContext) => OutfitCreateScreen(
+          myProducts: _repository.myProducts,
+          likedProducts: _repository.products
+              .where((product) => product.isLiked && !product.isHidden)
+              .toList(),
+          defaultAccessories: _repository.defaultAccessories,
+          myAccessories: _repository.myAccessories,
+          authorName: _repository.profile.name,
+          authorHandle: _repository.profile.handle,
+          onPublish: (outfit) =>
+              _publishOutfitFromCreateRoute(routeContext, outfit),
+          onCreateAccessory: (imageFile, {required bool isDefault}) {
+            return _repository.createOutfitAccessory(
+              imageFile: imageFile,
+              isDefault: isDefault,
+            );
+          },
+        ),
+      ),
+    );
   }
 
   void _openPublishOutfit() {
+    if (!_repository.isSignedIn) {
+      _openLoginScreen(onSignedIn: _openPublishOutfit);
+      return;
+    }
     setState(() {
       _createMode = _CreateMode.publishOutfit;
       _currentIndex = 2;
@@ -136,6 +195,10 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _openCreateItem() {
+    if (!_repository.isSignedIn) {
+      _openLoginScreen(onSignedIn: _openCreateItem);
+      return;
+    }
     setState(() {
       _createMode = _CreateMode.createItem;
       _currentIndex = 2;
@@ -146,6 +209,23 @@ class _AppShellState extends State<AppShell> {
 
   Future<void> _publishOutfit(CreatedOutfit outfit) async {
     await _repository.publishOutfit(outfit);
+    setState(() {
+      _currentIndex = 1;
+      _createMode = _CreateMode.none;
+      _draftOutfitProducts.clear();
+      _returnToPublishOutfitAfterItem = false;
+      _createItemForOutfitOnly = false;
+    });
+  }
+
+  Future<void> _publishOutfitFromCreateRoute(
+    BuildContext routeContext,
+    CreatedOutfit outfit,
+  ) async {
+    final navigator = Navigator.of(routeContext, rootNavigator: true);
+    await _repository.publishOutfit(outfit);
+    if (!mounted) return;
+    navigator.popUntil((route) => route.isFirst);
     setState(() {
       _currentIndex = 1;
       _createMode = _CreateMode.none;
@@ -205,6 +285,10 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _showCreateSheet() {
+    if (!_repository.isSignedIn) {
+      _openLoginScreen(onSignedIn: _showCreateSheet);
+      return;
+    }
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -227,6 +311,10 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _showOutfitItemChoiceSheet() {
+    if (!_repository.isSignedIn) {
+      _openLoginScreen(onSignedIn: _showOutfitItemChoiceSheet);
+      return;
+    }
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -256,6 +344,54 @@ class _AppShellState extends State<AppShell> {
     );
   }
 
+  void _openLoginScreen({VoidCallback? onSignedIn}) {
+    var didComplete = false;
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (loginContext) => AnimatedBuilder(
+          animation: _repository,
+          builder: (context, _) {
+            if (_repository.isSignedIn && !didComplete) {
+              didComplete = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (Navigator.of(loginContext).canPop()) {
+                  Navigator.of(loginContext).pop();
+                }
+                onSignedIn?.call();
+              });
+            }
+            return LoginScreen(
+              onClose: () => Navigator.of(loginContext).pop(),
+              onYandexTap: () {
+                _repository.signInWithYandex();
+              },
+              onVkTap: () {
+                _repository.signInWithVk();
+              },
+              onPhoneTap: () {
+                Navigator.of(loginContext).push(
+                  MaterialPageRoute<void>(
+                    builder: (phoneContext) => PhoneLoginScreen(
+                      onBack: () => Navigator.of(phoneContext).pop(),
+                      onClose: () {
+                        final navigator = Navigator.of(phoneContext);
+                        navigator.pop();
+                        if (navigator.canPop()) {
+                          navigator.pop();
+                        }
+                      },
+                    ),
+                  ),
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -278,7 +414,11 @@ class _AppShellState extends State<AppShell> {
         }
 
         return Scaffold(
+          backgroundColor: _currentIndex == 1
+              ? const Color(0xFFF4F4F4)
+              : Colors.white,
           body: SafeArea(
+            top: false,
             bottom: false,
             child: IndexedStack(
               index: _currentIndex,
@@ -306,6 +446,8 @@ class _AppShellState extends State<AppShell> {
                 MessagesScreen(
                   threads: _repository.threads,
                   onSendMessage: _repository.sendMessage,
+                  onSearchUsers: _repository.searchUserProfiles,
+                  onStartDirectChat: _repository.startDirectChat,
                   currentUserId: _repository.currentUserId,
                   threadsListenable: _repository,
                   resolveThread: _repository.threadById,
@@ -345,9 +487,23 @@ class _AppShellState extends State<AppShell> {
   Widget _buildCreateScreen() {
     switch (_createMode) {
       case _CreateMode.createOutfit:
-        return _CreateOutfitComingSoonScreen(
-          sidePadding: _sidePadding,
+        return OutfitCreateScreen(
           onClose: () => _changeTab(0),
+          myProducts: _repository.myProducts,
+          likedProducts: _repository.products
+              .where((product) => product.isLiked && !product.isHidden)
+              .toList(),
+          defaultAccessories: _repository.defaultAccessories,
+          myAccessories: _repository.myAccessories,
+          authorName: _repository.profile.name,
+          authorHandle: _repository.profile.handle,
+          onPublish: _publishOutfit,
+          onCreateAccessory: (imageFile, {required bool isDefault}) {
+            return _repository.createOutfitAccessory(
+              imageFile: imageFile,
+              isDefault: isDefault,
+            );
+          },
         );
       case _CreateMode.publishOutfit:
         return _buildPublishOutfitScreen();
@@ -504,7 +660,7 @@ class _OutfitItemChoiceTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 14.5,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w500,
                       color: Color(0xFF111111),
                     ),
                   ),
@@ -531,8 +687,9 @@ class _OutfitItemChoiceTile extends StatelessWidget {
   }
 }
 
-class _CreateOutfitComingSoonScreen extends StatelessWidget {
-  const _CreateOutfitComingSoonScreen({
+class CreateOutfitComingSoonScreen extends StatelessWidget {
+  const CreateOutfitComingSoonScreen({
+    super.key,
     required this.sidePadding,
     required this.onClose,
   });
@@ -542,8 +699,15 @@ class _CreateOutfitComingSoonScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final topInset = MediaQuery.of(context).viewPadding.top;
+
     return Padding(
-      padding: EdgeInsets.fromLTRB(sidePadding, 14, sidePadding, 110),
+      padding: EdgeInsets.fromLTRB(
+        sidePadding,
+        topInset + 14,
+        sidePadding,
+        110,
+      ),
       child: Column(
         children: [
           SizedBox(
@@ -569,7 +733,7 @@ class _CreateOutfitComingSoonScreen extends StatelessWidget {
                       'Создать образ',
                       style: TextStyle(
                         fontSize: 16,
-                        fontWeight: FontWeight.w700,
+                        fontWeight: FontWeight.w500,
                         color: Color(0xFF0B0B0B),
                       ),
                     ),
@@ -586,7 +750,7 @@ class _CreateOutfitComingSoonScreen extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w500,
                   color: Color(0xFF111111),
                 ),
               ),

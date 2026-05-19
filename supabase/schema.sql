@@ -40,6 +40,7 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   name text not null,
   handle text not null unique,
+  avatar_url text not null default '',
   city text not null default 'Москва',
   rating numeric not null default 4.8,
   sales_count integer not null default 0,
@@ -47,6 +48,9 @@ create table if not exists public.profiles (
 );
 
 alter table public.profiles enable row level security;
+
+alter table public.profiles
+  add column if not exists avatar_url text not null default '';
 
 drop policy if exists "Public profiles are readable" on public.profiles;
 create policy "Public profiles are readable"
@@ -75,13 +79,15 @@ create table if not exists public.outfits (
   author_handle text not null default '@user',
   photos text[] not null default '{}',
   items jsonb not null default '[]'::jsonb,
+  preview_layout jsonb,
   created_at timestamptz not null default now()
 );
 
 alter table public.outfits
   add column if not exists owner_id uuid references auth.users(id) on delete set null,
   add column if not exists author_name text not null default 'Автор',
-  add column if not exists author_handle text not null default '@user';
+  add column if not exists author_handle text not null default '@user',
+  add column if not exists preview_layout jsonb;
 
 alter table public.outfits enable row level security;
 
@@ -105,6 +111,10 @@ create table if not exists public.message_threads (
   buyer_name text not null default 'Покупатель',
   product_title text not null,
   product_image text not null default '',
+  buyer_handle text not null default '',
+  seller_handle text not null default '',
+  buyer_avatar text not null default '',
+  seller_avatar text not null default '',
   last_message text not null,
   unread_count integer not null default 0,
   messages jsonb not null default '[]'::jsonb,
@@ -112,11 +122,22 @@ create table if not exists public.message_threads (
 );
 
 alter table public.message_threads
+  alter column id type text using id::text,
   add column if not exists buyer_id uuid references auth.users(id) on delete cascade,
   add column if not exists seller_id uuid references auth.users(id) on delete cascade,
   add column if not exists product_id text,
+  add column if not exists seller_name text not null default 'Продавец',
   add column if not exists buyer_name text not null default 'Покупатель',
-  add column if not exists product_image text not null default '';
+  add column if not exists product_title text not null default '',
+  add column if not exists product_image text not null default '',
+  add column if not exists buyer_handle text not null default '',
+  add column if not exists seller_handle text not null default '',
+  add column if not exists buyer_avatar text not null default '',
+  add column if not exists seller_avatar text not null default '',
+  add column if not exists last_message text not null default '',
+  add column if not exists unread_count integer not null default 0,
+  add column if not exists messages jsonb not null default '[]'::jsonb,
+  add column if not exists updated_at timestamptz not null default now();
 
 alter table public.message_threads enable row level security;
 
@@ -139,3 +160,47 @@ create policy "Users can update their message threads"
   to authenticated
   using (auth.uid() = buyer_id or auth.uid() = seller_id)
   with check (auth.uid() = buyer_id or auth.uid() = seller_id);
+
+create table if not exists public.outfit_accessories (
+  id uuid primary key,
+  title text not null default 'Аксессуар',
+  scope text not null default 'private' check (scope in ('default', 'private')),
+  owner_id uuid references auth.users(id) on delete cascade,
+  original_image text not null default '',
+  cutout_image text,
+  background_status text not null default 'queued',
+  background_error text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.outfit_accessories
+  add column if not exists title text not null default 'Аксессуар',
+  add column if not exists scope text not null default 'private',
+  add column if not exists owner_id uuid references auth.users(id) on delete cascade,
+  add column if not exists original_image text not null default '',
+  add column if not exists cutout_image text,
+  add column if not exists background_status text not null default 'queued',
+  add column if not exists background_error text,
+  add column if not exists created_at timestamptz not null default now();
+
+alter table public.outfit_accessories enable row level security;
+
+drop policy if exists "Readable outfit accessories" on public.outfit_accessories;
+create policy "Readable outfit accessories"
+  on public.outfit_accessories for select
+  using (scope = 'default' or auth.uid() = owner_id);
+
+drop policy if exists "Authenticated users can create outfit accessories" on public.outfit_accessories;
+create policy "Authenticated users can create outfit accessories"
+  on public.outfit_accessories for insert
+  to authenticated
+  with check (scope = 'default' or auth.uid() = owner_id);
+
+drop policy if exists "Users can update their outfit accessories" on public.outfit_accessories;
+create policy "Users can update their outfit accessories"
+  on public.outfit_accessories for update
+  to authenticated
+  using (auth.uid() = owner_id)
+  with check (auth.uid() = owner_id);
+
+notify pgrst, 'reload schema';

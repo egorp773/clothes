@@ -5,6 +5,9 @@ import '../models/product.dart';
 import '../widgets/app_image.dart';
 import 'product_screen.dart';
 
+const _outfitMediaBackground = Color(0xFFF4F4F4);
+const _outfitItemBackground = Color(0xFFFFFFFF);
+
 class OutfitsScreen extends StatefulWidget {
   final double scale;
   final double sidePadding;
@@ -28,7 +31,6 @@ class OutfitsScreen extends StatefulWidget {
 class _OutfitsScreenState extends State<OutfitsScreen> {
   bool _isLiked = false;
   int _likesCount = 79;
-  int _currentPhotoIndex = 0;
   late final PageController _pageController;
 
   final List<_OutfitProduct> _products = [
@@ -75,10 +77,6 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
       _isLiked = !_isLiked;
       _likesCount += _isLiked ? 1 : -1;
     });
-  }
-
-  void _onPageChanged(int index) {
-    setState(() => _currentPhotoIndex = index);
   }
 
   void _showAuthorProfile() {
@@ -174,13 +172,15 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final topInset = MediaQuery.of(context).viewPadding.top;
+
     return Container(
-      color: Colors.white,
+      color: _outfitMediaBackground,
       child: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
         padding: EdgeInsets.fromLTRB(
           0,
-          18 * widget.scale,
+          topInset + 4 * widget.scale,
           0,
           86 * widget.scale,
         ),
@@ -190,9 +190,9 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
             Padding(
               padding: EdgeInsets.fromLTRB(
                 widget.sidePadding,
-                14,
+                8,
                 widget.sidePadding,
-                18,
+                14,
               ),
               child: _Header(
                 scale: widget.scale,
@@ -224,11 +224,9 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                   products: _products,
                   isLiked: _isLiked,
                   likesCount: _likesCount,
-                  currentPhotoIndex: _currentPhotoIndex,
                   pageController: _pageController,
                   onLikeTap: _toggleLike,
                   onAuthorTap: _showAuthorProfile,
-                  onPageChanged: _onPageChanged,
                   onProductTap: _showProductDetails,
                 ),
               ),
@@ -256,7 +254,7 @@ class _Header extends StatelessWidget {
               'Образы',
               style: TextStyle(
                 fontSize: 22,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w500,
                 letterSpacing: -0.35,
                 height: 1,
                 color: const Color(0xFF070707),
@@ -303,7 +301,6 @@ class _PublishedOutfitCard extends StatefulWidget {
 
 class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
   late final PageController _pageController;
-  int _currentPhotoIndex = 0;
 
   Map<String, Product> get _productsById {
     return {for (final product in widget.products) product.id: product};
@@ -344,11 +341,9 @@ class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
               _HeroMedia(
                 scale: widget.scale,
                 photos: widget.outfit.photos,
+                previewBackgroundColor: widget.outfit.previewBackgroundColor,
+                layoutItems: widget.outfit.layoutItems,
                 pageController: _pageController,
-                currentPhotoIndex: _currentPhotoIndex,
-                onPageChanged: (index) {
-                  setState(() => _currentPhotoIndex = index);
-                },
               ),
               _ProductsSection(
                 scale: widget.scale,
@@ -391,11 +386,9 @@ class _OutfitCard extends StatelessWidget {
     required this.products,
     required this.isLiked,
     required this.likesCount,
-    required this.currentPhotoIndex,
     required this.pageController,
     required this.onLikeTap,
     required this.onAuthorTap,
-    required this.onPageChanged,
     required this.onProductTap,
   });
 
@@ -403,11 +396,9 @@ class _OutfitCard extends StatelessWidget {
   final List<_OutfitProduct> products;
   final bool isLiked;
   final int likesCount;
-  final int currentPhotoIndex;
   final PageController pageController;
   final VoidCallback onLikeTap;
   final VoidCallback onAuthorTap;
-  final ValueChanged<int> onPageChanged;
   final void Function(_OutfitProduct) onProductTap;
 
   @override
@@ -430,12 +421,7 @@ class _OutfitCard extends StatelessWidget {
         children: [
           Column(
             children: [
-              _HeroMedia(
-                scale: scale,
-                pageController: pageController,
-                currentPhotoIndex: currentPhotoIndex,
-                onPageChanged: onPageChanged,
-              ),
+              _HeroMedia(scale: scale, pageController: pageController),
               _ProductsSection(
                 scale: scale,
                 products: products,
@@ -467,16 +453,16 @@ class _HeroMedia extends StatelessWidget {
   const _HeroMedia({
     required this.scale,
     this.photos = const [],
+    this.previewBackgroundColor,
+    this.layoutItems = const [],
     required this.pageController,
-    required this.currentPhotoIndex,
-    required this.onPageChanged,
   });
 
   final double scale;
   final List<String> photos;
+  final int? previewBackgroundColor;
+  final List<OutfitLayoutItem> layoutItems;
   final PageController pageController;
-  final int currentPhotoIndex;
-  final ValueChanged<int> onPageChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -488,43 +474,41 @@ class _HeroMedia extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            PageView.builder(
-              controller: pageController,
-              onPageChanged: onPageChanged,
-              itemCount: photos.isEmpty ? 2 : photos.length,
-              itemBuilder: (context, index) {
-                if (photos.isNotEmpty) {
-                  return AppImage(
-                    imageUrl: photos[index],
-                    fit: BoxFit.contain,
-                    alignment: Alignment.topCenter,
-                  );
-                }
-                return const DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Color(0xFFF0F0F1),
-                        Color(0xFFE6E6E8),
-                        Color(0xFFF8F8F8),
-                      ],
+            if (layoutItems.isNotEmpty)
+              _OutfitLayoutCanvas(
+                backgroundColor: Color(
+                  previewBackgroundColor ?? _outfitMediaBackground.toARGB32(),
+                ),
+                items: layoutItems,
+              )
+            else
+              PageView.builder(
+                controller: pageController,
+                itemCount: photos.isEmpty ? 2 : photos.length,
+                itemBuilder: (context, index) {
+                  if (photos.isNotEmpty) {
+                    return AppImage(
+                      imageUrl: photos[index],
+                      fit: BoxFit.fill,
+                      alignment: Alignment.topCenter,
+                      placeholderColor: _outfitMediaBackground,
+                    );
+                  }
+                  return const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Color(0xFFF8F8F8),
+                          Color(0xFFF4F4F4),
+                          Color(0xFFEFEFEF),
+                        ],
+                      ),
                     ),
-                  ),
-                );
-              },
-            ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 62 * scale,
-              child: _PaginationDots(
-                scale: scale,
-                currentIndex: currentPhotoIndex,
-                totalDots: photos.isEmpty ? 2 : photos.length,
+                  );
+                },
               ),
-            ),
           ],
         ),
       ),
@@ -532,34 +516,55 @@ class _HeroMedia extends StatelessWidget {
   }
 }
 
-class _PaginationDots extends StatelessWidget {
-  const _PaginationDots({
-    required this.scale,
-    required this.currentIndex,
-    required this.totalDots,
+class _OutfitLayoutCanvas extends StatelessWidget {
+  const _OutfitLayoutCanvas({
+    required this.backgroundColor,
+    required this.items,
   });
 
-  final double scale;
-  final int currentIndex;
-  final int totalDots;
+  final Color backgroundColor;
+  final List<OutfitLayoutItem> items;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(totalDots, (index) {
-        return Container(
-          width: 7 * scale,
-          height: 7 * scale,
-          margin: EdgeInsets.symmetric(horizontal: 4 * scale),
-          decoration: BoxDecoration(
-            color: currentIndex == index
-                ? const Color(0xFF111111)
-                : const Color(0xFFD2D2D6),
-            shape: BoxShape.circle,
-          ),
-        );
-      }),
+    return DecoratedBox(
+      decoration: BoxDecoration(color: backgroundColor),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              for (final item in items)
+                Positioned.fill(
+                  child: Center(
+                    child: Transform.translate(
+                      offset: Offset(
+                        item.offsetX * constraints.maxWidth,
+                        item.offsetY * constraints.maxHeight,
+                      ),
+                      child: Transform.rotate(
+                        angle: item.rotation,
+                        child: Transform.scale(
+                          scale: item.scale,
+                          child: SizedBox(
+                            width: constraints.maxWidth * item.widthFactor,
+                            height: constraints.maxHeight * item.heightFactor,
+                            child: AppImage(
+                              imageUrl: item.image,
+                              fit: BoxFit.contain,
+                              alignment: Alignment.center,
+                              placeholderColor: Colors.transparent,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
     );
   }
 }
@@ -641,7 +646,7 @@ class _AuthorCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11.5 * scale,
-                      fontWeight: FontWeight.w400,
+                      fontWeight: FontWeight.w500,
                       height: 1,
                       color: const Color(0xFF8F8F94),
                     ),
@@ -733,7 +738,7 @@ class _ProductsSectionState extends State<_ProductsSection> {
       child: Column(
         children: [
           SizedBox(
-            height: 172 * widget.scale,
+            height: 86 * widget.scale,
             child: Stack(
               children: [
                 ListView.separated(
@@ -797,17 +802,17 @@ class _ProductCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: SizedBox(
-        width: 160 * scale,
+        width: 80 * scale,
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: _outfitItemBackground,
             borderRadius: BorderRadius.circular(5 * scale),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(5 * scale),
             child: product.image == null || product.image!.isEmpty
                 ? Container(
-                    color: Colors.white,
+                    color: _outfitItemBackground,
                     child: Icon(
                       product.icon,
                       size: 28 * scale,
@@ -818,7 +823,7 @@ class _ProductCard extends StatelessWidget {
                     imageUrl: product.image!,
                     fit: BoxFit.contain,
                     alignment: Alignment.center,
-                    placeholderColor: Colors.white,
+                    placeholderColor: _outfitItemBackground,
                   ),
           ),
         ),

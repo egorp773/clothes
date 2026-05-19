@@ -70,7 +70,7 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
     if (!_canAdd) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Р”РѕР±Р°РІСЊС‚Рµ С„РѕС‚Рѕ Рё РЅР°Р·РІР°РЅРёРµ'),
+          content: Text('Добавьте фото и название'),
           behavior: SnackBarBehavior.floating,
           duration: Duration(seconds: 2),
         ),
@@ -89,7 +89,7 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
       setState(() => _isSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ С„РѕС‚Рѕ'),
+          content: Text('Не удалось загрузить фото'),
           behavior: SnackBarBehavior.floating,
           duration: Duration(seconds: 2),
         ),
@@ -109,7 +109,7 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
         image: uploaded,
         images: [uploaded],
         outfitImages: const [],
-        category: 'РћР±СЂР°Р·',
+        category: 'Образ',
         brand: '',
         size: '',
         color: '',
@@ -166,10 +166,10 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
           const Expanded(
             child: Center(
               child: Text(
-                'Р’РµС‰СЊ РґР»СЏ РѕР±СЂР°Р·Р°',
+                'Вещь для образа',
                 style: TextStyle(
                   fontSize: 16,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w500,
                   color: Color(0xFF0B0B0B),
                 ),
               ),
@@ -201,7 +201,7 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
                     '+',
                     style: TextStyle(
                       fontSize: 30,
-                      fontWeight: FontWeight.w300,
+                      fontWeight: FontWeight.w500,
                       color: Color(0xFF0B0B0B),
                     ),
                   ),
@@ -247,8 +247,8 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
         color: Color(0xFF0B0B0B),
       ),
       decoration: const InputDecoration(
-        labelText: 'РќР°Р·РІР°РЅРёРµ',
-        hintText: 'РќР°РїСЂРёРјРµСЂ: СЂСѓР±Р°С€РєР°',
+        labelText: 'Название',
+        hintText: 'Например: рубашка',
         floatingLabelStyle: TextStyle(color: Color(0xFF0B0B0B)),
         enabledBorder: UnderlineInputBorder(
           borderSide: BorderSide(color: Color(0xFFE2E2E6)),
@@ -281,7 +281,7 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
                   ),
                 )
               : Text(
-                  'Р”РѕР±Р°РІРёС‚СЊ РІ РѕР±СЂР°Р·',
+                  'Добавить в образ',
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,

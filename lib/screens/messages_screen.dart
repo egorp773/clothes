@@ -1,12 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../models/app_profile.dart';
 import '../models/message_thread.dart';
+import '../widgets/app_image.dart';
 
-class MessagesScreen extends StatelessWidget {
+const _ink = Color(0xFF070707);
+const _muted = Color(0xFF7A7A82);
+const _line = Color(0xFFE8E8EA);
+const _soft = Color(0xFFF5F5F6);
+const _chatBg = Color(0xFFF1F2F4);
+
+class MessagesScreen extends StatefulWidget {
   const MessagesScreen({
     super.key,
     required this.threads,
     required this.onSendMessage,
+    required this.onSearchUsers,
+    required this.onStartDirectChat,
     required this.currentUserId,
     required this.threadsListenable,
     required this.resolveThread,
@@ -14,58 +26,293 @@ class MessagesScreen extends StatelessWidget {
 
   final List<MessageThread> threads;
   final Future<void> Function(String threadId, String text) onSendMessage;
+  final Future<List<AppUserProfile>> Function(String query) onSearchUsers;
+  final Future<MessageThread?> Function(AppUserProfile user) onStartDirectChat;
   final String currentUserId;
   final Listenable threadsListenable;
   final MessageThread? Function(String threadId) resolveThread;
 
   @override
+  State<MessagesScreen> createState() => _MessagesScreenState();
+}
+
+class _MessagesScreenState extends State<MessagesScreen> {
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _searchDebounce;
+  List<AppUserProfile> _searchResults = const [];
+  bool _isSearching = false;
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged(String value) {
+    _searchDebounce?.cancel();
+    setState(() => _query = value.trim());
+    _searchDebounce = Timer(const Duration(milliseconds: 240), () async {
+      final clean = _query.replaceAll('@', '');
+      if (clean.length < 2) {
+        if (!mounted) return;
+        setState(() {
+          _searchResults = const [];
+          _isSearching = false;
+        });
+        return;
+      }
+
+      if (mounted) setState(() => _isSearching = true);
+      final results = await widget.onSearchUsers(_query);
+      if (!mounted) return;
+      setState(() {
+        _searchResults = results;
+        _isSearching = false;
+      });
+    });
+  }
+
+  Future<void> _openThread(MessageThread thread) async {
+    await Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ChatScreen(
+          thread: thread,
+          onSendMessage: widget.onSendMessage,
+          currentUserId: widget.currentUserId,
+          threadsListenable: widget.threadsListenable,
+          resolveThread: widget.resolveThread,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openUser(AppUserProfile user) async {
+    final thread = await widget.onStartDirectChat(user);
+    if (!mounted || thread == null) return;
+    _searchController.clear();
+    setState(() {
+      _query = '';
+      _searchResults = const [];
+    });
+    await _openThread(thread);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.only(top: 14, left: 18, right: 18),
-          child: Text(
-            'Сообщения',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF070707),
+    final isSearchMode = _query.isNotEmpty;
+    return ColoredBox(
+      color: Colors.white,
+      child: Column(
+        children: [
+          _MessagesHeader(
+            controller: _searchController,
+            onChanged: _onSearchChanged,
+            totalThreads: widget.threads.length,
+          ),
+          Expanded(
+            child: isSearchMode
+                ? _SearchResults(
+                    isSearching: _isSearching,
+                    query: _query,
+                    results: _searchResults,
+                    onTapUser: _openUser,
+                  )
+                : widget.threads.isEmpty
+                ? const _EmptyMessages()
+                : ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 112),
+                    physics: const BouncingScrollPhysics(),
+                    itemCount: widget.threads.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 1, indent: 84, color: _line),
+                    itemBuilder: (context, index) {
+                      final thread = widget.threads[index];
+                      return _ThreadTile(
+                        thread: thread,
+                        currentUserId: widget.currentUserId,
+                        onTap: () => _openThread(thread),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessagesHeader extends StatelessWidget {
+  const _MessagesHeader({
+    required this.controller,
+    required this.onChanged,
+    required this.totalThreads,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final int totalThreads;
+
+  @override
+  Widget build(BuildContext context) {
+    final topInset = MediaQuery.of(context).viewPadding.top;
+
+    return Container(
+      padding: EdgeInsets.fromLTRB(18, topInset + 14, 18, 14),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: _line, width: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Сообщения',
+                  style: TextStyle(
+                    fontSize: 25,
+                    height: 1,
+                    fontWeight: FontWeight.w500,
+                    color: _ink,
+                  ),
+                ),
+              ),
+              Container(
+                height: 32,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: _soft,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Center(
+                  child: Text(
+                    totalThreads.toString(),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: _ink,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _SearchField(controller: controller, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
+}
+
+class _SearchField extends StatelessWidget {
+  const _SearchField({required this.controller, required this.onChanged});
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 42,
+      child: TextField(
+        controller: controller,
+        onChanged: onChanged,
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: 'Найти человека по @username',
+          hintStyle: const TextStyle(color: Color(0xFF9A9AA1)),
+          prefixIcon: const Icon(
+            Icons.search,
+            size: 20,
+            color: Color(0xFF9A9AA1),
+          ),
+          filled: true,
+          fillColor: _soft,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide.none,
+          ),
+          contentPadding: EdgeInsets.zero,
+        ),
+        style: const TextStyle(fontSize: 15, color: _ink),
+      ),
+    );
+  }
+}
+
+class _SearchResults extends StatelessWidget {
+  const _SearchResults({
+    required this.isSearching,
+    required this.query,
+    required this.results,
+    required this.onTapUser,
+  });
+
+  final bool isSearching;
+  final String query;
+  final List<AppUserProfile> results;
+  final ValueChanged<AppUserProfile> onTapUser;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isSearching) {
+      return const Center(
+        child: CircularProgressIndicator(strokeWidth: 2, color: _ink),
+      );
+    }
+    if (results.isEmpty) {
+      return _CenteredHint(
+        title: query.replaceAll('@', '').length < 2
+            ? 'Введите минимум 2 символа'
+            : 'Пользователь не найден',
+        subtitle: 'Ищи по username, например @seller',
+        icon: Icons.person_search_outlined,
+      );
+    }
+
+    return ListView.separated(
+      padding: const EdgeInsets.only(bottom: 112),
+      itemCount: results.length,
+      separatorBuilder: (context, index) =>
+          const Divider(height: 1, indent: 84, color: _line),
+      itemBuilder: (context, index) {
+        final profile = results[index];
+        return ListTile(
+          onTap: () => onTapUser(profile),
+          minVerticalPadding: 12,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 18),
+          leading: _Avatar(
+            imageUrl: profile.avatarUrl,
+            name: profile.name,
+            isSquare: false,
+          ),
+          title: Text(
+            profile.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 16,
+              height: 1.15,
+              fontWeight: FontWeight.w500,
+              color: _ink,
             ),
           ),
-        ),
-        Expanded(
-          child: threads.isEmpty
-              ? const _EmptyMessages()
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(18, 22, 18, 120),
-                  physics: const BouncingScrollPhysics(),
-                  itemCount: threads.length,
-                  separatorBuilder: (context, index) =>
-                      const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final thread = threads[index];
-                    return _ThreadTile(
-                      thread: thread,
-                      currentUserId: currentUserId,
-                      onTap: () {
-                        Navigator.of(context, rootNavigator: true).push(
-                          MaterialPageRoute<void>(
-                            builder: (context) => ChatScreen(
-                              thread: thread,
-                              onSendMessage: onSendMessage,
-                              currentUserId: currentUserId,
-                              threadsListenable: threadsListenable,
-                              resolveThread: resolveThread,
-                            ),
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-        ),
-      ],
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: Text(
+              profile.handle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14, color: _muted),
+            ),
+          ),
+          trailing: const Icon(Icons.chevron_right, color: Color(0xFFB8B8BE)),
+        );
+      },
     );
   }
 }
@@ -101,16 +348,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _thread = widget.thread;
-    _messages = _thread.messages.isNotEmpty
-        ? List.of(_thread.messages)
-        : [
-            ChatMessage(
-              id: '${_thread.id}-initial',
-              text: _thread.lastMessage,
-              createdAt: _thread.updatedAt,
-              isMine: true,
-            ),
-          ];
+    _messages = List.of(_thread.messages);
     widget.threadsListenable.addListener(_refreshThread);
   }
 
@@ -126,16 +364,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() {
       _thread = latest;
-      _messages = latest.messages.isNotEmpty
-          ? List.of(latest.messages)
-          : [
-              ChatMessage(
-                id: '${latest.id}-initial',
-                text: latest.lastMessage,
-                createdAt: latest.updatedAt,
-                isMine: true,
-              ),
-            ];
+      _messages = List.of(latest.messages);
     });
   }
 
@@ -180,36 +409,49 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: _chatBg,
       body: SafeArea(
+        top: false,
         child: Column(
           children: [
             _ChatHeader(thread: _thread, currentUserId: widget.currentUserId),
             Expanded(
-              child: ListView.separated(
-                controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-                physics: const BouncingScrollPhysics(),
-                itemCount: _messages.length,
-                separatorBuilder: (context, index) =>
-                    const SizedBox(height: 10),
-                itemBuilder: (context, index) {
-                  return _MessageBubble(message: _messages[index]);
-                },
-              ),
+              child: _messages.isEmpty
+                  ? _EmptyChat(thread: _thread)
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(10, 12, 10, 14),
+                      physics: const BouncingScrollPhysics(),
+                      itemCount:
+                          _messages.length + (_thread.isProductChat ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (_thread.isProductChat && index == 0) {
+                          return _ProductContextCard(thread: _thread);
+                        }
+                        final messageIndex =
+                            index - (_thread.isProductChat ? 1 : 0);
+                        final message = _messages[messageIndex];
+                        final previous = messageIndex == 0
+                            ? null
+                            : _messages[messageIndex - 1];
+                        final showDate =
+                            previous == null ||
+                            !_isSameDay(previous.createdAt, message.createdAt);
+                        return Column(
+                          children: [
+                            if (showDate) _DateChip(date: message.createdAt),
+                            _MessageBubble(message: message),
+                            const SizedBox(height: 6),
+                          ],
+                        );
+                      },
+                    ),
             ),
-            AnimatedPadding(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              padding: EdgeInsets.only(bottom: bottomInset),
-              child: _MessageComposer(
-                controller: _controller,
-                isSending: _isSending,
-                onSend: _send,
-              ),
+            _MessageComposer(
+              controller: _controller,
+              isSending: _isSending,
+              onSend: _send,
             ),
           ],
         ),
@@ -223,48 +465,60 @@ class _EmptyMessages extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return const _CenteredHint(
+      title: 'Пока нет сообщений',
+      subtitle: 'Напиши продавцу по вещи или найди человека по username.',
+      icon: Icons.mode_comment_outlined,
+    );
+  }
+}
+
+class _CenteredHint extends StatelessWidget {
+  const _CenteredHint({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+  });
+
+  final String title;
+  final String subtitle;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 92,
-            height: 92,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Color(0xFFF3F3F4),
-            ),
-            child: const Center(
-              child: Icon(
-                Icons.chat_bubble_outline,
-                size: 40,
-                color: Color(0xFF050505),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: const BoxDecoration(
+                color: _soft,
+                shape: BoxShape.circle,
               ),
+              child: Icon(icon, size: 32, color: _ink),
             ),
-          ),
-          const SizedBox(height: 18),
-          const Text(
-            'Пока нет сообщений',
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF070707),
-            ),
-          ),
-          const SizedBox(height: 9),
-          const SizedBox(
-            width: 280,
-            child: Text(
-              'Здесь появятся диалоги с другими пользователями.',
+            const SizedBox(height: 16),
+            Text(
+              title,
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 16,
-                color: Color(0xFF85858B),
-                height: 1.35,
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+                color: _ink,
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 7),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14, height: 1.35, color: _muted),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -283,76 +537,148 @@ class _ThreadTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    final title = thread.otherPartyName(currentUserId);
+    final subtitle = thread.isProductChat
+        ? thread.productTitle
+        : thread.otherPartyHandle(currentUserId);
+    return InkWell(
       onTap: onTap,
-      child: Container(
-        height: 76,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: const Color(0xFFE9E9EC)),
-          borderRadius: BorderRadius.circular(18),
-        ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 10, 14, 10),
         child: Row(
           children: [
-            Container(
-              width: 46,
-              height: 46,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: Color(0xFFF3F3F4),
-              ),
-              child: const Icon(
-                Icons.person_outline,
-                size: 24,
-                color: Color(0xFF050505),
-              ),
-            ),
-            const SizedBox(width: 12),
+            _ThreadAvatar(thread: thread, currentUserId: currentUserId),
+            const SizedBox(width: 14),
             Expanded(
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    thread.otherPartyName(currentUserId),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF070707),
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            height: 1.15,
+                            fontWeight: FontWeight.w500,
+                            color: _ink,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _timeLabel(thread.updatedAt),
+                        style: const TextStyle(fontSize: 12, color: _muted),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    thread.productTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12.5,
-                      color: Color(0xFF8F8F94),
+                  const SizedBox(height: 4),
+                  if (subtitle.isNotEmpty)
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13, color: _muted),
                     ),
-                  ),
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 4),
                   Text(
-                    thread.lastMessage,
+                    thread.lastMessage.isEmpty
+                        ? 'Напишите сообщение'
+                        : thread.lastMessage,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12.5,
-                      color: Color(0xFF111111),
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: thread.lastMessage.isEmpty ? _muted : _ink,
                     ),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, size: 22, color: Color(0xFFB8B8BE)),
           ],
         ),
       ),
     );
+  }
+}
+
+class _ThreadAvatar extends StatelessWidget {
+  const _ThreadAvatar({required this.thread, required this.currentUserId});
+
+  final MessageThread thread;
+  final String currentUserId;
+
+  @override
+  Widget build(BuildContext context) {
+    if (thread.isProductChat) {
+      return _Avatar(
+        imageUrl: thread.productImage,
+        name: thread.productTitle,
+        isSquare: true,
+      );
+    }
+    return _Avatar(
+      imageUrl: thread.otherPartyAvatar(currentUserId),
+      name: thread.otherPartyName(currentUserId),
+      isSquare: false,
+    );
+  }
+}
+
+class _Avatar extends StatelessWidget {
+  const _Avatar({
+    required this.imageUrl,
+    required this.name,
+    required this.isSquare,
+  });
+
+  final String imageUrl;
+  final String name;
+  final bool isSquare;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(isSquare ? 10 : 999);
+    return ClipRRect(
+      borderRadius: radius,
+      child: Container(
+        width: 54,
+        height: 54,
+        decoration: BoxDecoration(
+          color: _soft,
+          border: isSquare ? Border.all(color: _line) : null,
+        ),
+        child: imageUrl.isNotEmpty
+            ? AppImage(
+                imageUrl: imageUrl,
+                width: 54,
+                height: 54,
+                fit: isSquare ? BoxFit.fill : BoxFit.cover,
+                alignment: Alignment.center,
+              )
+            : Center(
+                child: Text(
+                  _initials(name),
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w500,
+                    color: _ink,
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+
+  String _initials(String value) {
+    final parts = value.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty || parts.first.isEmpty) return '?';
+    final first = parts.first.characters.first;
+    if (parts.length == 1 || parts[1].isEmpty) return first.toUpperCase();
+    return (first + parts[1].characters.first).toUpperCase();
   }
 }
 
@@ -364,18 +690,26 @@ class _ChatHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final subtitle = thread.isProductChat
+        ? thread.productTitle
+        : thread.otherPartyHandle(currentUserId);
+    final topInset = MediaQuery.of(context).viewPadding.top;
+
     return Container(
-      height: 60,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
+      height: topInset + 62,
+      padding: EdgeInsets.fromLTRB(4, topInset + 4, 12, 4),
       decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFE9E9EC))),
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: _line, width: 0.5)),
       ),
       child: Row(
         children: [
           IconButton(
             onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back_ios_new, size: 20),
+            icon: const Icon(Icons.arrow_back_ios_new, size: 20, color: _ink),
           ),
+          _ThreadAvatar(thread: thread, currentUserId: currentUserId),
+          const SizedBox(width: 11),
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -386,26 +720,159 @@ class _ChatHeader extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF070707),
+                    fontSize: 16,
+                    height: 1.1,
+                    fontWeight: FontWeight.w500,
+                    color: _ink,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  thread.productTitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF8F8F94),
+                if (subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12.5, color: _muted),
                   ),
-                ),
+                ],
               ],
             ),
           ),
-          const SizedBox(width: 44),
+          IconButton(
+            onPressed: () {},
+            icon: const Icon(Icons.more_horiz, color: _ink),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _EmptyChat extends StatelessWidget {
+  const _EmptyChat({required this.thread});
+
+  final MessageThread thread;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+      children: [
+        if (thread.isProductChat) _ProductContextCard(thread: thread),
+        const SizedBox(height: 88),
+        const Center(
+          child: Text(
+            'Начните диалог',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: _muted,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProductContextCard extends StatelessWidget {
+  const _ProductContextCard({required this.thread});
+
+  final MessageThread thread;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(10),
+        width: double.infinity,
+        constraints: const BoxConstraints(maxWidth: 420),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _line),
+        ),
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: SizedBox(
+                width: 58,
+                height: 58,
+                child: thread.productImage.isEmpty
+                    ? const ColoredBox(
+                        color: _soft,
+                        child: Icon(Icons.checkroom_outlined, color: _muted),
+                      )
+                    : AppImage(
+                        imageUrl: thread.productImage,
+                        width: 58,
+                        height: 58,
+                        fit: BoxFit.fill,
+                      ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Диалог по вещи',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: _muted,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    thread.productTitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      height: 1.18,
+                      fontWeight: FontWeight.w500,
+                      color: _ink,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DateChip extends StatelessWidget {
+  const _DateChip({required this.date});
+
+  final DateTime date;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10, top: 4),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            _dateLabel(date),
+            style: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w500,
+              color: _muted,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -418,24 +885,55 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isMine = message.isMine;
     return Align(
-      alignment: message.isMine ? Alignment.centerRight : Alignment.centerLeft,
+      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.76,
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
         ),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: DecoratedBox(
           decoration: BoxDecoration(
-            color: message.isMine ? Colors.black : const Color(0xFFF3F3F4),
-            borderRadius: BorderRadius.circular(18),
+            color: isMine ? _ink : Colors.white,
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(18),
+              topRight: const Radius.circular(18),
+              bottomLeft: Radius.circular(isMine ? 18 : 5),
+              bottomRight: Radius.circular(isMine ? 5 : 18),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-          child: Text(
-            message.text,
-            style: TextStyle(
-              fontSize: 14,
-              height: 1.25,
-              color: message.isMine ? Colors.white : const Color(0xFF111111),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(13, 8, 10, 7),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  message.text,
+                  style: TextStyle(
+                    fontSize: 15,
+                    height: 1.24,
+                    color: isMine ? Colors.white : _ink,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  _timeLabel(message.createdAt),
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: isMine
+                        ? Colors.white.withValues(alpha: 0.64)
+                        : const Color(0xFF9A9AA1),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -457,76 +955,101 @@ class _MessageComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 10, 18, 12),
+    return DecoratedBox(
       decoration: const BoxDecoration(
         color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFE9E9EC))),
+        border: Border(top: BorderSide(color: _line, width: 0.5)),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 44),
-              child: TextField(
-                controller: controller,
-                minLines: 1,
-                maxLines: 4,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => onSend(),
-                decoration: InputDecoration(
-                  hintText: 'Сообщение',
-                  hintStyle: const TextStyle(color: Color(0xFF8F8F94)),
-                  border: InputBorder.none,
-                  filled: true,
-                  fillColor: const Color(0xFFF4F4F5),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(22),
-                    borderSide: BorderSide.none,
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(22),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-                style: const TextStyle(fontSize: 14, color: Color(0xFF111111)),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          GestureDetector(
-            onTap: isSending ? null : onSend,
-            child: Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: isSending ? const Color(0xFF8E8E93) : Colors.black,
-                shape: BoxShape.circle,
-              ),
-              child: isSending
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: Center(
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      ),
-                    )
-                  : const Icon(
-                      Icons.arrow_upward,
-                      size: 20,
-                      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 44),
+                child: TextField(
+                  controller: controller,
+                  minLines: 1,
+                  maxLines: 5,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => onSend(),
+                  decoration: InputDecoration(
+                    hintText: 'Сообщение',
+                    hintStyle: const TextStyle(color: Color(0xFF9A9AA1)),
+                    prefixIcon: const Icon(
+                      Icons.add,
+                      size: 22,
+                      color: Color(0xFF9A9AA1),
                     ),
+                    border: InputBorder.none,
+                    filled: true,
+                    fillColor: _soft,
+                    contentPadding: const EdgeInsets.fromLTRB(0, 12, 14, 12),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      borderSide: BorderSide.none,
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(22),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  style: const TextStyle(fontSize: 15, color: _ink),
+                ),
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: isSending ? null : onSend,
+              child: Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: isSending ? const Color(0xFF9A9AA1) : _ink,
+                  shape: BoxShape.circle,
+                ),
+                child: isSending
+                    ? const Center(
+                        child: SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        ),
+                      )
+                    : const Icon(
+                        Icons.arrow_upward,
+                        size: 21,
+                        color: Colors.white,
+                      ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+}
+
+bool _isSameDay(DateTime a, DateTime b) {
+  return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+String _timeLabel(DateTime value) {
+  final hour = value.hour.toString().padLeft(2, '0');
+  final minute = value.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
+}
+
+String _dateLabel(DateTime value) {
+  final now = DateTime.now();
+  if (_isSameDay(value, now)) return 'Сегодня';
+  final yesterday = now.subtract(const Duration(days: 1));
+  if (_isSameDay(value, yesterday)) return 'Вчера';
+  final day = value.day.toString().padLeft(2, '0');
+  final month = value.month.toString().padLeft(2, '0');
+  return '$day.$month.${value.year}';
 }

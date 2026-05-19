@@ -14,10 +14,12 @@ import '../core/supabase_config.dart';
 import '../models/app_profile.dart';
 import '../models/created_outfit.dart';
 import '../models/message_thread.dart';
+import '../models/outfit_accessory.dart';
 import '../models/product.dart';
 
 class AppRepository extends ChangeNotifier {
   static const _productsKey = 'products_v4';
+  static const _accessoriesKey = 'outfit_accessories_v1';
   static const _outfitsKey = 'outfits_v2';
   static const _threadsKey = 'threads_v2';
   static const _profileKey = 'profile_v1';
@@ -28,6 +30,7 @@ class AppRepository extends ChangeNotifier {
 
   bool _isReady = false;
   List<Product> _products = [];
+  List<OutfitAccessory> _accessories = [];
   List<CreatedOutfit> _outfits = [];
   List<MessageThread> _threads = [];
   User? _currentUser;
@@ -45,6 +48,21 @@ class AppRepository extends ChangeNotifier {
 
   bool get isReady => _isReady;
   List<Product> get products => List.unmodifiable(_products);
+  List<OutfitAccessory> get defaultAccessories {
+    return List.unmodifiable(
+      _accessories.where((item) => item.isDefault).toList(),
+    );
+  }
+
+  List<OutfitAccessory> get myAccessories {
+    if (currentUserId.isEmpty) return const [];
+    return List.unmodifiable(
+      _accessories
+          .where((item) => !item.isDefault && item.ownerId == currentUserId)
+          .toList(),
+    );
+  }
+
   List<CreatedOutfit> get outfits => List.unmodifiable(_outfits);
   List<MessageThread> get threads {
     if (!_hasSupabase || currentUserId.isEmpty) {
@@ -100,6 +118,7 @@ class AppRepository extends ChangeNotifier {
 
     // Load from local cache first for instant UI
     _products = _readList(_productsKey, Product.fromJson);
+    _accessories = _readList(_accessoriesKey, OutfitAccessory.fromJson);
     _outfits = _readList(_outfitsKey, CreatedOutfit.fromJson);
     _threads = _readList(_threadsKey, MessageThread.fromJson);
     final profileJson = _prefs.getString(_profileKey);
@@ -123,11 +142,15 @@ class AppRepository extends ChangeNotifier {
     if (_hasSupabase) {
       // Then sync from Supabase in background.
       _syncFromSupabase();
+      _syncAccessoriesFromSupabase();
       _syncOutfitsFromSupabase();
       _syncThreadsFromSupabase();
-      _syncTimer ??= Timer.periodic(const Duration(seconds: 12), (_) {
-        _syncFromSupabase();
-        _syncOutfitsFromSupabase();
+      _syncTimer ??= Timer.periodic(const Duration(seconds: 4), (timer) {
+        if (timer.tick % 3 == 0) {
+          _syncFromSupabase();
+          _syncAccessoriesFromSupabase();
+          _syncOutfitsFromSupabase();
+        }
         _syncThreadsFromSupabase();
       });
     }
@@ -164,6 +187,43 @@ class AppRepository extends ChangeNotifier {
       }
     } catch (e) {
       _authError = 'Не удалось начать вход через Яндекс ID: $e';
+    } finally {
+      _isSigningIn = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> signInWithVk() async {
+    if (!_hasSupabase) {
+      _authError = 'Supabase не настроен';
+      notifyListeners();
+      return;
+    }
+
+    _isSigningIn = true;
+    _authError = null;
+    notifyListeners();
+
+    final redirectTo = kIsWeb
+        ? Uri.base.toString()
+        : SupabaseConfig.authRedirectUri;
+    final uri = Uri.parse(
+      SupabaseConfig.vkAuthUrl,
+    ).replace(queryParameters: {'redirect_to': redirectTo});
+
+    try {
+      final didOpen = await launchUrl(
+        uri,
+        mode: kIsWeb
+            ? LaunchMode.platformDefault
+            : LaunchMode.externalApplication,
+        webOnlyWindowName: '_self',
+      );
+      if (!didOpen) {
+        _authError = 'Не удалось открыть вход через VK ID';
+      }
+    } catch (e) {
+      _authError = 'Не удалось начать вход через VK ID: $e';
     } finally {
       _isSigningIn = false;
       notifyListeners();
@@ -266,6 +326,7 @@ class AppRepository extends ChangeNotifier {
     await _applyUserProfile(user, notify: false);
     if (user != null) {
       unawaited(_syncFromSupabase());
+      unawaited(_syncAccessoriesFromSupabase());
       unawaited(_syncOutfitsFromSupabase());
       unawaited(_syncThreadsFromSupabase());
     }
@@ -396,6 +457,7 @@ class AppRepository extends ChangeNotifier {
       'id': userId,
       'name': profile.name,
       'handle': profile.handle,
+      'avatar_url': _currentAvatarUrl(),
       'city': profile.city,
       'rating': profile.rating,
       'sales_count': profile.salesCount,
@@ -533,6 +595,34 @@ class AppRepository extends ChangeNotifier {
 
   // ─── Image Upload ───
 
+  Future<void> _syncAccessoriesFromSupabase() async {
+    if (!_hasSupabase) return;
+
+    try {
+      final response = await _client
+          .from('outfit_accessories')
+          .select()
+          .order('created_at', ascending: false);
+
+      final fetched = (response as List<dynamic>)
+          .map((item) => OutfitAccessory.fromSupabase(item))
+          .toList();
+
+      final merged = <String, OutfitAccessory>{
+        for (final accessory in fetched) accessory.id: accessory,
+      };
+      for (final accessory in _accessories) {
+        if (!accessory.isLocal) continue;
+        merged.putIfAbsent(accessory.id, () => accessory);
+      }
+      _accessories = merged.values.toList();
+      await _saveAccessories();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Accessories sync error: $e');
+    }
+  }
+
   Future<String?> uploadImage(XFile imageFile, {String? folder}) async {
     if (!_hasSupabase) return null;
     try {
@@ -637,6 +727,77 @@ class AppRepository extends ChangeNotifier {
     );
   }
 
+  Future<OutfitAccessory?> createOutfitAccessory({
+    required XFile imageFile,
+    required bool isDefault,
+  }) async {
+    final id = _uuid.v4();
+    final user = _hasSupabase ? await _ensureAuthSession() : null;
+    if (_hasSupabase && user == null) return null;
+
+    final localImage = imageFile.path;
+    final fallback = OutfitAccessory(
+      id: id,
+      title: 'Аксессуар',
+      image: localImage,
+      cutoutImage: '',
+      scope: isDefault ? 'default' : 'private',
+      ownerId: user?.id ?? currentUserId,
+      isLocal: true,
+    );
+
+    if (!_hasSupabase) {
+      _accessories.insert(0, fallback);
+      await _saveAccessories();
+      notifyListeners();
+      return fallback;
+    }
+
+    try {
+      final imageUrl = await uploadImage(
+        imageFile,
+        folder: isDefault ? 'accessories/default' : 'accessories/${user!.id}',
+      );
+      if (imageUrl == null) return fallback;
+
+      final accessory = fallback.copyWith(
+        image: imageUrl,
+        ownerId: isDefault ? '' : user!.id,
+        isLocal: false,
+      );
+
+      await _client
+          .from('outfit_accessories')
+          .insert(accessory.toSupabaseJson());
+      _queueAccessoryBackgroundRemoval(accessory);
+
+      _accessories.removeWhere((item) => item.id == accessory.id);
+      _accessories.insert(0, accessory);
+      await _saveAccessories();
+      notifyListeners();
+      return accessory;
+    } catch (e) {
+      debugPrint('Create accessory error: $e');
+      return fallback;
+    }
+  }
+
+  void _queueAccessoryBackgroundRemoval(OutfitAccessory accessory) {
+    if (!_hasSupabase || accessory.image.isEmpty) return;
+
+    unawaited(
+      _client.functions
+          .invoke(
+            'process-accessory-image',
+            body: {'accessory_id': accessory.id, 'image_url': accessory.image},
+          )
+          .then((_) => _syncAccessoriesFromSupabase())
+          .catchError((e) {
+            debugPrint('Accessory background queue error: $e');
+          }),
+    );
+  }
+
   Future<void> toggleProductLike(String productId) async {
     final product = _products.firstWhere((item) => item.id == productId);
     product.isLiked = !product.isLiked;
@@ -677,6 +838,10 @@ class AppRepository extends ChangeNotifier {
         'author_handle': ownedOutfit.authorHandle,
         'photos': ownedOutfit.photos,
         'items': ownedOutfit.items.map((i) => i.toJson()).toList(),
+        'preview_layout': {
+          'backgroundColor': ownedOutfit.previewBackgroundColor,
+          'items': ownedOutfit.layoutItems.map((i) => i.toJson()).toList(),
+        },
         'created_at': DateTime.now().toIso8601String(),
       });
     } catch (e) {
@@ -734,6 +899,9 @@ class AppRepository extends ChangeNotifier {
         id: threadId,
         sellerName: sellerName,
         buyerName: _profile.name,
+        sellerHandle: product.sellerHandle,
+        buyerHandle: _profile.handle,
+        buyerAvatar: _currentAvatarUrl(),
         productTitle: product.title,
         lastMessage: firstMessage,
         updatedAt: now,
@@ -756,9 +924,88 @@ class AppRepository extends ChangeNotifier {
     );
     _sortThreads();
     await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
-    await _upsertThread(threadById(threadId) ?? _threads.first);
+    await _saveThreadOrShowError(threadById(threadId) ?? _threads.first);
     notifyListeners();
     return _threads.firstWhere((thread) => thread.id == threadId);
+  }
+
+  Future<List<AppUserProfile>> searchUserProfiles(String query) async {
+    final normalized = _normalizeHandle(query);
+    final plainQuery = query.trim().replaceAll('@', '');
+    if (!_hasSupabase || plainQuery.length < 2) return const [];
+
+    try {
+      final pattern = '%${plainQuery.toLowerCase()}%';
+      final response = await _client
+          .from('profiles')
+          .select('id,name,handle,avatar_url')
+          .or('handle.ilike.$pattern,name.ilike.$pattern')
+          .neq('id', currentUserId)
+          .limit(20);
+      final profiles = (response as List<dynamic>)
+          .map((item) => AppUserProfile.fromSupabase(item))
+          .where((profile) {
+            if (profile.id.isEmpty) return false;
+            if (query.trim().startsWith('@')) {
+              return profile.handle.toLowerCase().contains(
+                normalized.substring(1),
+              );
+            }
+            return true;
+          })
+          .toList();
+      profiles.sort((a, b) => a.handle.compareTo(b.handle));
+      return profiles;
+    } catch (e) {
+      debugPrint('Profile search error: $e');
+      return const [];
+    }
+  }
+
+  Future<MessageThread?> startDirectChat(AppUserProfile recipient) async {
+    final user = _hasSupabase
+        ? await _ensureAuthSession(message: 'Войдите в профиль, чтобы написать')
+        : null;
+    if (_hasSupabase && user == null) return null;
+    if (recipient.id.isEmpty || recipient.id == currentUserId) return null;
+
+    final senderId = user?.id ?? currentUserId;
+    final threadId = _directThreadId(senderId, recipient.id);
+    final existing = threadById(threadId);
+    if (existing != null) return existing;
+
+    final remoteExisting = await _fetchThreadFromSupabase(threadId);
+    if (remoteExisting != null) {
+      _upsertLocalThread(remoteExisting);
+      await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+      notifyListeners();
+      return remoteExisting;
+    }
+
+    final now = DateTime.now();
+    final thread = MessageThread(
+      id: threadId,
+      sellerName: recipient.name,
+      buyerName: _profile.name,
+      sellerHandle: recipient.handle,
+      buyerHandle: _profile.handle,
+      sellerAvatar: recipient.avatarUrl,
+      buyerAvatar: _currentAvatarUrl(),
+      productTitle: '',
+      lastMessage: '',
+      updatedAt: now,
+      buyerId: senderId,
+      sellerId: recipient.id,
+      messages: const [],
+    );
+
+    _threads.removeWhere((item) => item.id == threadId);
+    _threads.insert(0, thread);
+    _sortThreads();
+    await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+    await _saveThreadOrShowError(thread);
+    notifyListeners();
+    return thread;
   }
 
   Future<void> sendMessage(String threadId, String text) async {
@@ -807,7 +1054,9 @@ class AppRepository extends ChangeNotifier {
     );
     _sortThreads();
     await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
-    await _upsertThread(_threads.firstWhere((thread) => thread.id == threadId));
+    await _saveThreadOrShowError(
+      _threads.firstWhere((thread) => thread.id == threadId),
+    );
     notifyListeners();
   }
 
@@ -842,16 +1091,23 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
-  Future<void> _upsertThread(MessageThread thread) async {
-    if (!_hasSupabase) return;
+  Future<void> _saveThreadOrShowError(MessageThread thread) async {
+    final didSave = await _upsertThread(thread);
+    if (didSave) return;
+    _authError = 'Не удалось доставить сообщение. Проверьте интернет.';
+  }
+
+  Future<bool> _upsertThread(MessageThread thread) async {
+    if (!_hasSupabase) return true;
 
     try {
       await _client
           .from('message_threads')
           .upsert(thread.toSupabaseJson(), onConflict: 'id');
+      return true;
     } catch (e) {
       debugPrint('Thread upsert error: $e');
-      // Optional table. Keep local chat flow responsive if it is absent.
+      return false;
     }
   }
 
@@ -861,6 +1117,17 @@ class AppRepository extends ChangeNotifier {
     required String sellerId,
   }) {
     return 'product_${productId}_${buyerId}_$sellerId';
+  }
+
+  String _directThreadId(String firstUserId, String secondUserId) {
+    final ids = [firstUserId, secondUserId]..sort();
+    return 'direct_${ids.first}_${ids.last}';
+  }
+
+  String _currentAvatarUrl() {
+    final metadata = _client.auth.currentUser?.userMetadata ?? const {};
+    final value = metadata['avatar_url'] ?? metadata['picture'] ?? '';
+    return value.toString();
   }
 
   Future<User?> _ensureAuthSession({String? message}) async {
@@ -894,6 +1161,13 @@ class AppRepository extends ChangeNotifier {
 
   Future<void> _saveProducts() {
     return _writeList(_productsKey, _products.map((item) => item.toJson()));
+  }
+
+  Future<void> _saveAccessories() {
+    return _writeList(
+      _accessoriesKey,
+      _accessories.map((item) => item.toJson()),
+    );
   }
 
   void _sortThreads() {

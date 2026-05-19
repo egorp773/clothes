@@ -101,7 +101,7 @@ class _NavItem extends StatelessWidget {
               label,
               style: TextStyle(
                 fontSize: 10,
-                fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+                fontWeight: isActive ? FontWeight.w500 : FontWeight.w500,
                 color: isActive
                     ? const Color(0xFF070707)
                     : const Color(0xFF8E8E93),
@@ -149,7 +149,7 @@ class _CreateNavItem extends StatelessWidget {
                   '+',
                   style: TextStyle(
                     fontSize: 25,
-                    fontWeight: FontWeight.w300,
+                    fontWeight: FontWeight.w500,
                     color: Colors.white,
                     height: 1,
                   ),
@@ -161,7 +161,7 @@ class _CreateNavItem extends StatelessWidget {
               'Создать',
               style: TextStyle(
                 fontSize: 10,
-                fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+                fontWeight: isActive ? FontWeight.w500 : FontWeight.w500,
                 color: isActive
                     ? const Color(0xFF070707)
                     : const Color(0xFF8E8E93),
