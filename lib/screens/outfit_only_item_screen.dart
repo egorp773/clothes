@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/product.dart';
+import '../services/background_removal_service.dart';
 import '../widgets/app_image.dart';
 
 class OutfitOnlyItemScreen extends StatefulWidget {
@@ -30,11 +31,16 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
   final Uuid _uuid = const Uuid();
 
   XFile? _photo;
+  XFile? _cutoutPhoto;
   String? _previewImage;
+  bool _isProcessingBackground = false;
   bool _isSaving = false;
 
   bool get _canAdd =>
-      !_isSaving && _photo != null && _titleController.text.trim().isNotEmpty;
+      !_isSaving &&
+      !_isProcessingBackground &&
+      _photo != null &&
+      _titleController.text.trim().isNotEmpty;
 
   @override
   void initState() {
@@ -62,8 +68,29 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
     if (picked == null || !mounted) return;
     setState(() {
       _photo = picked;
+      _cutoutPhoto = null;
       _previewImage = picked.path;
+      _isProcessingBackground = true;
     });
+    _processPhotoBackground(picked);
+  }
+
+  Future<void> _processPhotoBackground(XFile photo) async {
+    try {
+      final result = await removeBackgroundFromBytes(
+        await photo.readAsBytes(),
+        fileName: 'outfit-only-item.png',
+      );
+      if (!mounted || _photo != photo) return;
+      setState(() {
+        _cutoutPhoto = result.file;
+        _previewImage = result.preview;
+        _isProcessingBackground = false;
+      });
+    } catch (_) {
+      if (!mounted || _photo != photo) return;
+      setState(() => _isProcessingBackground = false);
+    }
   }
 
   Future<void> _addItem() async {
@@ -83,6 +110,12 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
       _photo!,
       folder: 'outfits/items',
     );
+    final uploadedCutout = _cutoutPhoto == null
+        ? null
+        : await widget.onUploadImage?.call(
+            _cutoutPhoto!,
+            folder: 'outfits/items/cutouts',
+          );
     if (!mounted) return;
 
     if (uploaded == null) {
@@ -108,7 +141,7 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
         priceValue: 0,
         image: uploaded,
         images: [uploaded],
-        outfitImages: const [],
+        outfitImages: uploadedCutout == null ? const [] : [uploadedCutout],
         category: 'Образ',
         brand: '',
         size: '',

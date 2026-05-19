@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -184,6 +185,10 @@ Future<Uint8List> _removeBackgroundWithApi(
   Uint8List bytes, {
   required String fileName,
 }) async {
+  if (removeBgApiKey.trim().isEmpty) {
+    throw StateError('remove.bg api key is empty');
+  }
+
   final request = http.MultipartRequest(
     'POST',
     Uri.parse('https://api.remove.bg/v1.0/removebg'),
@@ -222,6 +227,7 @@ Uint8List _removeBackgroundBytes(Uint8List bytes) {
   final width = result.width;
   final height = result.height;
   final bg = _estimateBackgroundColor(result);
+  final background = _connectedBackgroundMask(result, bg);
   final foreground = Uint8List(width * height);
   var minX = width;
   var minY = height;
@@ -232,7 +238,7 @@ Uint8List _removeBackgroundBytes(Uint8List bytes) {
     for (var x = 0; x < width; x++) {
       final index = y * width + x;
       final pixel = result.getPixel(x, y);
-      final isBackground = _isBackgroundPixel(pixel, bg);
+      final isBackground = background[index] == 1;
       pixel.a = isBackground ? 0 : 255;
       if (!isBackground) {
         foreground[index] = 1;
@@ -267,6 +273,46 @@ Uint8List _removeBackgroundBytes(Uint8List bytes) {
   }
 
   return Uint8List.fromList(img.encodePng(_centerOnSquare(_cropAlpha(result))));
+}
+
+Uint8List _connectedBackgroundMask(
+  img.Image image,
+  ({int r, int g, int b}) bg,
+) {
+  final width = image.width;
+  final height = image.height;
+  final background = Uint8List(width * height);
+  final queue = Queue<int>();
+
+  void addIfBackground(int x, int y) {
+    final index = y * width + x;
+    if (background[index] == 1) return;
+    final pixel = image.getPixel(x, y);
+    if (!_isBackgroundPixel(pixel, bg)) return;
+    background[index] = 1;
+    queue.add(index);
+  }
+
+  for (var x = 0; x < width; x++) {
+    addIfBackground(x, 0);
+    addIfBackground(x, height - 1);
+  }
+  for (var y = 1; y < height - 1; y++) {
+    addIfBackground(0, y);
+    addIfBackground(width - 1, y);
+  }
+
+  while (queue.isNotEmpty) {
+    final index = queue.removeFirst();
+    final x = index % width;
+    final y = index ~/ width;
+    if (x > 0) addIfBackground(x - 1, y);
+    if (x < width - 1) addIfBackground(x + 1, y);
+    if (y > 0) addIfBackground(x, y - 1);
+    if (y < height - 1) addIfBackground(x, y + 1);
+  }
+
+  return background;
 }
 
 img.Image _cropAlpha(img.Image source) {
@@ -363,7 +409,17 @@ bool _isBackgroundPixel(img.Pixel pixel, ({int r, int g, int b}) bg) {
   final distance = dr + dg + db;
   final brightness = (pixel.r + pixel.g + pixel.b) / 3;
   final bgBrightness = (bg.r + bg.g + bg.b) / 3;
+  final maxChannel = math.max(pixel.r, math.max(pixel.g, pixel.b));
+  final minChannel = math.min(pixel.r, math.min(pixel.g, pixel.b));
+  final saturation = maxChannel - minChannel;
+  final bgMaxChannel = math.max(bg.r, math.max(bg.g, bg.b));
+  final bgMinChannel = math.min(bg.r, math.min(bg.g, bg.b));
+  final bgSaturation = bgMaxChannel - bgMinChannel;
+  final isLightNeutralBackground = bgBrightness > 178 && bgSaturation < 54;
+  final isLightNeutralPixel = brightness > 154 && saturation < 72;
 
-  return distance < 88 ||
-      (distance < 128 && (brightness - bgBrightness).abs() < 34);
+  return pixel.a < 18 ||
+      distance < 96 ||
+      (distance < 146 && (brightness - bgBrightness).abs() < 42) ||
+      (isLightNeutralBackground && isLightNeutralPixel && distance < 205);
 }

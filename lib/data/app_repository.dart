@@ -698,7 +698,9 @@ class AppRepository extends ChangeNotifier {
       );
       final data = ownedProduct.toSupabaseJson(sellerId: user.id);
       await _client.from('products').insert(data);
-      _queueBackgroundRemoval(ownedProduct);
+      if (ownedProduct.outfitImages.isEmpty) {
+        _queueBackgroundRemoval(ownedProduct);
+      }
 
       _products.removeWhere((item) => item.id == ownedProduct.id);
       _products.insert(0, ownedProduct);

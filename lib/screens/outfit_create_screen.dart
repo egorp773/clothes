@@ -135,38 +135,42 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
       _privateProducts.insert(0, product);
     });
 
-    _processCreatedClothing(product);
+    _processCreatedClothing(product, picked);
   }
 
-  void _processCreatedClothing(Product product) {
-    backgroundProcessingService
-        .enqueueImageSource(
-          product.id,
-          product.image,
-          fileName: '${product.id}.png',
-        )
-        .then<void>((result) {
-          if (!mounted) return;
-          setState(() {
-            final index = _privateProducts.indexWhere(
-              (item) => item.id == product.id,
-            );
-            if (index == -1) return;
-            _privateProducts[index] = _privateProducts[index].copyWith(
-              outfitImages: [result.preview],
-            );
-          });
-        })
-        .catchError((_) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Не удалось подготовить вещь'),
-              behavior: SnackBarBehavior.floating,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        });
+  void _processCreatedClothing(Product product, XFile imageFile) {
+    unawaited(_removeCreatedClothingBackground(product, imageFile));
+  }
+
+  Future<void> _removeCreatedClothingBackground(
+    Product product,
+    XFile imageFile,
+  ) async {
+    try {
+      final result = await removeBackgroundFromBytes(
+        await imageFile.readAsBytes(),
+        fileName: '${product.id}.png',
+      );
+      if (!mounted) return;
+      setState(() {
+        final index = _privateProducts.indexWhere(
+          (item) => item.id == product.id,
+        );
+        if (index == -1) return;
+        _privateProducts[index] = _privateProducts[index].copyWith(
+          outfitImages: [result.preview],
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось подготовить вещь'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   bool _isProductProcessing(Product product) {
@@ -253,7 +257,11 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
       list.insert(0, accessory);
     });
 
-    _processCreatedAccessory(accessory, isDefault: isDefault);
+    _processCreatedAccessory(
+      accessory,
+      imageFile: picked,
+      isDefault: isDefault,
+    );
     final createAccessory = widget.onCreateAccessory;
     if (createAccessory != null) {
       unawaited(
@@ -264,46 +272,54 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
 
   void _processCreatedAccessory(
     OutfitAccessory accessory, {
+    required XFile imageFile,
     required bool isDefault,
   }) {
-    backgroundProcessingService
-        .enqueueImageSource(
-          accessory.id,
-          accessory.image,
-          fileName: '${accessory.id}.png',
-        )
-        .then<void>((result) {
-          if (!mounted) return;
-          setState(() {
-            final list = isDefault
-                ? _localDefaultAccessories
-                : _localMyAccessories;
-            final index = list.indexWhere((item) => item.id == accessory.id);
-            if (index == -1) return;
-            list[index] = list[index].copyWith(
-              cutoutImage: result.preview,
-              backgroundStatus: 'completed',
-            );
-          });
-        })
-        .catchError((_) {
-          if (!mounted) return;
-          setState(() {
-            final list = isDefault
-                ? _localDefaultAccessories
-                : _localMyAccessories;
-            final index = list.indexWhere((item) => item.id == accessory.id);
-            if (index == -1) return;
-            list[index] = list[index].copyWith(backgroundStatus: 'failed');
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Не удалось подготовить аксессуар'),
-              behavior: SnackBarBehavior.floating,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        });
+    unawaited(
+      _removeCreatedAccessoryBackground(
+        accessory,
+        imageFile: imageFile,
+        isDefault: isDefault,
+      ),
+    );
+  }
+
+  Future<void> _removeCreatedAccessoryBackground(
+    OutfitAccessory accessory, {
+    required XFile imageFile,
+    required bool isDefault,
+  }) async {
+    try {
+      final result = await removeBackgroundFromBytes(
+        await imageFile.readAsBytes(),
+        fileName: '${accessory.id}.png',
+      );
+      if (!mounted) return;
+      setState(() {
+        final list = isDefault ? _localDefaultAccessories : _localMyAccessories;
+        final index = list.indexWhere((item) => item.id == accessory.id);
+        if (index == -1) return;
+        list[index] = list[index].copyWith(
+          cutoutImage: result.preview,
+          backgroundStatus: 'completed',
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        final list = isDefault ? _localDefaultAccessories : _localMyAccessories;
+        final index = list.indexWhere((item) => item.id == accessory.id);
+        if (index == -1) return;
+        list[index] = list[index].copyWith(backgroundStatus: 'failed');
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось подготовить аксессуар'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   void _showClothesSheet() {

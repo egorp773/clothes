@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/product.dart';
+import '../services/background_removal_service.dart';
 import '../widgets/app_image.dart';
 
 class CreateScreen extends StatefulWidget {
@@ -233,6 +234,26 @@ class _CreateScreenState extends State<CreateScreen> {
     return urls;
   }
 
+  Future<String?> _uploadPrimaryCutout() async {
+    final images = _selectedImages;
+    if (images.isEmpty) return null;
+
+    try {
+      final cutout = await removeBackgroundFromBytes(
+        await images.first.readAsBytes(),
+        fileName: 'item-cutout.png',
+      );
+      return await widget.onUploadImage?.call(
+            cutout.file,
+            folder: 'items/cutouts',
+          ) ??
+          cutout.preview;
+    } catch (e) {
+      debugPrint('Local item background removal error: $e');
+      return null;
+    }
+  }
+
   Future<void> _onPublish() async {
     if (_titleController.text.isEmpty || _priceController.text.isEmpty) {
       _showSnackBar('Заполните название и цену');
@@ -252,6 +273,8 @@ class _CreateScreenState extends State<CreateScreen> {
 
     setState(() => _isUploading = true);
     final imageUrls = await _uploadImages();
+    final cutoutUrl = imageUrls.isEmpty ? null : await _uploadPrimaryCutout();
+    if (!mounted) return;
     setState(() => _isUploading = false);
 
     if (imageUrls.isEmpty) {
@@ -269,6 +292,7 @@ class _CreateScreenState extends State<CreateScreen> {
       priceValue: priceValue,
       image: imageUrls.first,
       images: imageUrls,
+      outfitImages: cutoutUrl == null ? const [] : [cutoutUrl],
       category: category,
       brand: _brandController.text.trim().isEmpty
           ? 'Brand'
