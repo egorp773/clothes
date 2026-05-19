@@ -256,11 +256,12 @@ class _AppShellState extends State<AppShell> {
   }
 
   Future<bool> _addProductToOutfitOnly(Product product) async {
-    if (product.isHidden) {
-      await _repository.publishProduct(product);
-    }
+    final draftProduct = product.isHidden
+        ? product
+        : product.copyWith(isHidden: true);
+    await _repository.publishProduct(draftProduct);
     setState(() {
-      _draftOutfitProducts.insert(0, product);
+      _draftOutfitProducts.insert(0, draftProduct);
       _currentIndex = 2;
       _createMode = _CreateMode.publishOutfit;
       _returnToPublishOutfitAfterItem = false;

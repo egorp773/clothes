@@ -21,10 +21,10 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const removeBgKey = Deno.env.get("REMOVE_BG_API_KEY");
+  const withoutBgKey = Deno.env.get("WITHOUTBG_API_KEY");
 
-  if (!supabaseUrl || !serviceRoleKey || !removeBgKey) {
-    return json({ error: "Missing Supabase or remove.bg env vars" }, 500);
+  if (!supabaseUrl || !serviceRoleKey || !withoutBgKey) {
+    return json({ error: "Missing Supabase or withoutbg env vars" }, 500);
   }
 
   let productId = "";
@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
 
   const work = processProductImage({
     supabase,
-    removeBgKey,
+    withoutBgKey,
     productId,
     imageUrl,
   });
@@ -65,12 +65,12 @@ Deno.serve(async (req) => {
 
 async function processProductImage({
   supabase,
-  removeBgKey,
+  withoutBgKey,
   productId,
   imageUrl,
 }: {
   supabase: SupabaseClient;
-  removeBgKey: string;
+  withoutBgKey: string;
   productId: string;
   imageUrl: string;
 }) {
@@ -86,19 +86,20 @@ async function processProductImage({
     }
 
     const form = new FormData();
-    form.append("size", "auto");
-    form.append("format", "png");
-    form.append("image_file", await original.blob(), `${productId}.jpg`);
+    form.append("file", await original.blob(), `${productId}.jpg`);
 
-    const removed = await fetch("https://api.remove.bg/v1.0/removebg", {
-      method: "POST",
-      headers: { "X-Api-Key": removeBgKey },
-      body: form,
-    });
+    const removed = await fetch(
+      "https://api.withoutbg.com/v1.0/image-without-background",
+      {
+        method: "POST",
+        headers: { "X-API-Key": withoutBgKey },
+        body: form,
+      },
+    );
 
     if (!removed.ok) {
       throw new Error(
-        `remove.bg failed: ${removed.status} ${await removed.text()}`,
+        `withoutbg failed: ${removed.status} ${await removed.text()}`,
       );
     }
 

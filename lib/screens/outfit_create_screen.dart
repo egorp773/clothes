@@ -128,7 +128,7 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
       isHidden: true,
       isLocal: true,
       images: [picked.path],
-      outfitImages: const [],
+      outfitImages: [picked.path],
     );
 
     setState(() {
@@ -160,6 +160,13 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
         _privateProducts[index] = _privateProducts[index].copyWith(
           outfitImages: [result.preview],
         );
+        final selectedIndex = _selectedProducts.indexWhere(
+          (item) => item.id == product.id,
+        );
+        if (selectedIndex != -1) {
+          _selectedProducts[selectedIndex] = _selectedProducts[selectedIndex]
+              .copyWith(outfitImages: [result.preview]);
+        }
       });
     } catch (_) {
       if (!mounted) return;
@@ -247,7 +254,7 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
       id: 'local-accessory-${DateTime.now().microsecondsSinceEpoch}',
       title: cleanTitle,
       image: picked.path,
-      cutoutImage: '',
+      cutoutImage: picked.path,
       scope: isDefault ? 'default' : 'private',
       ownerId: '',
       isLocal: true,
@@ -303,6 +310,14 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
           cutoutImage: result.preview,
           backgroundStatus: 'completed',
         );
+        final productId = 'accessory-${accessory.id}';
+        final selectedIndex = _selectedProducts.indexWhere(
+          (item) => item.id == productId,
+        );
+        if (selectedIndex != -1) {
+          _selectedProducts[selectedIndex] = _selectedProducts[selectedIndex]
+              .copyWith(outfitImages: [result.preview]);
+        }
       });
     } catch (_) {
       if (!mounted) return;

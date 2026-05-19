@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -11,8 +10,8 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
-const removeBgApiKey = String.fromEnvironment(
-  'REMOVE_BG_API_KEY',
+const withoutBgApiKey = String.fromEnvironment(
+  'WITHOUTBG_API_KEY',
   defaultValue: '',
 );
 
@@ -143,12 +142,7 @@ Future<BackgroundRemovalResult> removeBackgroundFromBytes(
   Uint8List bytes, {
   String fileName = 'outfit-item.png',
 }) async {
-  late final Uint8List resultBytes;
-  try {
-    resultBytes = await _removeBackgroundWithApi(bytes, fileName: fileName);
-  } catch (_) {
-    resultBytes = await compute(_removeBackgroundBytes, bytes);
-  }
+  final resultBytes = await _removeBackgroundWithApi(bytes, fileName: fileName);
 
   return BackgroundRemovalResult(
     file: XFile.fromData(
@@ -185,25 +179,23 @@ Future<Uint8List> _removeBackgroundWithApi(
   Uint8List bytes, {
   required String fileName,
 }) async {
-  if (removeBgApiKey.trim().isEmpty) {
-    throw StateError('remove.bg api key is empty');
+  if (withoutBgApiKey.trim().isEmpty) {
+    throw StateError('withoutbg api key is empty');
   }
 
   final request = http.MultipartRequest(
     'POST',
-    Uri.parse('https://api.remove.bg/v1.0/removebg'),
+    Uri.parse('https://api.withoutbg.com/v1.0/image-without-background'),
   );
-  request.headers['X-Api-Key'] = removeBgApiKey;
-  request.fields['size'] = 'auto';
-  request.fields['format'] = 'png';
+  request.headers['X-API-Key'] = withoutBgApiKey;
   request.files.add(
-    http.MultipartFile.fromBytes('image_file', bytes, filename: fileName),
+    http.MultipartFile.fromBytes('file', bytes, filename: fileName),
   );
 
-  final streamed = await request.send().timeout(const Duration(seconds: 18));
+  final streamed = await request.send().timeout(const Duration(seconds: 60));
   final response = await http.Response.fromStream(streamed);
   if (response.statusCode != 200) {
-    throw Exception('remove.bg ${response.statusCode}: ${response.body}');
+    throw Exception('withoutbg ${response.statusCode}: ${response.body}');
   }
 
   return compute(_normalizeCutoutBytes, response.bodyBytes);
@@ -214,105 +206,6 @@ Uint8List _normalizeCutoutBytes(Uint8List bytes) {
   if (decoded == null) return bytes;
   final image = img.bakeOrientation(decoded).convert(numChannels: 4);
   return Uint8List.fromList(img.encodePng(_centerOnSquare(_cropAlpha(image))));
-}
-
-Uint8List _removeBackgroundBytes(Uint8List bytes) {
-  final decoded = img.decodeImage(bytes);
-  if (decoded == null) return bytes;
-
-  var image = img.bakeOrientation(decoded);
-  image = _resizeToMaxSide(image, 820);
-
-  final result = image.convert(numChannels: 4);
-  final width = result.width;
-  final height = result.height;
-  final bg = _estimateBackgroundColor(result);
-  final background = _connectedBackgroundMask(result, bg);
-  final foreground = Uint8List(width * height);
-  var minX = width;
-  var minY = height;
-  var maxX = 0;
-  var maxY = 0;
-
-  for (var y = 0; y < height; y++) {
-    for (var x = 0; x < width; x++) {
-      final index = y * width + x;
-      final pixel = result.getPixel(x, y);
-      final isBackground = background[index] == 1;
-      pixel.a = isBackground ? 0 : 255;
-      if (!isBackground) {
-        foreground[index] = 1;
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-
-  if (maxX <= minX || maxY <= minY) {
-    return Uint8List.fromList(img.encodePng(_centerOnSquare(result)));
-  }
-
-  for (var y = 1; y < height - 1; y++) {
-    for (var x = 1; x < width - 1; x++) {
-      final index = y * width + x;
-      if (foreground[index] == 0) continue;
-      var backgroundNeighbors = 0;
-      for (var oy = -1; oy <= 1; oy++) {
-        for (var ox = -1; ox <= 1; ox++) {
-          if (foreground[(y + oy) * width + x + ox] == 0) {
-            backgroundNeighbors++;
-          }
-        }
-      }
-      if (backgroundNeighbors >= 3) {
-        result.getPixel(x, y).a = 205;
-      }
-    }
-  }
-
-  return Uint8List.fromList(img.encodePng(_centerOnSquare(_cropAlpha(result))));
-}
-
-Uint8List _connectedBackgroundMask(
-  img.Image image,
-  ({int r, int g, int b}) bg,
-) {
-  final width = image.width;
-  final height = image.height;
-  final background = Uint8List(width * height);
-  final queue = Queue<int>();
-
-  void addIfBackground(int x, int y) {
-    final index = y * width + x;
-    if (background[index] == 1) return;
-    final pixel = image.getPixel(x, y);
-    if (!_isBackgroundPixel(pixel, bg)) return;
-    background[index] = 1;
-    queue.add(index);
-  }
-
-  for (var x = 0; x < width; x++) {
-    addIfBackground(x, 0);
-    addIfBackground(x, height - 1);
-  }
-  for (var y = 1; y < height - 1; y++) {
-    addIfBackground(0, y);
-    addIfBackground(width - 1, y);
-  }
-
-  while (queue.isNotEmpty) {
-    final index = queue.removeFirst();
-    final x = index % width;
-    final y = index ~/ width;
-    if (x > 0) addIfBackground(x - 1, y);
-    if (x < width - 1) addIfBackground(x + 1, y);
-    if (y > 0) addIfBackground(x, y - 1);
-    if (y < height - 1) addIfBackground(x, y + 1);
-  }
-
-  return background;
 }
 
 img.Image _cropAlpha(img.Image source) {
@@ -350,16 +243,6 @@ img.Image _cropAlpha(img.Image source) {
   );
 }
 
-img.Image _resizeToMaxSide(img.Image image, int maxSide) {
-  if (image.width <= maxSide && image.height <= maxSide) return image;
-  return img.copyResize(
-    image,
-    width: image.width >= image.height ? maxSide : null,
-    height: image.height > image.width ? maxSide : null,
-    interpolation: img.Interpolation.average,
-  );
-}
-
 img.Image _centerOnSquare(img.Image source) {
   const size = 900;
   final canvas = img.Image(width: size, height: size, numChannels: 4);
@@ -376,50 +259,4 @@ img.Image _centerOnSquare(img.Image source) {
   final dy = ((size - fitted.height) / 2).round();
   img.compositeImage(canvas, fitted, dstX: dx, dstY: dy);
   return canvas;
-}
-
-({int r, int g, int b}) _estimateBackgroundColor(img.Image image) {
-  final samples = <img.Pixel>[];
-  final width = image.width;
-  final height = image.height;
-  final stepX = (width / 24).ceil().clamp(1, width).toInt();
-  final stepY = (height / 24).ceil().clamp(1, height).toInt();
-
-  for (var x = 0; x < width; x += stepX) {
-    samples.add(image.getPixel(x, 0));
-    samples.add(image.getPixel(x, height - 1));
-  }
-  for (var y = 0; y < height; y += stepY) {
-    samples.add(image.getPixel(0, y));
-    samples.add(image.getPixel(width - 1, y));
-  }
-
-  int avg(num Function(img.Pixel p) pick) {
-    final total = samples.fold<num>(0, (sum, pixel) => sum + pick(pixel));
-    return (total / samples.length).round();
-  }
-
-  return (r: avg((p) => p.r), g: avg((p) => p.g), b: avg((p) => p.b));
-}
-
-bool _isBackgroundPixel(img.Pixel pixel, ({int r, int g, int b}) bg) {
-  final dr = (pixel.r - bg.r).abs();
-  final dg = (pixel.g - bg.g).abs();
-  final db = (pixel.b - bg.b).abs();
-  final distance = dr + dg + db;
-  final brightness = (pixel.r + pixel.g + pixel.b) / 3;
-  final bgBrightness = (bg.r + bg.g + bg.b) / 3;
-  final maxChannel = math.max(pixel.r, math.max(pixel.g, pixel.b));
-  final minChannel = math.min(pixel.r, math.min(pixel.g, pixel.b));
-  final saturation = maxChannel - minChannel;
-  final bgMaxChannel = math.max(bg.r, math.max(bg.g, bg.b));
-  final bgMinChannel = math.min(bg.r, math.min(bg.g, bg.b));
-  final bgSaturation = bgMaxChannel - bgMinChannel;
-  final isLightNeutralBackground = bgBrightness > 178 && bgSaturation < 54;
-  final isLightNeutralPixel = brightness > 154 && saturation < 72;
-
-  return pixel.a < 18 ||
-      distance < 96 ||
-      (distance < 146 && (brightness - bgBrightness).abs() < 42) ||
-      (isLightNeutralBackground && isLightNeutralPixel && distance < 205);
 }
