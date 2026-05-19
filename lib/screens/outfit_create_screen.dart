@@ -15,6 +15,7 @@ typedef CreateOutfitAccessory =
     Future<OutfitAccessory?> Function(
       XFile imageFile, {
       required bool isDefault,
+      required String title,
     });
 
 class OutfitCreateScreen extends StatefulWidget {
@@ -229,9 +230,18 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
     );
     if (picked == null || !mounted) return;
 
+    final title = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
+        builder: (context) =>
+            _AccessoryTitleScreen(imagePath: picked.path, isDefault: isDefault),
+      ),
+    );
+    if (title == null || !mounted) return;
+
+    final cleanTitle = title.trim().isEmpty ? 'Аксессуар' : title.trim();
     final accessory = OutfitAccessory(
       id: 'local-accessory-${DateTime.now().microsecondsSinceEpoch}',
-      title: 'Аксессуар',
+      title: cleanTitle,
       image: picked.path,
       cutoutImage: '',
       scope: isDefault ? 'default' : 'private',
@@ -246,7 +256,9 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
     _processCreatedAccessory(accessory, isDefault: isDefault);
     final createAccessory = widget.onCreateAccessory;
     if (createAccessory != null) {
-      unawaited(createAccessory(picked, isDefault: isDefault));
+      unawaited(
+        createAccessory(picked, isDefault: isDefault, title: cleanTitle),
+      );
     }
   }
 
@@ -742,6 +754,187 @@ class _TransformableCanvasItemState extends State<_TransformableCanvasItem> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AccessoryTitleScreen extends StatefulWidget {
+  const _AccessoryTitleScreen({
+    required this.imagePath,
+    required this.isDefault,
+  });
+
+  final String imagePath;
+  final bool isDefault;
+
+  @override
+  State<_AccessoryTitleScreen> createState() => _AccessoryTitleScreenState();
+}
+
+class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
+  final TextEditingController _titleController = TextEditingController();
+
+  bool get _canSave => _titleController.text.trim().isNotEmpty;
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    if (!_canSave) return;
+    Navigator.of(context).pop(_titleController.text.trim());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            SizedBox(
+              height: 48,
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.maybePop(context),
+                    icon: const Icon(Icons.chevron_left),
+                    iconSize: 28,
+                    color: Colors.black,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 44,
+                      height: 44,
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      widget.isDefault
+                          ? 'аксессуар по умолчанию'
+                          : 'мой аксессуар',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        height: 1,
+                        letterSpacing: 0,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+              ),
+            ),
+            const SizedBox(
+              width: double.infinity,
+              height: 2,
+              child: DecoratedBox(
+                decoration: BoxDecoration(color: Colors.black),
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 180,
+                        height: 180,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8F8F9),
+                          border: Border.all(color: const Color(0xFFE7E7EA)),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: AppImage(
+                            imageUrl: widget.imagePath,
+                            fit: BoxFit.contain,
+                            alignment: Alignment.center,
+                            placeholderColor: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    TextField(
+                      controller: _titleController,
+                      onChanged: (_) => setState(() {}),
+                      autofocus: true,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => _save(),
+                      style: const TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
+                        letterSpacing: 0,
+                        color: Colors.black,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Название',
+                        hintText: 'Например: очки',
+                        labelStyle: TextStyle(
+                          fontFamily: 'Montserrat',
+                          color: Color(0xFF6E6E6E),
+                        ),
+                        hintStyle: TextStyle(
+                          fontFamily: 'Montserrat',
+                          color: Color(0xFF8E8E8E),
+                        ),
+                        enabledBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Color(0xFFE0E0E0)),
+                        ),
+                        focusedBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(color: Colors.black),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Container(
+              width: double.infinity,
+              height: 82,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                border: Border(top: BorderSide(color: Color(0xFFE0E0E0))),
+              ),
+              padding: const EdgeInsets.fromLTRB(10, 22, 10, 0),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _canSave ? _save : null,
+                child: Container(
+                  height: 40,
+                  color: _canSave ? Colors.black : const Color(0xFFC8C8CE),
+                  alignment: Alignment.center,
+                  child: Text(
+                    'СОХРАНИТЬ АКСЕССУАР',
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                      letterSpacing: 0,
+                      color: _canSave ? Colors.white : const Color(0xFF8E8E93),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -730,15 +730,17 @@ class AppRepository extends ChangeNotifier {
   Future<OutfitAccessory?> createOutfitAccessory({
     required XFile imageFile,
     required bool isDefault,
+    required String title,
   }) async {
     final id = _uuid.v4();
     final user = _hasSupabase ? await _ensureAuthSession() : null;
     if (_hasSupabase && user == null) return null;
 
+    final cleanTitle = title.trim().isEmpty ? 'Аксессуар' : title.trim();
     final localImage = imageFile.path;
     final fallback = OutfitAccessory(
       id: id,
-      title: 'Аксессуар',
+      title: cleanTitle,
       image: localImage,
       cutoutImage: '',
       scope: isDefault ? 'default' : 'private',

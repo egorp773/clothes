@@ -170,12 +170,14 @@ class _AppShellState extends State<AppShell> {
           authorHandle: _repository.profile.handle,
           onPublish: (outfit) =>
               _publishOutfitFromCreateRoute(routeContext, outfit),
-          onCreateAccessory: (imageFile, {required bool isDefault}) {
-            return _repository.createOutfitAccessory(
-              imageFile: imageFile,
-              isDefault: isDefault,
-            );
-          },
+          onCreateAccessory:
+              (imageFile, {required bool isDefault, required String title}) {
+                return _repository.createOutfitAccessory(
+                  imageFile: imageFile,
+                  isDefault: isDefault,
+                  title: title,
+                );
+              },
         ),
       ),
     );
@@ -498,12 +500,14 @@ class _AppShellState extends State<AppShell> {
           authorName: _repository.profile.name,
           authorHandle: _repository.profile.handle,
           onPublish: _publishOutfit,
-          onCreateAccessory: (imageFile, {required bool isDefault}) {
-            return _repository.createOutfitAccessory(
-              imageFile: imageFile,
-              isDefault: isDefault,
-            );
-          },
+          onCreateAccessory:
+              (imageFile, {required bool isDefault, required String title}) {
+                return _repository.createOutfitAccessory(
+                  imageFile: imageFile,
+                  isDefault: isDefault,
+                  title: title,
+                );
+              },
         );
       case _CreateMode.publishOutfit:
         return _buildPublishOutfitScreen();
