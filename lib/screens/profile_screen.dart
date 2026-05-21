@@ -13,7 +13,12 @@ class ProfileScreen extends StatelessWidget {
     super.key,
     required this.profile,
     required this.products,
+    required this.likedProducts,
+    required this.likedOutfits,
+    required this.recentlyViewedProducts,
+    required this.recentlyViewedOutfits,
     required this.outfits,
+    required this.allProducts,
     required this.isSignedIn,
     required this.isSigningIn,
     required this.accountLabel,
@@ -22,11 +27,18 @@ class ProfileScreen extends StatelessWidget {
     required this.onSignInWithTelegram,
     required this.onSignOut,
     required this.onUpdateProfile,
+    required this.onToggleProductLike,
+    required this.onToggleOutfitLike,
   });
 
   final AppProfile profile;
   final List<Product> products;
+  final List<Product> likedProducts;
+  final List<CreatedOutfit> likedOutfits;
+  final List<Product> recentlyViewedProducts;
+  final List<CreatedOutfit> recentlyViewedOutfits;
   final List<CreatedOutfit> outfits;
+  final List<Product> allProducts;
   final bool isSignedIn;
   final bool isSigningIn;
   final String? accountLabel;
@@ -36,6 +48,8 @@ class ProfileScreen extends StatelessWidget {
   final Future<void> Function() onSignOut;
   final Future<String?> Function({required String name, required String handle})
   onUpdateProfile;
+  final Future<void> Function(String productId) onToggleProductLike;
+  final Future<void> Function(String outfitId) onToggleOutfitLike;
 
   @override
   Widget build(BuildContext context) {
@@ -48,17 +62,25 @@ class ProfileScreen extends StatelessWidget {
         top: false,
         child: ListView(
           physics: const BouncingScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(16, topInset + 18, 16, 120),
+          padding: EdgeInsets.fromLTRB(18, topInset + 20, 18, 136),
           children: [
             const _ProfileTopBar(),
-            const SizedBox(height: 24),
+            const SizedBox(height: 27),
             _ProfileHeader(profile: profile),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             _RatingCard(rating: profile.rating),
+            _ProfileShortcutSection(
+              favoritesCount: likedProducts.length + likedOutfits.length,
+              recentCount:
+                  recentlyViewedProducts.length + recentlyViewedOutfits.length,
+              onFavoritesTap: () => _openLikedProducts(context),
+              onRecentTap: () => _openRecentlyViewedProducts(context),
+            ),
             _PhotoPreviewSection(
               title: 'мои объявления',
               count: products.length,
               images: products.map((product) => product.image).take(3).toList(),
+              topPadding: 10,
               onOpen: () => _openProducts(context),
             ),
             _PhotoPreviewSection(
@@ -68,14 +90,13 @@ class ProfileScreen extends StatelessWidget {
                   .map((outfit) => outfit.image)
                   .take(3)
                   .toList(),
-              topPadding: 8,
+              topPadding: 10,
               onOpen: () => _openOutfits(context),
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 4),
             const _ProfileMenuSection(
               rows: [
                 _MenuRowData('мои заказы'),
-                _MenuRowData('избранное'),
                 _MenuRowData('уведомления'),
                 _MenuRowData('настройки уведомлений'),
                 _MenuRowData('мои адреса'),
@@ -86,7 +107,7 @@ class ProfileScreen extends StatelessWidget {
             const _CountrySection(),
             const _SupportSection(),
             const _InfoSection(),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             _LogoutBlock(onSignOut: onSignOut),
           ],
         ),
@@ -95,9 +116,62 @@ class ProfileScreen extends StatelessWidget {
   }
 
   void _openProducts(BuildContext context) {
+    _openProductList(
+      context,
+      title: 'мои объявления',
+      emptyText: 'активных объявлений пока нет',
+      products: products,
+    );
+  }
+
+  void _openLikedProducts(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => _AllProductsScreen(products: products),
+        builder: (context) => _ProfileCollectionScreen(
+          title: 'избранное',
+          productEmptyText: 'в избранном пока нет вещей',
+          outfitEmptyText: 'в избранном пока нет образов',
+          products: likedProducts,
+          outfits: likedOutfits,
+          allProducts: allProducts,
+          onToggleProductLike: onToggleProductLike,
+          onToggleOutfitLike: onToggleOutfitLike,
+        ),
+      ),
+    );
+  }
+
+  void _openRecentlyViewedProducts(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _ProfileCollectionScreen(
+          title: 'недавно просмотренное',
+          productEmptyText: 'просмотренных вещей пока нет',
+          outfitEmptyText: 'просмотренных образов пока нет',
+          products: recentlyViewedProducts,
+          outfits: recentlyViewedOutfits,
+          allProducts: allProducts,
+          onToggleProductLike: onToggleProductLike,
+          onToggleOutfitLike: onToggleOutfitLike,
+        ),
+      ),
+    );
+  }
+
+  void _openProductList(
+    BuildContext context, {
+    required String title,
+    required String emptyText,
+    required List<Product> products,
+  }) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _AllProductsScreen(
+          title: title,
+          emptyText: emptyText,
+          products: products,
+          onToggleLike: onToggleProductLike,
+        ),
       ),
     );
   }
@@ -105,8 +179,11 @@ class ProfileScreen extends StatelessWidget {
   void _openOutfits(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) =>
-            _AllOutfitsScreen(outfits: outfits, products: products),
+        builder: (context) => _AllOutfitsScreen(
+          outfits: outfits,
+          products: allProducts,
+          onToggleLike: onToggleOutfitLike,
+        ),
       ),
     );
   }
@@ -125,15 +202,15 @@ class _ProfileTopBar extends StatelessWidget {
             // TODO: Navigate to main screen.
           },
           child: Container(
-            width: 34,
-            height: 34,
+            width: 39,
+            height: 39,
             decoration: const BoxDecoration(
               color: Colors.black,
               shape: BoxShape.circle,
             ),
             child: const Icon(
-              Icons.home_outlined,
-              size: 18,
+              Icons.ios_share_outlined,
+              size: 21,
               color: Colors.white,
             ),
           ),
@@ -145,22 +222,22 @@ class _ProfileTopBar extends StatelessWidget {
             // TODO: Open notifications or profile actions.
           },
           child: Container(
-            width: 58,
-            height: 30,
+            width: 66,
+            height: 34,
             decoration: BoxDecoration(
               color: Colors.black,
-              borderRadius: BorderRadius.circular(15),
+              borderRadius: BorderRadius.circular(17),
             ),
             child: const Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(
                   Icons.notifications_none_outlined,
-                  size: 16,
+                  size: 18,
                   color: Colors.white,
                 ),
-                SizedBox(width: 7),
-                Icon(Icons.more_horiz, size: 17, color: Colors.white),
+                SizedBox(width: 8),
+                Icon(Icons.settings_outlined, size: 18, color: Colors.white),
               ],
             ),
           ),
@@ -186,19 +263,19 @@ class _ProfileHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Container(
-          width: 64,
-          height: 64,
+          width: 74,
+          height: 74,
           decoration: const BoxDecoration(
             shape: BoxShape.circle,
             color: Color(0xFFF1F1F1),
           ),
           child: const Icon(
             Icons.person_outline,
-            size: 31,
+            size: 36,
             color: Colors.black,
           ),
         ),
-        const SizedBox(width: 13),
+        const SizedBox(width: 16),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -209,26 +286,45 @@ class _ProfileHeader extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontFamily: 'Montserrat',
-                  fontSize: 24,
+                  fontSize: 27,
                   fontWeight: FontWeight.w700,
                   height: 1.05,
                   letterSpacing: 0,
                   color: Colors.black,
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                handle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  height: 1,
-                  letterSpacing: 0,
-                  color: Color(0xFF8E8E8E),
-                ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      handle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                        height: 1,
+                        letterSpacing: 0,
+                        color: Color(0xFF8E8E8E),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    _formatFollowers(profile.followersCount),
+                    maxLines: 1,
+                    style: const TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      height: 1,
+                      letterSpacing: 0,
+                      color: Colors.black,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -242,6 +338,12 @@ class _ProfileHeader extends StatelessWidget {
     if (trimmed.isEmpty) return '@user';
     return trimmed.startsWith('@') ? trimmed : '@$trimmed';
   }
+
+  static String _formatFollowers(int count) {
+    if (count == 1) return '1 подписчик';
+    if (count > 1 && count < 5) return '$count подписчика';
+    return '$count подписчиков';
+  }
 }
 
 class _RatingCard extends StatelessWidget {
@@ -253,12 +355,12 @@ class _RatingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      height: 58,
-      margin: const EdgeInsets.only(top: 14),
-      padding: const EdgeInsets.symmetric(horizontal: 18),
+      height: 66,
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 21),
       decoration: BoxDecoration(
         color: Colors.black,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(18),
       ),
       child: Row(
         children: [
@@ -266,14 +368,14 @@ class _RatingCard extends StatelessWidget {
             rating.toStringAsFixed(1).replaceAll('.', ','),
             style: const TextStyle(
               fontFamily: 'Montserrat',
-              fontSize: 22,
+              fontSize: 25,
               fontWeight: FontWeight.w700,
               height: 1,
               letterSpacing: 0,
               color: Colors.white,
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           const Row(
             children: [
               _RatingStar(),
@@ -288,7 +390,7 @@ class _RatingCard extends StatelessWidget {
             '102 отзыва',
             style: TextStyle(
               fontFamily: 'Montserrat',
-              fontSize: 10,
+              fontSize: 11.5,
               fontWeight: FontWeight.w500,
               height: 1,
               letterSpacing: 0,
@@ -307,8 +409,151 @@ class _RatingStar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Padding(
-      padding: EdgeInsets.only(right: 2),
-      child: Icon(Icons.star, size: 15, color: Color(0xFFFFB800)),
+      padding: EdgeInsets.only(right: 2.5),
+      child: Icon(Icons.star, size: 17, color: Color(0xFFFFB800)),
+    );
+  }
+}
+
+class _ProfileShortcutSection extends StatelessWidget {
+  const _ProfileShortcutSection({
+    required this.favoritesCount,
+    required this.recentCount,
+    required this.onFavoritesTap,
+    required this.onRecentTap,
+  });
+
+  final int favoritesCount;
+  final int recentCount;
+  final VoidCallback onFavoritesTap;
+  final VoidCallback onRecentTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ProfileShortcutTile(
+              icon: Icons.favorite_border,
+              title: 'избранное',
+              count: favoritesCount,
+              isDark: false,
+              onTap: onFavoritesTap,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _ProfileShortcutTile(
+              icon: Icons.history,
+              title: 'недавно просмотренное',
+              count: recentCount,
+              isDark: false,
+              onTap: onRecentTap,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileShortcutTile extends StatelessWidget {
+  const _ProfileShortcutTile({
+    required this.icon,
+    required this.title,
+    required this.count,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final int count;
+  final bool isDark;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final backgroundColor = isDark ? Colors.black : const Color(0xFFDCDCE0);
+    final foregroundColor = isDark ? Colors.white : Colors.black;
+    final iconBackground = isDark
+        ? Colors.white.withValues(alpha: 0.14)
+        : Colors.white;
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Container(
+        height: 104,
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: isDark ? Colors.black : const Color(0xFFEDEDEF),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: iconBackground,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(icon, size: 19, color: foregroundColor),
+                ),
+                const Spacer(),
+                Container(
+                  constraints: const BoxConstraints(minWidth: 28),
+                  height: 24,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.14)
+                        : Colors.white,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    count.toString(),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                      letterSpacing: 0,
+                      color: foregroundColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            Text(
+              title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                height: 1.08,
+                letterSpacing: 0,
+                color: foregroundColor,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -319,7 +564,7 @@ class _PhotoPreviewSection extends StatelessWidget {
     required this.count,
     required this.images,
     required this.onOpen,
-    this.topPadding = 16,
+    this.topPadding = 18,
   });
 
   final String title;
@@ -341,14 +586,14 @@ class _PhotoPreviewSection extends StatelessWidget {
             behavior: HitTestBehavior.opaque,
             onTap: onOpen,
             child: SizedBox(
-              height: 26,
+              height: 30,
               child: Row(
                 children: [
                   Text(
                     count == 0 ? title : '$title • $count',
                     style: const TextStyle(
                       fontFamily: 'Montserrat',
-                      fontSize: 11,
+                      fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                       height: 1,
                       letterSpacing: 0,
@@ -358,16 +603,16 @@ class _PhotoPreviewSection extends StatelessWidget {
                   const Spacer(),
                   const Icon(
                     Icons.chevron_right,
-                    size: 18,
+                    size: 21,
                     color: Colors.black,
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           SizedBox(
-            height: 108,
+            height: 124,
             child: Row(
               children: List.generate(3, (index) {
                 final image = index < visibleImages.length
@@ -375,7 +620,7 @@ class _PhotoPreviewSection extends StatelessWidget {
                     : '';
                 return Expanded(
                   child: Padding(
-                    padding: EdgeInsets.only(right: index == 2 ? 0 : 8),
+                    padding: EdgeInsets.only(right: index == 2 ? 0 : 10),
                     child: _PreviewPhoto(image: image),
                   ),
                 );
@@ -396,7 +641,7 @@ class _PreviewPhoto extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
       child: ColoredBox(
         color: _outfitMediaBackground,
         child: image.trim().isEmpty
@@ -413,54 +658,250 @@ class _PreviewPhoto extends StatelessWidget {
   }
 }
 
-class _AllProductsScreen extends StatelessWidget {
-  const _AllProductsScreen({required this.products});
+class _ProfileCollectionScreen extends StatefulWidget {
+  const _ProfileCollectionScreen({
+    required this.title,
+    required this.productEmptyText,
+    required this.outfitEmptyText,
+    required this.products,
+    required this.outfits,
+    required this.allProducts,
+    required this.onToggleProductLike,
+    required this.onToggleOutfitLike,
+  });
 
+  final String title;
+  final String productEmptyText;
+  final String outfitEmptyText;
   final List<Product> products;
+  final List<CreatedOutfit> outfits;
+  final List<Product> allProducts;
+  final Future<void> Function(String productId) onToggleProductLike;
+  final Future<void> Function(String outfitId) onToggleOutfitLike;
+
+  @override
+  State<_ProfileCollectionScreen> createState() =>
+      _ProfileCollectionScreenState();
+}
+
+class _ProfileCollectionScreenState extends State<_ProfileCollectionScreen> {
+  int _selectedTab = 0;
+
+  bool get _showsProducts => _selectedTab == 0;
 
   @override
   Widget build(BuildContext context) {
     return _ProfileGridScaffold(
-      title: 'мои объявления',
-      isEmpty: products.isEmpty,
-      emptyText: 'активных объявлений пока нет',
-      child: GridView.builder(
-        padding: const EdgeInsets.fromLTRB(8, 8, 8, 120),
-        physics: const BouncingScrollPhysics(),
-        itemCount: products.length,
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 7,
-          mainAxisSpacing: 4,
-          mainAxisExtent: 320,
+      title: widget.title,
+      isEmpty: _showsProducts
+          ? widget.products.isEmpty
+          : widget.outfits.isEmpty,
+      emptyText: _showsProducts
+          ? widget.productEmptyText
+          : widget.outfitEmptyText,
+      backgroundColor: _showsProducts ? Colors.white : _outfitMediaBackground,
+      header: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
+        child: _ProfileCollectionTabs(
+          selectedIndex: _selectedTab,
+          onChanged: (index) => setState(() => _selectedTab = index),
         ),
-        itemBuilder: (context, index) {
-          return _CatalogProductCard(
-            product: products[index],
-            onTap: () {
-              // TODO: Open product details.
-            },
-            onMenu: () {
-              // TODO: Open product actions.
-            },
-            onLike: () {
-              // TODO: Toggle product like.
-            },
-            onShare: () {
-              // TODO: Share product.
-            },
-          );
-        },
+      ),
+      child: _showsProducts
+          ? _ProductsGrid(
+              products: widget.products,
+              onToggleLike: widget.onToggleProductLike,
+            )
+          : _OutfitsList(
+              outfits: widget.outfits,
+              products: widget.allProducts,
+              onToggleLike: widget.onToggleOutfitLike,
+            ),
+    );
+  }
+}
+
+class _ProfileCollectionTabs extends StatelessWidget {
+  const _ProfileCollectionTabs({
+    required this.selectedIndex,
+    required this.onChanged,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 42,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F0F2),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          _ProfileCollectionTab(
+            label: 'вещи',
+            isActive: selectedIndex == 0,
+            onTap: () => onChanged(0),
+          ),
+          _ProfileCollectionTab(
+            label: 'образы',
+            isActive: selectedIndex == 1,
+            onTap: () => onChanged(1),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _AllOutfitsScreen extends StatelessWidget {
-  const _AllOutfitsScreen({required this.outfits, required this.products});
+class _ProfileCollectionTab extends StatelessWidget {
+  const _ProfileCollectionTab({
+    required this.label,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: isActive ? Colors.black : Colors.transparent,
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 12.5,
+              fontWeight: FontWeight.w700,
+              height: 1,
+              letterSpacing: 0,
+              color: isActive ? Colors.white : const Color(0xFF070707),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProductsGrid extends StatelessWidget {
+  const _ProductsGrid({required this.products, required this.onToggleLike});
+
+  final List<Product> products;
+  final Future<void> Function(String productId) onToggleLike;
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 120),
+      physics: const BouncingScrollPhysics(),
+      itemCount: products.length,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 7,
+        mainAxisSpacing: 4,
+        mainAxisExtent: 320,
+      ),
+      itemBuilder: (context, index) {
+        return _CatalogProductCard(
+          product: products[index],
+          onTap: () {
+            // TODO: Open product details.
+          },
+          onMenu: () {
+            // TODO: Open product actions.
+          },
+          onLike: () {
+            onToggleLike(products[index].id);
+          },
+          onShare: () {
+            // TODO: Share product.
+          },
+        );
+      },
+    );
+  }
+}
+
+class _OutfitsList extends StatelessWidget {
+  const _OutfitsList({
+    required this.outfits,
+    required this.products,
+    required this.onToggleLike,
+  });
 
   final List<CreatedOutfit> outfits;
   final List<Product> products;
+  final Future<void> Function(String outfitId) onToggleLike;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+      physics: const BouncingScrollPhysics(),
+      itemCount: outfits.length,
+      separatorBuilder: (context, index) => const SizedBox(height: 18),
+      itemBuilder: (context, index) {
+        return _ProfileOutfitCard(
+          outfit: outfits[index],
+          products: products,
+          onToggleLike: () => onToggleLike(outfits[index].id),
+        );
+      },
+    );
+  }
+}
+
+class _AllProductsScreen extends StatelessWidget {
+  const _AllProductsScreen({
+    required this.title,
+    required this.emptyText,
+    required this.products,
+    required this.onToggleLike,
+  });
+
+  final String title;
+  final String emptyText;
+  final List<Product> products;
+  final Future<void> Function(String productId) onToggleLike;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProfileGridScaffold(
+      title: title,
+      isEmpty: products.isEmpty,
+      emptyText: emptyText,
+      child: _ProductsGrid(products: products, onToggleLike: onToggleLike),
+    );
+  }
+}
+
+class _AllOutfitsScreen extends StatelessWidget {
+  const _AllOutfitsScreen({
+    required this.outfits,
+    required this.products,
+    required this.onToggleLike,
+  });
+
+  final List<CreatedOutfit> outfits;
+  final List<Product> products;
+  final Future<void> Function(String outfitId) onToggleLike;
 
   @override
   Widget build(BuildContext context) {
@@ -470,24 +911,25 @@ class _AllOutfitsScreen extends StatelessWidget {
       emptyText: 'активных образов пока нет',
       backgroundColor: _outfitMediaBackground,
       topPadding: 4,
-      child: ListView.separated(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
-        physics: const BouncingScrollPhysics(),
-        itemCount: outfits.length,
-        separatorBuilder: (context, index) => const SizedBox(height: 18),
-        itemBuilder: (context, index) {
-          return _ProfileOutfitCard(outfit: outfits[index], products: products);
-        },
+      child: _OutfitsList(
+        outfits: outfits,
+        products: products,
+        onToggleLike: onToggleLike,
       ),
     );
   }
 }
 
 class _ProfileOutfitCard extends StatefulWidget {
-  const _ProfileOutfitCard({required this.outfit, required this.products});
+  const _ProfileOutfitCard({
+    required this.outfit,
+    required this.products,
+    required this.onToggleLike,
+  });
 
   final CreatedOutfit outfit;
   final List<Product> products;
+  final VoidCallback onToggleLike;
 
   @override
   State<_ProfileOutfitCard> createState() => _ProfileOutfitCardState();
@@ -495,7 +937,6 @@ class _ProfileOutfitCard extends StatefulWidget {
 
 class _ProfileOutfitCardState extends State<_ProfileOutfitCard> {
   late final PageController _pageController;
-  bool _isLiked = false;
 
   Map<String, Product> get _productsById {
     return {for (final product in widget.products) product.id: product};
@@ -554,7 +995,7 @@ class _ProfileOutfitCardState extends State<_ProfileOutfitCard> {
           Positioned(
             left: 16,
             right: 16,
-            top: 488,
+            top: 398,
             child: _OutfitAuthorCard(
               authorName: widget.outfit.authorName.trim().isEmpty
                   ? 'Автор'
@@ -562,11 +1003,9 @@ class _ProfileOutfitCardState extends State<_ProfileOutfitCard> {
               authorHandle: widget.outfit.authorHandle.trim().isEmpty
                   ? '@user'
                   : widget.outfit.authorHandle,
-              isLiked: _isLiked,
+              isLiked: widget.outfit.isLiked,
               likesCount: 0,
-              onLikeTap: () {
-                setState(() => _isLiked = !_isLiked);
-              },
+              onLikeTap: widget.onToggleLike,
               onAuthorTap: () {
                 // TODO: Open author profile.
               },
@@ -592,7 +1031,7 @@ class _OutfitHeroMedia extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 520 * scale,
+      height: 430 * scale,
       width: double.infinity,
       child: ClipRRect(
         borderRadius: BorderRadius.vertical(top: Radius.circular(30 * scale)),
@@ -739,7 +1178,7 @@ class _OutfitProductsStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.fromLTRB(16 * scale, 58 * scale, 0, 22 * scale),
+      padding: EdgeInsets.fromLTRB(16 * scale, 42 * scale, 0, 12 * scale),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(
@@ -747,13 +1186,13 @@ class _OutfitProductsStrip extends StatelessWidget {
         ),
       ),
       child: SizedBox(
-        height: 86 * scale,
+        height: 84 * scale,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           physics: const BouncingScrollPhysics(),
           padding: EdgeInsets.only(right: 16 * scale),
           itemCount: products.length,
-          separatorBuilder: (context, index) => SizedBox(width: 12 * scale),
+          separatorBuilder: (context, index) => SizedBox(width: 10 * scale),
           itemBuilder: (context, index) {
             return _OutfitProductCard(scale: scale, product: products[index]);
           },
@@ -772,30 +1211,69 @@ class _OutfitProductCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 80 * scale,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: _outfitItemBackground,
-          borderRadius: BorderRadius.circular(5 * scale),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(5 * scale),
-          child: product.image.trim().isEmpty
-              ? Container(
-                  color: _outfitItemBackground,
-                  child: Icon(
-                    Icons.checkroom_outlined,
-                    size: 28 * scale,
-                    color: const Color(0xFFB8B8BD),
-                  ),
-                )
-              : AppImage(
-                  imageUrl: product.image,
-                  fit: BoxFit.contain,
-                  alignment: Alignment.center,
-                  placeholderColor: _outfitItemBackground,
-                ),
-        ),
+      width: 74 * scale,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 48 * scale,
+            height: 48 * scale,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: _outfitItemBackground,
+                borderRadius: BorderRadius.circular(5 * scale),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(5 * scale),
+                child: product.image.trim().isEmpty
+                    ? Container(
+                        color: _outfitItemBackground,
+                        child: Icon(
+                          Icons.checkroom_outlined,
+                          size: 24 * scale,
+                          color: const Color(0xFFB8B8BD),
+                        ),
+                      )
+                    : AppImage(
+                        imageUrl: product.image,
+                        fit: BoxFit.contain,
+                        alignment: Alignment.center,
+                        placeholderColor: _outfitItemBackground,
+                      ),
+              ),
+            ),
+          ),
+          SizedBox(height: 3 * scale),
+          Text(
+            product.name,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 9.5 * scale,
+              fontWeight: FontWeight.w600,
+              height: 1,
+              letterSpacing: 0,
+              color: const Color(0xFF111111),
+            ),
+          ),
+          SizedBox(height: 1.5 * scale),
+          Text(
+            product.price,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 10 * scale,
+              fontWeight: FontWeight.w700,
+              height: 1,
+              letterSpacing: 0,
+              color: const Color(0xFF8F8F94),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -821,6 +1299,7 @@ class _ProfileGridScaffold extends StatelessWidget {
     required this.child,
     this.backgroundColor = Colors.white,
     this.topPadding = 12,
+    this.header,
   });
 
   final String title;
@@ -829,6 +1308,7 @@ class _ProfileGridScaffold extends StatelessWidget {
   final Widget child;
   final Color backgroundColor;
   final double topPadding;
+  final Widget? header;
 
   @override
   Widget build(BuildContext context) {
@@ -875,6 +1355,7 @@ class _ProfileGridScaffold extends StatelessWidget {
                 ],
               ),
             ),
+            ?header,
             Expanded(
               child: isEmpty
                   ? Center(
@@ -1180,7 +1661,7 @@ class _MenuRow extends StatelessWidget {
     required this.title,
     this.leading,
     this.showChevron = true,
-    this.height = 46,
+    this.height = 52,
     this.textWeight = FontWeight.w600,
     this.onTap,
   });
@@ -1201,7 +1682,7 @@ class _MenuRow extends StatelessWidget {
         height: height,
         child: Row(
           children: [
-            if (leading != null) ...[leading!, const SizedBox(width: 10)],
+            if (leading != null) ...[leading!, const SizedBox(width: 12)],
             Expanded(
               child: Text(
                 title,
@@ -1209,7 +1690,7 @@ class _MenuRow extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontFamily: 'Montserrat',
-                  fontSize: 12,
+                  fontSize: 13.5,
                   fontWeight: textWeight,
                   height: 1,
                   letterSpacing: 0,
@@ -1218,7 +1699,7 @@ class _MenuRow extends StatelessWidget {
               ),
             ),
             if (showChevron)
-              const Icon(Icons.chevron_right, size: 16, color: Colors.black),
+              const Icon(Icons.chevron_right, size: 19, color: Colors.black),
           ],
         ),
       ),
@@ -1236,7 +1717,7 @@ class _CountrySection extends StatelessWidget {
         const _SectionDivider(),
         _MenuRow(
           title: 'Россия',
-          height: 48,
+          height: 54,
           leading: const _RussiaFlag(),
           onTap: () {
             // TODO: Open country selector.
@@ -1253,8 +1734,8 @@ class _RussiaFlag extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 18,
-      height: 18,
+      width: 21,
+      height: 21,
       clipBehavior: Clip.antiAlias,
       decoration: const BoxDecoration(shape: BoxShape.circle),
       child: const Column(
@@ -1324,11 +1805,11 @@ class _SupportRow extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: SizedBox(
-        height: 44,
+        height: 50,
         child: Row(
           children: [
-            Icon(icon, size: 17, color: Colors.black),
-            const SizedBox(width: 10),
+            Icon(icon, size: 20, color: Colors.black),
+            const SizedBox(width: 12),
             Expanded(
               child: Text(
                 title,
@@ -1336,7 +1817,7 @@ class _SupportRow extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontFamily: 'Montserrat',
-                  fontSize: 12,
+                  fontSize: 13.5,
                   fontWeight: FontWeight.w500,
                   height: 1,
                   letterSpacing: 0,
@@ -1348,15 +1829,15 @@ class _SupportRow extends StatelessWidget {
               meta,
               style: const TextStyle(
                 fontFamily: 'Montserrat',
-                fontSize: 11,
+                fontSize: 12.5,
                 fontWeight: FontWeight.w500,
                 height: 1,
                 letterSpacing: 0,
                 color: Color(0xFF8E8E8E),
               ),
             ),
-            const SizedBox(width: 8),
-            const Icon(Icons.chevron_right, size: 16, color: Colors.black),
+            const SizedBox(width: 10),
+            const Icon(Icons.chevron_right, size: 19, color: Colors.black),
           ],
         ),
       ),
@@ -1374,19 +1855,19 @@ class _InfoSection extends StatelessWidget {
         _SectionDivider(),
         _MenuRow(
           title: 'доставка и оплата',
-          height: 42,
+          height: 48,
           textWeight: FontWeight.w500,
           showChevron: true,
         ),
         _MenuRow(
           title: 'документы',
-          height: 42,
+          height: 48,
           textWeight: FontWeight.w500,
           showChevron: true,
         ),
         _MenuRow(
           title: 'вакансии',
-          height: 42,
+          height: 48,
           textWeight: FontWeight.w500,
           showChevron: true,
         ),
@@ -1409,7 +1890,7 @@ class _LogoutBlock extends StatelessWidget {
           behavior: HitTestBehavior.opaque,
           onTap: onSignOut,
           child: const SizedBox(
-            height: 48,
+            height: 54,
             child: Row(
               children: [
                 Expanded(
@@ -1417,7 +1898,7 @@ class _LogoutBlock extends StatelessWidget {
                     'выйти из профиля',
                     style: TextStyle(
                       fontFamily: 'Montserrat',
-                      fontSize: 12,
+                      fontSize: 13.5,
                       fontWeight: FontWeight.w700,
                       height: 1,
                       letterSpacing: 0,
@@ -1425,19 +1906,19 @@ class _LogoutBlock extends StatelessWidget {
                     ),
                   ),
                 ),
-                Icon(Icons.logout, size: 18, color: Color(0xFFFF3B30)),
+                Icon(Icons.logout, size: 21, color: Color(0xFFFF3B30)),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         const Align(
           alignment: Alignment.centerLeft,
           child: Text(
             'версия приложения 1.0',
             style: TextStyle(
               fontFamily: 'Montserrat',
-              fontSize: 9,
+              fontSize: 10.5,
               fontWeight: FontWeight.w500,
               height: 1,
               letterSpacing: 0,

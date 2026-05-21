@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_typography.dart';
+import '../models/message_thread.dart';
 import '../models/product.dart';
 import '../widgets/app_image.dart';
-import '../models/message_thread.dart';
+import '../widgets/promo_banner_carousel.dart';
 import 'messages_screen.dart';
 import 'product_screen.dart';
 
@@ -14,6 +16,7 @@ class CatalogScreen extends StatefulWidget {
   final Future<void> Function(String productId) onHideProduct;
   final Future<MessageThread?> Function(Product product) onContactSeller;
   final Future<void> Function(String threadId, String text) onSendMessage;
+  final void Function(Product product) onProductViewed;
   final String currentUserId;
   final Listenable threadsListenable;
   final MessageThread? Function(String threadId) resolveThread;
@@ -27,6 +30,7 @@ class CatalogScreen extends StatefulWidget {
     required this.onHideProduct,
     required this.onContactSeller,
     required this.onSendMessage,
+    required this.onProductViewed,
     required this.currentUserId,
     required this.threadsListenable,
     required this.resolveThread,
@@ -40,6 +44,9 @@ class _CatalogScreenState extends State<CatalogScreen>
     with SingleTickerProviderStateMixin {
   int _selectedTabIndex = 1;
   String _selectedSort = 'По рекомендациям';
+  final ScrollController _scrollController = ScrollController();
+  bool _showFloatingSearch = false;
+  double _lastScrollOffset = 0;
 
   final List<String> _tabs = [
     'Новинки',
@@ -50,6 +57,32 @@ class _CatalogScreenState extends State<CatalogScreen>
     'Топы',
     'Низ',
   ];
+
+  List<PromoBanner> get _promoBanners {
+    return [
+      PromoBanner(
+        image: 'assets/mock/outfit_hero.jpg',
+        title: 'РОПНО',
+        subtitle: 'тататататат та тата тата\nтаа, та та тата?',
+        buttonText: 'ПЕРЕЙТИ',
+        onTap: () => _showSnackBar('Переход по промо-баннеру'),
+      ),
+      PromoBanner(
+        image: 'assets/mock/post_3.jpg',
+        title: 'НОВЫЙ ДРОП',
+        subtitle: 'Собери образ из вещей, которые уже ждут в каталоге',
+        buttonText: 'ПЕРЕЙТИ',
+        onTap: () => _showSnackBar('Переход по промо-баннеру'),
+      ),
+      PromoBanner(
+        image: 'assets/mock/post_8.jpg',
+        title: 'ДЕНИМ',
+        subtitle: 'Свободные силуэты, винтажные оттенки и чистые линии',
+        buttonText: 'ПЕРЕЙТИ',
+        onTap: () => _showSnackBar('Переход по промо-баннеру'),
+      ),
+    ];
+  }
 
   List<Product> get _visibleProducts {
     final products = widget.products
@@ -76,17 +109,102 @@ class _CatalogScreenState extends State<CatalogScreen>
   }
 
   @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_handleScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController
+      ..removeListener(_handleScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _handleScroll() {
+    final offset = _scrollController.offset;
+    final searchHiddenOffset = _promoBannerHeight(context) + 16 + 44;
+    final delta = offset - _lastScrollOffset;
+    final isSearchHidden = offset > searchHiddenOffset;
+
+    if (!isSearchHidden) {
+      if (_showFloatingSearch) {
+        setState(() => _showFloatingSearch = false);
+      }
+      _lastScrollOffset = offset;
+      return;
+    }
+
+    if (delta < -1.5 && !_showFloatingSearch) {
+      setState(() => _showFloatingSearch = true);
+    } else if (delta > 1.5 && _showFloatingSearch) {
+      setState(() => _showFloatingSearch = false);
+    }
+
+    _lastScrollOffset = offset;
+  }
+
+  double _promoBannerHeight(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    return (screenWidth * 1.32).clamp(500.0, 540.0).toDouble();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.only(bottom: 138),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildHeader(widget.scale),
-          _buildTabs(widget.scale),
-          _buildFilterRow(widget.scale),
-          _buildProductGrid(widget.scale),
-        ],
+    return Stack(
+      children: [
+        SingleChildScrollView(
+          controller: _scrollController,
+          padding: const EdgeInsets.only(bottom: 138),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              PromoBannerCarousel(
+                banners: _promoBanners,
+                height: _promoBannerHeight(context),
+              ),
+              const SizedBox(height: 16),
+              _buildHeader(widget.scale),
+              _buildTabs(widget.scale),
+              _buildFilterRow(widget.scale),
+              _buildProductGrid(widget.scale),
+            ],
+          ),
+        ),
+        AnimatedPositioned(
+          duration: const Duration(milliseconds: 460),
+          curve: Curves.easeInOutCubic,
+          top: _showFloatingSearch ? 0 : -140,
+          left: 0,
+          right: 0,
+          child: IgnorePointer(
+            ignoring: !_showFloatingSearch,
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 360),
+              curve: Curves.easeInOut,
+              opacity: _showFloatingSearch ? 1 : 0,
+              child: _buildFloatingSearch(widget.scale),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFloatingSearch(double scale) {
+    return Material(
+      color: Colors.white,
+      elevation: 8,
+      shadowColor: Colors.black.withValues(alpha: 0.08),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          widget.sidePadding,
+          MediaQuery.of(context).viewPadding.top + 8,
+          widget.sidePadding,
+          10,
+        ),
+        child: SizedBox(height: 44, child: _buildSearchActions(scale)),
       ),
     );
   }
@@ -94,54 +212,67 @@ class _CatalogScreenState extends State<CatalogScreen>
   Widget _buildHeader(double scale) {
     return Padding(
       padding: EdgeInsets.only(
-        top: MediaQuery.of(context).viewPadding.top + 14,
+        top: 0,
         left: widget.sidePadding,
         right: widget.sidePadding,
         bottom: 18,
       ),
-      child: SizedBox(
-        height: 44,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Text(
-                'Каталог',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF070707),
-                ),
+      child: SizedBox(height: 44, child: _buildSearchActions(scale)),
+    );
+  }
+
+  Widget _buildSearchActions(double scale) {
+    return Row(
+      children: [
+        Expanded(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _showSnackBar('Поиск'),
+            child: Container(
+              height: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: const Color(0xFFE7E7EA)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.search, size: 22, color: Color(0xFF070707)),
+                  const SizedBox(width: 10),
+                  Text(
+                    'Поиск',
+                    style: TextStyle(
+                      fontFamily: AppTypography.fontFamily,
+                      fontSize: 14.5 * scale,
+                      fontWeight: AppTypography.medium,
+                      color: const Color(0xFF706E82),
+                    ),
+                  ),
+                ],
               ),
             ),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _showSnackBar('Поиск'),
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: Icon(
-                  Icons.search,
-                  size: 24,
-                  color: const Color(0xFF070707),
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _showSnackBar('Поиск по фото'),
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: Icon(
-                  Icons.photo_camera_outlined,
-                  size: 24,
-                  color: const Color(0xFF070707),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(width: 10),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _showSnackBar('Поиск по фото'),
+          child: Container(
+            width: 48,
+            height: double.infinity,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: const Color(0xFFE7E7EA)),
+            ),
+            child: const Icon(
+              Icons.photo_camera_outlined,
+              size: 23,
+              color: Color(0xFF070707),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -293,6 +424,7 @@ class _CatalogScreenState extends State<CatalogScreen>
   }
 
   void _showProductDetails(Product product) {
+    widget.onProductViewed(product);
     Navigator.of(context, rootNavigator: true).push(
       PageRouteBuilder<void>(
         opaque: false,

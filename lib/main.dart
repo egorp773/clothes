@@ -161,9 +161,7 @@ class _AppShellState extends State<AppShell> {
         fullscreenDialog: true,
         builder: (routeContext) => OutfitCreateScreen(
           myProducts: _repository.myProducts,
-          likedProducts: _repository.products
-              .where((product) => product.isLiked && !product.isHidden)
-              .toList(),
+          likedProducts: _repository.likedProducts,
           defaultAccessories: _repository.defaultAccessories,
           myAccessories: _repository.myAccessories,
           authorName: _repository.profile.name,
@@ -434,6 +432,8 @@ class _AppShellState extends State<AppShell> {
                   onHideProduct: _repository.hideProduct,
                   onContactSeller: _repository.contactSeller,
                   onSendMessage: _repository.sendMessage,
+                  onProductViewed: (product) =>
+                      _repository.recordProductView(product.id),
                   currentUserId: _repository.currentUserId,
                   threadsListenable: _repository,
                   resolveThread: _repository.threadById,
@@ -444,6 +444,10 @@ class _AppShellState extends State<AppShell> {
                   createdOutfits: _repository.outfits,
                   products: _repository.products,
                   onCreateTap: _openPublishOutfit,
+                  onToggleProductLike: _repository.toggleProductLike,
+                  onToggleOutfitLike: _repository.toggleOutfitLike,
+                  onProductViewed: _repository.recordProductView,
+                  onOutfitViewed: _repository.recordOutfitView,
                 ),
                 _buildCreateScreen(),
                 MessagesScreen(
@@ -458,7 +462,12 @@ class _AppShellState extends State<AppShell> {
                 ProfileScreen(
                   profile: _repository.profile,
                   products: _repository.myProducts,
+                  likedProducts: _repository.likedProducts,
+                  likedOutfits: _repository.likedOutfits,
+                  recentlyViewedProducts: _repository.recentlyViewedProducts,
+                  recentlyViewedOutfits: _repository.recentlyViewedOutfits,
                   outfits: _repository.myOutfits,
+                  allProducts: _repository.products,
                   isSignedIn: _repository.isSignedIn,
                   isSigningIn: _repository.isSigningIn,
                   accountLabel:
@@ -473,6 +482,8 @@ class _AppShellState extends State<AppShell> {
                   onSignInWithTelegram: _repository.signInWithTelegram,
                   onSignOut: _repository.signOut,
                   onUpdateProfile: _repository.updateProfile,
+                  onToggleProductLike: _repository.toggleProductLike,
+                  onToggleOutfitLike: _repository.toggleOutfitLike,
                 ),
               ],
             ),
@@ -493,9 +504,7 @@ class _AppShellState extends State<AppShell> {
         return OutfitCreateScreen(
           onClose: () => _changeTab(0),
           myProducts: _repository.myProducts,
-          likedProducts: _repository.products
-              .where((product) => product.isLiked && !product.isHidden)
-              .toList(),
+          likedProducts: _repository.likedProducts,
           defaultAccessories: _repository.defaultAccessories,
           myAccessories: _repository.myAccessories,
           authorName: _repository.profile.name,

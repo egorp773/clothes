@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/created_outfit.dart';
 import '../models/product.dart';
@@ -14,6 +15,10 @@ class OutfitsScreen extends StatefulWidget {
   final List<CreatedOutfit> createdOutfits;
   final List<Product> products;
   final VoidCallback onCreateTap;
+  final Future<void> Function(String productId) onToggleProductLike;
+  final Future<void> Function(String outfitId) onToggleOutfitLike;
+  final Future<void> Function(String productId) onProductViewed;
+  final Future<void> Function(String outfitId) onOutfitViewed;
 
   const OutfitsScreen({
     super.key,
@@ -22,6 +27,10 @@ class OutfitsScreen extends StatefulWidget {
     this.createdOutfits = const [],
     this.products = const [],
     required this.onCreateTap,
+    required this.onToggleProductLike,
+    required this.onToggleOutfitLike,
+    required this.onProductViewed,
+    required this.onOutfitViewed,
   });
 
   @override
@@ -139,6 +148,9 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
   }
 
   void _showProductDetails(_OutfitProduct product) {
+    if (product.id.isNotEmpty) {
+      widget.onProductViewed(product.id);
+    }
     Navigator.of(context, rootNavigator: true).push(
       PageRouteBuilder<void>(
         opaque: false,
@@ -148,7 +160,9 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
         pageBuilder: (context, animation, secondaryAnimation) {
           return ProductScreen(
             product: ProductDetailData(
-              id: product.name.toLowerCase().replaceAll(' ', '_'),
+              id: product.id.isEmpty
+                  ? product.name.toLowerCase().replaceAll(' ', '_')
+                  : product.id,
               title: product.name,
               description: '',
               price: product.price,
@@ -159,13 +173,96 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
               sellerHandle: '@seller',
               size: 'M',
               condition: 'Отличное',
-              isLiked: false,
+              isLiked: product.isLiked,
             ),
-            onLike: () {},
+            onLike: product.id.isEmpty
+                ? () {}
+                : () => widget.onToggleProductLike(product.id),
             onAddToCart: () {},
             onContactSeller: () {},
           );
         },
+      ),
+    );
+  }
+
+  List<_OutfitProduct> _outfitProducts(CreatedOutfit outfit) {
+    final productsById = {
+      for (final product in widget.products) product.id: product,
+    };
+    return outfit.items.map((item) {
+      final product = productsById[item.id];
+      return _OutfitProduct(
+        id: item.id,
+        icon: Icons.checkroom_outlined,
+        brand: product?.brand ?? '',
+        name: product?.title ?? item.name,
+        price: product?.price ?? item.price,
+        image: product?.outfitDisplayImage ?? item.image,
+        isLiked: product?.isLiked ?? false,
+      );
+    }).toList();
+  }
+
+  List<CreatedOutfit> _relatedOutfits(CreatedOutfit outfit) {
+    final ownerId = outfit.ownerId.trim();
+    final handle = outfit.authorHandle.trim().toLowerCase();
+    final name = outfit.authorName.trim().toLowerCase();
+    return widget.createdOutfits.where((candidate) {
+      if (candidate.id == outfit.id) return false;
+      if (ownerId.isNotEmpty && candidate.ownerId.trim() == ownerId) {
+        return true;
+      }
+      if (handle.isNotEmpty &&
+          candidate.authorHandle.trim().toLowerCase() == handle) {
+        return true;
+      }
+      return name.isNotEmpty &&
+          candidate.authorName.trim().toLowerCase() == name;
+    }).toList();
+  }
+
+  void _showOutfitDetails(CreatedOutfit outfit) {
+    widget.onOutfitViewed(outfit.id);
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _OutfitDetailScreen(
+          photos: outfit.photos,
+          previewBackgroundColor: outfit.previewBackgroundColor,
+          layoutItems: outfit.layoutItems,
+          authorName: outfit.authorName,
+          authorHandle: outfit.authorHandle,
+          isLiked: outfit.isLiked,
+          likesCount: outfit.likesCount,
+          products: _outfitProducts(outfit),
+          moreOutfits: _relatedOutfits(outfit),
+          onLikeTap: () => widget.onToggleOutfitLike(outfit.id),
+          onAuthorTap: _showAuthorProfile,
+          onProductTap: _showProductDetails,
+          onOutfitTap: _showOutfitDetails,
+        ),
+      ),
+    );
+  }
+
+  void _showSampleOutfitDetails() {
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _OutfitDetailScreen(
+          photos: const ['assets/mock/outfit_hero.jpg'],
+          previewBackgroundColor: null,
+          layoutItems: const [],
+          authorName: 'Lil Yachty',
+          authorHandle: '@lilyachty',
+          isLiked: _isLiked,
+          likesCount: _likesCount,
+          products: const [],
+          moreOutfits: const [],
+          onLikeTap: () async => _toggleLike(),
+          onAuthorTap: _showAuthorProfile,
+          onProductTap: _showProductDetails,
+          onOutfitTap: (_) {},
+        ),
       ),
     );
   }
@@ -213,6 +310,9 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                   products: widget.products,
                   onAuthorTap: _showAuthorProfile,
                   onProductTap: _showProductDetails,
+                  onOutfitTap: () => _showOutfitDetails(outfit),
+                  onLikeTap: () => widget.onToggleOutfitLike(outfit.id),
+                  onViewed: () => widget.onOutfitViewed(outfit.id),
                 ),
               ),
             ),
@@ -228,6 +328,7 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                   onLikeTap: _toggleLike,
                   onAuthorTap: _showAuthorProfile,
                   onProductTap: _showProductDetails,
+                  onOutfitTap: _showSampleOutfitDetails,
                 ),
               ),
           ],
@@ -280,6 +381,794 @@ class _Header extends StatelessWidget {
   }
 }
 
+class _OutfitDetailScreen extends StatefulWidget {
+  const _OutfitDetailScreen({
+    required this.photos,
+    required this.previewBackgroundColor,
+    required this.layoutItems,
+    required this.authorName,
+    required this.authorHandle,
+    required this.isLiked,
+    required this.likesCount,
+    required this.products,
+    required this.moreOutfits,
+    required this.onLikeTap,
+    required this.onAuthorTap,
+    required this.onProductTap,
+    required this.onOutfitTap,
+  });
+
+  final List<String> photos;
+  final int? previewBackgroundColor;
+  final List<OutfitLayoutItem> layoutItems;
+  final String authorName;
+  final String authorHandle;
+  final bool isLiked;
+  final int likesCount;
+  final List<_OutfitProduct> products;
+  final List<CreatedOutfit> moreOutfits;
+  final Future<void> Function() onLikeTap;
+  final VoidCallback onAuthorTap;
+  final void Function(_OutfitProduct) onProductTap;
+  final void Function(CreatedOutfit) onOutfitTap;
+
+  @override
+  State<_OutfitDetailScreen> createState() => _OutfitDetailScreenState();
+}
+
+class _OutfitDetailScreenState extends State<_OutfitDetailScreen> {
+  final ScrollController _scrollController = ScrollController();
+  bool _showCollapsedHeader = false;
+  late bool _isLiked;
+  late int _likesCount;
+
+  static const _heroImageHeight = 560.0;
+  static const _heroSectionHeight = 598.0;
+
+  List<_OutfitProduct> get _products {
+    if (widget.products.isNotEmpty) return widget.products;
+    return const [
+      _OutfitProduct(
+        icon: Icons.checkroom_outlined,
+        brand: 'Endless Denim',
+        name: 'Less Faith Yellow Longsleeve Thermal',
+        price: '\$200',
+        image: 'assets/mock/item_longsleeve.jpg',
+      ),
+      _OutfitProduct(
+        icon: Icons.diamond_outlined,
+        brand: 'Louis Vuitton',
+        name: 'LV Lovers 40mm Belt Damoflage Gr...',
+        price: '\$3112',
+        image: 'assets/mock/item_cross.jpg',
+      ),
+      _OutfitProduct(
+        icon: Icons.dry_cleaning_outlined,
+        brand: 'Nyrva',
+        name: 'Orange Cowhide Shorts',
+        price: '\$350',
+        image: 'assets/mock/item_shorts.jpg',
+      ),
+      _OutfitProduct(
+        icon: Icons.checkroom_outlined,
+        brand: 'Corteiz',
+        name: 'Green & Yellow Starz Ghana Socks',
+        price: '\$100',
+        image: 'assets/mock/item_boots.jpg',
+      ),
+      _OutfitProduct(
+        icon: Icons.hiking_outlined,
+        brand: 'Clarks x Martine Rose',
+        name: 'Leather Clog Orange',
+        oldPrice: '\$305',
+        price: '\$122',
+        image: 'assets/mock/item_boots.jpg',
+      ),
+    ];
+  }
+
+  String get _authorName {
+    final trimmed = widget.authorName.trim();
+    return trimmed.isEmpty || trimmed == 'Автор' ? 'Lil Yachty' : trimmed;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _isLiked = widget.isLiked;
+    _likesCount = widget.likesCount;
+    if (_isLiked && _likesCount == 0) {
+      _likesCount = 1;
+    }
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _scrollController.addListener(_handleScroll);
+  }
+
+  Future<void> _toggleLike() async {
+    final previousLiked = _isLiked;
+    final previousCount = _likesCount;
+    setState(() {
+      _isLiked = !_isLiked;
+      _likesCount += _isLiked ? 1 : -1;
+      if (_likesCount < 0) {
+        _likesCount = 0;
+      }
+    });
+
+    try {
+      await widget.onLikeTap();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLiked = previousLiked;
+        _likesCount = previousCount;
+      });
+    }
+  }
+
+  void _handleScroll() {
+    final next = _scrollController.offset > 430;
+    if (next == _showCollapsedHeader) return;
+    setState(() => _showCollapsedHeader = next);
+  }
+
+  @override
+  void dispose() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+      ),
+    );
+    _scrollController
+      ..removeListener(_handleScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          SingleChildScrollView(
+            controller: _scrollController,
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.only(bottom: 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _OutfitHeroSection(
+                  height: _heroSectionHeight,
+                  imageHeight: _heroImageHeight,
+                  photos: widget.photos,
+                  previewBackgroundColor: widget.previewBackgroundColor,
+                  layoutItems: widget.layoutItems,
+                  authorName: _authorName,
+                  authorHandle: widget.authorHandle,
+                  likesCount: _likesCount,
+                  isLiked: _isLiked,
+                  onLikeTap: _toggleLike,
+                  onAuthorTap: widget.onAuthorTap,
+                ),
+                _OutfitProductsList(
+                  products: _products,
+                  onProductTap: widget.onProductTap,
+                ),
+                _TotalSection(total: _totalText(_products)),
+                _MoreOutfitsSection(
+                  authorName: _authorName,
+                  outfits: widget.moreOutfits,
+                  onOutfitTap: widget.onOutfitTap,
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            top: 0,
+            child: _DetailTopBar(isCollapsed: _showCollapsedHeader),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _totalText(List<_OutfitProduct> products) {
+    final total = products.fold<int>(0, (sum, product) {
+      final digits = product.price.replaceAll(RegExp(r'[^0-9]'), '');
+      return sum + (int.tryParse(digits) ?? 0);
+    });
+    return '${_formatNumber(total)} \u20BD';
+  }
+
+  static String _formatNumber(int value) {
+    final raw = value.toString();
+    final buffer = StringBuffer();
+    for (var index = 0; index < raw.length; index++) {
+      final remaining = raw.length - index;
+      buffer.write(raw[index]);
+      if (remaining > 1 && remaining % 3 == 1) {
+        buffer.write(' ');
+      }
+    }
+    return buffer.toString();
+  }
+}
+
+class _DetailTopBar extends StatelessWidget {
+  const _DetailTopBar({required this.isCollapsed});
+
+  final bool isCollapsed;
+
+  @override
+  Widget build(BuildContext context) {
+    final top = MediaQuery.of(context).viewPadding.top;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      height: top + 58,
+      padding: EdgeInsets.fromLTRB(16, top + 8, 16, 8),
+      decoration: BoxDecoration(
+        color: isCollapsed ? Colors.white : Colors.transparent,
+        border: Border(
+          bottom: BorderSide(
+            color: isCollapsed ? const Color(0xFFE0E0E0) : Colors.transparent,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          _DetailTopButton(
+            onPressed: () => Navigator.maybePop(context),
+            icon: Icons.arrow_back,
+          ),
+          const Spacer(),
+          _DetailTopButton(
+            onPressed: () {
+              // TODO: Share outfit.
+            },
+            icon: Icons.ios_share,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailTopButton extends StatelessWidget {
+  const _DetailTopButton({required this.icon, required this.onPressed});
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.94),
+      shape: const CircleBorder(),
+      elevation: 2,
+      shadowColor: Colors.black.withValues(alpha: 0.18),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onPressed,
+        child: SizedBox(
+          width: 42,
+          height: 42,
+          child: Icon(icon, size: 25, color: Colors.black),
+        ),
+      ),
+    );
+  }
+}
+
+class _OutfitHeroSection extends StatelessWidget {
+  const _OutfitHeroSection({
+    required this.height,
+    required this.imageHeight,
+    required this.photos,
+    required this.previewBackgroundColor,
+    required this.layoutItems,
+    required this.authorName,
+    required this.authorHandle,
+    required this.likesCount,
+    required this.isLiked,
+    required this.onLikeTap,
+    required this.onAuthorTap,
+  });
+
+  final double height;
+  final double imageHeight;
+  final List<String> photos;
+  final int? previewBackgroundColor;
+  final List<OutfitLayoutItem> layoutItems;
+  final String authorName;
+  final String authorHandle;
+  final int likesCount;
+  final bool isLiked;
+  final Future<void> Function() onLikeTap;
+  final VoidCallback onAuthorTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: height,
+      child: Stack(
+        children: [
+          SizedBox(
+            width: double.infinity,
+            height: imageHeight,
+            child: layoutItems.isNotEmpty
+                ? _OutfitLayoutCanvas(
+                    backgroundColor: Color(
+                      previewBackgroundColor ??
+                          _outfitMediaBackground.toARGB32(),
+                    ),
+                    items: layoutItems,
+                  )
+                : AppImage(
+                    imageUrl: photos.isNotEmpty
+                        ? photos.first
+                        : 'assets/mock/outfit_hero.jpg',
+                    width: double.infinity,
+                    height: imageHeight,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.topCenter,
+                    placeholderColor: _outfitMediaBackground,
+                  ),
+          ),
+          Positioned(
+            left: 22,
+            right: 22,
+            bottom: 0,
+            child: _CreatorFloatingCard(
+              authorName: authorName,
+              authorHandle: authorHandle,
+              likesCount: likesCount,
+              isLiked: isLiked,
+              onLikeTap: onLikeTap,
+              onAuthorTap: onAuthorTap,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CreatorFloatingCard extends StatelessWidget {
+  const _CreatorFloatingCard({
+    required this.authorName,
+    required this.authorHandle,
+    required this.likesCount,
+    required this.isLiked,
+    required this.onLikeTap,
+    required this.onAuthorTap,
+  });
+
+  final String authorName;
+  final String authorHandle;
+  final int likesCount;
+  final bool isLiked;
+  final Future<void> Function() onLikeTap;
+  final VoidCallback onAuthorTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final handle = authorHandle.trim();
+    final user = handle.isEmpty
+        ? '@user'
+        : handle.startsWith('@')
+        ? handle
+        : '@$handle';
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onAuthorTap,
+      child: Container(
+        height: 64,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.18),
+              blurRadius: 14,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Color(0xFFEDEDED),
+              ),
+              child: const Icon(
+                Icons.person_outline,
+                size: 24,
+                color: Color(0xFF8A8A8A),
+              ),
+            ),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    authorName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                      color: Colors.black,
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    '$user · $likesCount likes',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      height: 1,
+                      color: Color(0xFF8A8A8A),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onLikeTap,
+              child: Icon(
+                isLiked ? Icons.favorite : Icons.favorite_border,
+                size: 31,
+                color: isLiked
+                    ? const Color(0xFFD71920)
+                    : const Color(0xFF7A7A7A),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OutfitProductsList extends StatelessWidget {
+  const _OutfitProductsList({
+    required this.products,
+    required this.onProductTap,
+  });
+
+  final List<_OutfitProduct> products;
+  final void Function(_OutfitProduct) onProductTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        for (var index = 0; index < products.length; index++) ...[
+          _OutfitProductRow(
+            product: products[index],
+            onTap: () => onProductTap(products[index]),
+          ),
+          if (index != products.length - 1)
+            const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+        ],
+      ],
+    );
+  }
+}
+
+class _OutfitProductRow extends StatelessWidget {
+  const _OutfitProductRow({required this.product, required this.onTap});
+
+  final _OutfitProduct product;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: SizedBox(
+        height: 82,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 54,
+                height: 54,
+                child: product.image == null || product.image!.trim().isEmpty
+                    ? DecoratedBox(
+                        decoration: const BoxDecoration(color: Colors.white),
+                        child: Icon(
+                          product.icon,
+                          size: 28,
+                          color: const Color(0xFFC7C7C7),
+                        ),
+                      )
+                    : AppImage(
+                        imageUrl: product.image!,
+                        width: 54,
+                        height: 54,
+                        fit: BoxFit.contain,
+                        placeholderColor: Colors.white,
+                      ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      product.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        height: 1.05,
+                        color: Colors.black,
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                    product.oldPrice == null
+                        ? Text(
+                            product.price,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              height: 1,
+                              color: Color(0xFF8A8A8A),
+                            ),
+                          )
+                        : _DiscountPrice(
+                            oldPrice: product.oldPrice!,
+                            price: product.price,
+                          ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right,
+                size: 28,
+                color: Color(0xFFC7C7C7),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DiscountPrice extends StatelessWidget {
+  const _DiscountPrice({required this.oldPrice, required this.price});
+
+  final String oldPrice;
+  final String price;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          oldPrice,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontFamily: 'Montserrat',
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            height: 1,
+            color: Colors.black,
+            decoration: TextDecoration.lineThrough,
+          ),
+        ),
+        const SizedBox(width: 9),
+        Flexible(
+          child: Text(
+            price,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              height: 1,
+              color: Color(0xFFD71920),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TotalSection extends StatelessWidget {
+  const _TotalSection({required this.total});
+
+  final String total;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+        SizedBox(
+          height: 78,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: RichText(
+                text: TextSpan(
+                  style: const TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF8A8A8A),
+                  ),
+                  children: [
+                    const TextSpan(text: 'Итого: '),
+                    TextSpan(
+                      text: total,
+                      style: const TextStyle(
+                        fontFamily: 'Montserrat',
+                        color: Colors.black,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(
+          height: 12,
+          width: double.infinity,
+          child: ColoredBox(color: Color(0xFFE5E5E5)),
+        ),
+      ],
+    );
+  }
+}
+
+class _MoreOutfitsSection extends StatelessWidget {
+  const _MoreOutfitsSection({
+    required this.authorName,
+    required this.outfits,
+    required this.onOutfitTap,
+  });
+
+  final String authorName;
+  final List<CreatedOutfit> outfits;
+  final void Function(CreatedOutfit) onOutfitTap;
+
+  @override
+  Widget build(BuildContext context) {
+    if (outfits.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 36, bottom: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: RichText(
+              text: TextSpan(
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 17,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF8A8A8A),
+                ),
+                children: [
+                  const TextSpan(text: 'Больше образов от '),
+                  TextSpan(
+                    text: authorName,
+                    style: const TextStyle(
+                      fontFamily: 'Montserrat',
+                      color: Color(0xFF6F6F6F),
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 150,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              itemCount: outfits.length,
+              separatorBuilder: (context, index) => const SizedBox(width: 11),
+              itemBuilder: (context, index) {
+                final outfit = outfits[index];
+                return GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => onOutfitTap(outfit),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: SizedBox(
+                      width: 116,
+                      height: 150,
+                      child: _RelatedOutfitPreview(outfit: outfit),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RelatedOutfitPreview extends StatelessWidget {
+  const _RelatedOutfitPreview({required this.outfit});
+
+  final CreatedOutfit outfit;
+
+  @override
+  Widget build(BuildContext context) {
+    if (outfit.layoutItems.isNotEmpty) {
+      return _OutfitLayoutCanvas(
+        backgroundColor: Color(
+          outfit.previewBackgroundColor ?? _outfitMediaBackground.toARGB32(),
+        ),
+        items: outfit.layoutItems,
+      );
+    }
+
+    if (outfit.photos.isNotEmpty) {
+      return AppImage(
+        imageUrl: outfit.photos.first,
+        width: 116,
+        height: 150,
+        fit: BoxFit.cover,
+        alignment: Alignment.topCenter,
+        placeholderColor: _outfitMediaBackground,
+      );
+    }
+
+    return const ColoredBox(
+      color: _outfitMediaBackground,
+      child: Center(
+        child: Icon(Icons.checkroom_outlined, color: Color(0xFFB8B8BD)),
+      ),
+    );
+  }
+}
+
 class _PublishedOutfitCard extends StatefulWidget {
   const _PublishedOutfitCard({
     required this.scale,
@@ -287,6 +1176,9 @@ class _PublishedOutfitCard extends StatefulWidget {
     required this.products,
     required this.onAuthorTap,
     required this.onProductTap,
+    required this.onOutfitTap,
+    required this.onLikeTap,
+    required this.onViewed,
   });
 
   final double scale;
@@ -294,6 +1186,9 @@ class _PublishedOutfitCard extends StatefulWidget {
   final List<Product> products;
   final VoidCallback onAuthorTap;
   final void Function(_OutfitProduct) onProductTap;
+  final VoidCallback onOutfitTap;
+  final VoidCallback onLikeTap;
+  final VoidCallback onViewed;
 
   @override
   State<_PublishedOutfitCard> createState() => _PublishedOutfitCardState();
@@ -310,6 +1205,7 @@ class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
   void initState() {
     super.initState();
     _pageController = PageController();
+    WidgetsBinding.instance.addPostFrameCallback((_) => widget.onViewed());
   }
 
   @override
@@ -338,22 +1234,29 @@ class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
         children: [
           Column(
             children: [
-              _HeroMedia(
-                scale: widget.scale,
-                photos: widget.outfit.photos,
-                previewBackgroundColor: widget.outfit.previewBackgroundColor,
-                layoutItems: widget.outfit.layoutItems,
-                pageController: _pageController,
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.onOutfitTap,
+                child: _HeroMedia(
+                  scale: widget.scale,
+                  photos: widget.outfit.photos,
+                  previewBackgroundColor: widget.outfit.previewBackgroundColor,
+                  layoutItems: widget.outfit.layoutItems,
+                  pageController: _pageController,
+                ),
               ),
               _ProductsSection(
                 scale: widget.scale,
                 products: widget.outfit.items.map((item) {
                   final product = _productsById[item.id];
                   return _OutfitProduct(
+                    id: item.id,
                     icon: Icons.checkroom_outlined,
-                    name: item.name,
-                    price: item.price,
+                    brand: product?.brand ?? '',
+                    name: product?.title ?? item.name,
+                    price: product?.price ?? item.price,
                     image: product?.outfitDisplayImage ?? item.image,
+                    isLiked: product?.isLiked ?? false,
                   );
                 }).toList(),
                 onProductTap: widget.onProductTap,
@@ -363,14 +1266,14 @@ class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
           Positioned(
             left: 16 * widget.scale,
             right: 16 * widget.scale,
-            top: 488 * widget.scale,
+            top: 398 * widget.scale,
             child: _AuthorCard(
               scale: widget.scale,
               authorName: widget.outfit.authorName,
               authorHandle: widget.outfit.authorHandle,
-              isLiked: false,
-              likesCount: 0,
-              onLikeTap: () {},
+              isLiked: widget.outfit.isLiked,
+              likesCount: widget.outfit.likesCount,
+              onLikeTap: widget.onLikeTap,
               onAuthorTap: widget.onAuthorTap,
             ),
           ),
@@ -390,6 +1293,7 @@ class _OutfitCard extends StatelessWidget {
     required this.onLikeTap,
     required this.onAuthorTap,
     required this.onProductTap,
+    required this.onOutfitTap,
   });
 
   final double scale;
@@ -400,6 +1304,7 @@ class _OutfitCard extends StatelessWidget {
   final VoidCallback onLikeTap;
   final VoidCallback onAuthorTap;
   final void Function(_OutfitProduct) onProductTap;
+  final VoidCallback onOutfitTap;
 
   @override
   Widget build(BuildContext context) {
@@ -421,7 +1326,11 @@ class _OutfitCard extends StatelessWidget {
         children: [
           Column(
             children: [
-              _HeroMedia(scale: scale, pageController: pageController),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onOutfitTap,
+                child: _HeroMedia(scale: scale, pageController: pageController),
+              ),
               _ProductsSection(
                 scale: scale,
                 products: products,
@@ -432,7 +1341,7 @@ class _OutfitCard extends StatelessWidget {
           Positioned(
             left: 16 * scale,
             right: 16 * scale,
-            top: 488 * scale,
+            top: 398 * scale,
             child: _AuthorCard(
               scale: scale,
               authorName: 'Nightshade',
@@ -467,7 +1376,7 @@ class _HeroMedia extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 520 * scale,
+      height: 430 * scale,
       width: double.infinity,
       child: ClipRRect(
         borderRadius: BorderRadius.vertical(top: Radius.circular(30 * scale)),
@@ -725,9 +1634,9 @@ class _ProductsSectionState extends State<_ProductsSection> {
       width: double.infinity,
       padding: EdgeInsets.fromLTRB(
         16 * widget.scale,
-        58 * widget.scale,
+        42 * widget.scale,
         0,
-        22 * widget.scale,
+        12 * widget.scale,
       ),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -738,7 +1647,7 @@ class _ProductsSectionState extends State<_ProductsSection> {
       child: Column(
         children: [
           SizedBox(
-            height: 86 * widget.scale,
+            height: 84 * widget.scale,
             child: Stack(
               children: [
                 ListView.separated(
@@ -748,7 +1657,7 @@ class _ProductsSectionState extends State<_ProductsSection> {
                   padding: EdgeInsets.only(right: 16 * widget.scale),
                   itemCount: widget.products.length,
                   separatorBuilder: (context, index) =>
-                      SizedBox(width: 12 * widget.scale),
+                      SizedBox(width: 10 * widget.scale),
                   itemBuilder: (context, index) {
                     return _ProductCard(
                       scale: widget.scale,
@@ -802,30 +1711,65 @@ class _ProductCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: SizedBox(
-        width: 80 * scale,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: _outfitItemBackground,
-            borderRadius: BorderRadius.circular(5 * scale),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(5 * scale),
-            child: product.image == null || product.image!.isEmpty
-                ? Container(
-                    color: _outfitItemBackground,
-                    child: Icon(
-                      product.icon,
-                      size: 28 * scale,
-                      color: const Color(0xFFB8B8BD),
-                    ),
-                  )
-                : AppImage(
-                    imageUrl: product.image!,
-                    fit: BoxFit.contain,
-                    alignment: Alignment.center,
-                    placeholderColor: _outfitItemBackground,
-                  ),
-          ),
+        width: 74 * scale,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 48 * scale,
+              height: 48 * scale,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: _outfitItemBackground,
+                  borderRadius: BorderRadius.circular(5 * scale),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(5 * scale),
+                  child: product.image == null || product.image!.isEmpty
+                      ? Container(
+                          color: _outfitItemBackground,
+                          child: Icon(
+                            product.icon,
+                            size: 24 * scale,
+                            color: const Color(0xFFB8B8BD),
+                          ),
+                        )
+                      : AppImage(
+                          imageUrl: product.image!,
+                          fit: BoxFit.contain,
+                          alignment: Alignment.center,
+                          placeholderColor: _outfitItemBackground,
+                        ),
+                ),
+              ),
+            ),
+            SizedBox(height: 3 * scale),
+            Text(
+              product.name,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 9.5 * scale,
+                fontWeight: FontWeight.w600,
+                height: 1,
+                color: const Color(0xFF111111),
+              ),
+            ),
+            SizedBox(height: 1.5 * scale),
+            Text(
+              product.price,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10 * scale,
+                fontWeight: FontWeight.w700,
+                height: 1,
+                color: const Color(0xFF8F8F94),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -866,14 +1810,22 @@ class _ScrollArrow extends StatelessWidget {
 
 class _OutfitProduct {
   const _OutfitProduct({
+    this.id = '',
     required this.icon,
+    this.brand = '',
     required this.name,
     required this.price,
+    this.oldPrice,
     this.image,
+    this.isLiked = false,
   });
 
+  final String id;
   final IconData icon;
+  final String brand;
   final String name;
   final String price;
+  final String? oldPrice;
   final String? image;
+  final bool isLiked;
 }

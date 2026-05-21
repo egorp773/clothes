@@ -23,6 +23,10 @@ class AppRepository extends ChangeNotifier {
   static const _outfitsKey = 'outfits_v2';
   static const _threadsKey = 'threads_v2';
   static const _profileKey = 'profile_v1';
+  static const _favoriteProductIdsKey = 'favorite_product_ids_v1';
+  static const _favoriteOutfitIdsKey = 'favorite_outfit_ids_v1';
+  static const _recentProductIdsKey = 'recent_product_ids_v1';
+  static const _recentOutfitIdsKey = 'recent_outfit_ids_v1';
   static const _bucketName = 'product-images';
 
   late final SharedPreferences _prefs;
@@ -33,6 +37,10 @@ class AppRepository extends ChangeNotifier {
   List<OutfitAccessory> _accessories = [];
   List<CreatedOutfit> _outfits = [];
   List<MessageThread> _threads = [];
+  Set<String> _favoriteProductIds = {};
+  Set<String> _favoriteOutfitIds = {};
+  List<String> _recentProductIds = [];
+  List<String> _recentOutfitIds = [];
   User? _currentUser;
   bool _isSigningIn = false;
   String? _authError;
@@ -42,12 +50,35 @@ class AppRepository extends ChangeNotifier {
     city: 'Москва',
     rating: 4.8,
     salesCount: 0,
+    followersCount: 0,
   );
   Timer? _syncTimer;
   StreamSubscription<AuthState>? _authSubscription;
 
   bool get isReady => _isReady;
   List<Product> get products => List.unmodifiable(_products);
+  List<Product> get likedProducts {
+    return List.unmodifiable(
+      _products
+          .where(
+            (product) =>
+                _favoriteProductIds.contains(product.id) && !product.isHidden,
+          )
+          .toList(),
+    );
+  }
+
+  List<Product> get recentlyViewedProducts {
+    final productsById = {for (final product in _products) product.id: product};
+    return List.unmodifiable(
+      _recentProductIds
+          .map((id) => productsById[id])
+          .whereType<Product>()
+          .where((product) => !product.isHidden)
+          .toList(),
+    );
+  }
+
   List<OutfitAccessory> get defaultAccessories {
     return List.unmodifiable(
       _accessories.where((item) => item.isDefault).toList(),
@@ -64,6 +95,24 @@ class AppRepository extends ChangeNotifier {
   }
 
   List<CreatedOutfit> get outfits => List.unmodifiable(_outfits);
+  List<CreatedOutfit> get likedOutfits {
+    return List.unmodifiable(
+      _outfits
+          .where((outfit) => _favoriteOutfitIds.contains(outfit.id))
+          .toList(),
+    );
+  }
+
+  List<CreatedOutfit> get recentlyViewedOutfits {
+    final outfitsById = {for (final outfit in _outfits) outfit.id: outfit};
+    return List.unmodifiable(
+      _recentOutfitIds
+          .map((id) => outfitsById[id])
+          .whereType<CreatedOutfit>()
+          .toList(),
+    );
+  }
+
   List<MessageThread> get threads {
     if (!_hasSupabase || currentUserId.isEmpty) {
       return List.unmodifiable(_threads);
@@ -121,6 +170,24 @@ class AppRepository extends ChangeNotifier {
     _accessories = _readList(_accessoriesKey, OutfitAccessory.fromJson);
     _outfits = _readList(_outfitsKey, CreatedOutfit.fromJson);
     _threads = _readList(_threadsKey, MessageThread.fromJson);
+    _favoriteProductIds = _readStringSet(_favoriteProductIdsKey);
+    if (_favoriteProductIds.isEmpty) {
+      _favoriteProductIds = _products
+          .where((product) => product.isLiked)
+          .map((product) => product.id)
+          .toSet();
+    }
+    _favoriteOutfitIds = _readStringSet(_favoriteOutfitIdsKey);
+    if (_favoriteOutfitIds.isEmpty) {
+      _favoriteOutfitIds = _outfits
+          .where((outfit) => outfit.isLiked)
+          .map((outfit) => outfit.id)
+          .toSet();
+    }
+    _recentProductIds = _readStringList(_recentProductIdsKey);
+    _recentOutfitIds = _readStringList(_recentOutfitIdsKey);
+    _applyProductFavoriteState();
+    _applyOutfitFavoriteState();
     final profileJson = _prefs.getString(_profileKey);
     if (profileJson != null) {
       _profile = AppProfile.fromJson(
@@ -144,12 +211,14 @@ class AppRepository extends ChangeNotifier {
       _syncFromSupabase();
       _syncAccessoriesFromSupabase();
       _syncOutfitsFromSupabase();
+      _syncUserCollectionsFromSupabase();
       _syncThreadsFromSupabase();
       _syncTimer ??= Timer.periodic(const Duration(seconds: 4), (timer) {
         if (timer.tick % 3 == 0) {
           _syncFromSupabase();
           _syncAccessoriesFromSupabase();
           _syncOutfitsFromSupabase();
+          _syncUserCollectionsFromSupabase();
         }
         _syncThreadsFromSupabase();
       });
@@ -328,6 +397,7 @@ class AppRepository extends ChangeNotifier {
       unawaited(_syncFromSupabase());
       unawaited(_syncAccessoriesFromSupabase());
       unawaited(_syncOutfitsFromSupabase());
+      unawaited(_syncUserCollectionsFromSupabase());
       unawaited(_syncThreadsFromSupabase());
     }
     notifyListeners();
@@ -355,6 +425,9 @@ class AppRepository extends ChangeNotifier {
           rating: (row['rating'] as num?)?.toDouble() ?? _profile.rating,
           salesCount:
               (row['sales_count'] as num?)?.toInt() ?? _profile.salesCount,
+          followersCount:
+              (row['followers_count'] as num?)?.toInt() ??
+              _profile.followersCount,
         );
         await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
         await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
@@ -392,6 +465,7 @@ class AppRepository extends ChangeNotifier {
         city: _profile.city,
         rating: _profile.rating,
         salesCount: _profile.salesCount,
+        followersCount: _profile.followersCount,
       );
       await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
       await _upsertProfile(userId: user.id, profile: _profile);
@@ -461,6 +535,7 @@ class AppRepository extends ChangeNotifier {
       'city': profile.city,
       'rating': profile.rating,
       'sales_count': profile.salesCount,
+      'followers_count': profile.followersCount,
       'updated_at': DateTime.now().toIso8601String(),
     }, onConflict: 'id');
   }
@@ -521,6 +596,7 @@ class AppRepository extends ChangeNotifier {
           merged.putIfAbsent(product.id, () => product);
         }
         _products = merged.values.toList();
+        _applyProductFavoriteState();
         await _saveProducts();
         notifyListeners();
       }
@@ -586,6 +662,7 @@ class AppRepository extends ChangeNotifier {
         merged.putIfAbsent(outfit.id, () => outfit);
       }
       _outfits = merged.values.toList();
+      _applyOutfitFavoriteState();
       await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
       notifyListeners();
     } catch (e) {
@@ -594,6 +671,160 @@ class AppRepository extends ChangeNotifier {
   }
 
   // ─── Image Upload ───
+
+  Future<void> _syncUserCollectionsFromSupabase() async {
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+
+    try {
+      final productFavorites = await _client
+          .from('product_favorites')
+          .select('product_id')
+          .eq('user_id', currentUserId);
+      final outfitFavorites = await _client
+          .from('outfit_favorites')
+          .select('outfit_id')
+          .eq('user_id', currentUserId);
+      final recentProducts = await _client
+          .from('recent_products')
+          .select('product_id')
+          .eq('user_id', currentUserId)
+          .order('viewed_at', ascending: false)
+          .limit(24);
+      final recentOutfits = await _client
+          .from('recent_outfits')
+          .select('outfit_id')
+          .eq('user_id', currentUserId)
+          .order('viewed_at', ascending: false)
+          .limit(24);
+
+      final remoteFavoriteProductIds = (productFavorites as List<dynamic>)
+          .map(
+            (item) => (item as Map<String, dynamic>)['product_id'] as String?,
+          )
+          .whereType<String>()
+          .toSet();
+      final remoteFavoriteOutfitIds = (outfitFavorites as List<dynamic>)
+          .map((item) => (item as Map<String, dynamic>)['outfit_id'] as String?)
+          .whereType<String>()
+          .toSet();
+      final remoteRecentProductIds = (recentProducts as List<dynamic>)
+          .map(
+            (item) => (item as Map<String, dynamic>)['product_id'] as String?,
+          )
+          .whereType<String>()
+          .toList();
+      final remoteRecentOutfitIds = (recentOutfits as List<dynamic>)
+          .map((item) => (item as Map<String, dynamic>)['outfit_id'] as String?)
+          .whereType<String>()
+          .toList();
+
+      _favoriteProductIds = {
+        ..._favoriteProductIds,
+        ...remoteFavoriteProductIds,
+      };
+      _favoriteOutfitIds = {..._favoriteOutfitIds, ...remoteFavoriteOutfitIds};
+      _recentProductIds = _mergeRecentIds(
+        remoteRecentProductIds,
+        _recentProductIds,
+      );
+      _recentOutfitIds = _mergeRecentIds(
+        remoteRecentOutfitIds,
+        _recentOutfitIds,
+      );
+
+      _applyProductFavoriteState();
+      _applyOutfitFavoriteState();
+      await _pushLocalCollectionsToSupabase();
+      await _saveCollectionState();
+      await _saveProducts();
+      await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
+      notifyListeners();
+    } catch (e) {
+      debugPrint('User collections sync error: $e');
+    }
+  }
+
+  Future<void> _pushLocalCollectionsToSupabase() async {
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+
+    final now = DateTime.now().toIso8601String();
+    try {
+      if (_favoriteProductIds.isNotEmpty) {
+        await _client
+            .from('product_favorites')
+            .upsert(
+              _favoriteProductIds
+                  .map(
+                    (id) => {
+                      'user_id': currentUserId,
+                      'product_id': id,
+                      'created_at': now,
+                    },
+                  )
+                  .toList(),
+              onConflict: 'user_id,product_id',
+            );
+      }
+      if (_favoriteOutfitIds.isNotEmpty) {
+        await _client
+            .from('outfit_favorites')
+            .upsert(
+              _favoriteOutfitIds
+                  .map(
+                    (id) => {
+                      'user_id': currentUserId,
+                      'outfit_id': id,
+                      'created_at': now,
+                    },
+                  )
+                  .toList(),
+              onConflict: 'user_id,outfit_id',
+            );
+      }
+      if (_recentProductIds.isNotEmpty) {
+        await _client
+            .from('recent_products')
+            .upsert(
+              _recentProductIds
+                  .asMap()
+                  .entries
+                  .map(
+                    (entry) => {
+                      'user_id': currentUserId,
+                      'product_id': entry.value,
+                      'viewed_at': DateTime.now()
+                          .subtract(Duration(milliseconds: entry.key))
+                          .toIso8601String(),
+                    },
+                  )
+                  .toList(),
+              onConflict: 'user_id,product_id',
+            );
+      }
+      if (_recentOutfitIds.isNotEmpty) {
+        await _client
+            .from('recent_outfits')
+            .upsert(
+              _recentOutfitIds
+                  .asMap()
+                  .entries
+                  .map(
+                    (entry) => {
+                      'user_id': currentUserId,
+                      'outfit_id': entry.value,
+                      'viewed_at': DateTime.now()
+                          .subtract(Duration(milliseconds: entry.key))
+                          .toIso8601String(),
+                    },
+                  )
+                  .toList(),
+              onConflict: 'user_id,outfit_id',
+            );
+      }
+    } catch (e) {
+      debugPrint('Local collections push error: $e');
+    }
+  }
 
   Future<void> _syncAccessoriesFromSupabase() async {
     if (!_hasSupabase) return;
@@ -803,10 +1034,119 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<void> toggleProductLike(String productId) async {
-    final product = _products.firstWhere((item) => item.id == productId);
-    product.isLiked = !product.isLiked;
+    final willLike = !_favoriteProductIds.contains(productId);
+    if (willLike) {
+      _favoriteProductIds.add(productId);
+    } else {
+      _favoriteProductIds.remove(productId);
+    }
+    _applyProductFavoriteState();
+    await _saveStringSet(_favoriteProductIdsKey, _favoriteProductIds);
     await _saveProducts();
     notifyListeners();
+
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+    try {
+      if (willLike) {
+        await _client.from('product_favorites').upsert({
+          'user_id': currentUserId,
+          'product_id': productId,
+          'created_at': DateTime.now().toIso8601String(),
+        }, onConflict: 'user_id,product_id');
+      } else {
+        await _client
+            .from('product_favorites')
+            .delete()
+            .eq('user_id', currentUserId)
+            .eq('product_id', productId);
+      }
+    } catch (e) {
+      debugPrint('Product favorite sync error: $e');
+    }
+  }
+
+  Future<void> toggleOutfitLike(String outfitId) async {
+    final willLike = !_favoriteOutfitIds.contains(outfitId);
+    if (willLike) {
+      _favoriteOutfitIds.add(outfitId);
+    } else {
+      _favoriteOutfitIds.remove(outfitId);
+    }
+    var nextLikesCount = 0;
+    _outfits = _outfits.map((outfit) {
+      if (outfit.id != outfitId) {
+        return outfit.copyWith(isLiked: _favoriteOutfitIds.contains(outfit.id));
+      }
+      nextLikesCount = outfit.likesCount + (willLike ? 1 : -1);
+      if (nextLikesCount < 0) nextLikesCount = 0;
+      return outfit.copyWith(isLiked: willLike, likesCount: nextLikesCount);
+    }).toList();
+    await _saveStringSet(_favoriteOutfitIdsKey, _favoriteOutfitIds);
+    await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
+    notifyListeners();
+
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+    try {
+      if (willLike) {
+        await _client.from('outfit_favorites').upsert({
+          'user_id': currentUserId,
+          'outfit_id': outfitId,
+          'created_at': DateTime.now().toIso8601String(),
+        }, onConflict: 'user_id,outfit_id');
+      } else {
+        await _client
+            .from('outfit_favorites')
+            .delete()
+            .eq('user_id', currentUserId)
+            .eq('outfit_id', outfitId);
+      }
+    } catch (e) {
+      debugPrint('Outfit favorite sync error: $e');
+    }
+  }
+
+  Future<void> recordProductView(String productId) async {
+    if (productId.isEmpty) return;
+    _recentProductIds.remove(productId);
+    _recentProductIds.insert(0, productId);
+    if (_recentProductIds.length > 24) {
+      _recentProductIds.removeRange(24, _recentProductIds.length);
+    }
+    await _writeStringList(_recentProductIdsKey, _recentProductIds);
+    notifyListeners();
+
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+    try {
+      await _client.from('recent_products').upsert({
+        'user_id': currentUserId,
+        'product_id': productId,
+        'viewed_at': DateTime.now().toIso8601String(),
+      }, onConflict: 'user_id,product_id');
+    } catch (e) {
+      debugPrint('Recent product sync error: $e');
+    }
+  }
+
+  Future<void> recordOutfitView(String outfitId) async {
+    if (outfitId.isEmpty) return;
+    _recentOutfitIds.remove(outfitId);
+    _recentOutfitIds.insert(0, outfitId);
+    if (_recentOutfitIds.length > 24) {
+      _recentOutfitIds.removeRange(24, _recentOutfitIds.length);
+    }
+    await _writeStringList(_recentOutfitIdsKey, _recentOutfitIds);
+    notifyListeners();
+
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+    try {
+      await _client.from('recent_outfits').upsert({
+        'user_id': currentUserId,
+        'outfit_id': outfitId,
+        'viewed_at': DateTime.now().toIso8601String(),
+      }, onConflict: 'user_id,outfit_id');
+    } catch (e) {
+      debugPrint('Recent outfit sync error: $e');
+    }
   }
 
   Future<void> hideProduct(String productId) async {
@@ -1159,8 +1499,34 @@ class AppRepository extends ChangeNotifier {
     return items.map((item) => fromJson(item as Map<String, dynamic>)).toList();
   }
 
+  List<String> _readStringList(String key) {
+    final value = _prefs.getString(key);
+    if (value == null) return [];
+    final items = jsonDecode(value) as List<dynamic>;
+    return items.whereType<String>().toList();
+  }
+
+  Set<String> _readStringSet(String key) => _readStringList(key).toSet();
+
   Future<void> _writeList(String key, Iterable<Map<String, dynamic>> items) {
     return _prefs.setString(key, jsonEncode(items.toList()));
+  }
+
+  Future<void> _writeStringList(String key, Iterable<String> items) {
+    return _prefs.setString(key, jsonEncode(items.toList()));
+  }
+
+  Future<void> _saveStringSet(String key, Set<String> items) {
+    return _writeStringList(key, items);
+  }
+
+  Future<void> _saveCollectionState() async {
+    await Future.wait([
+      _saveStringSet(_favoriteProductIdsKey, _favoriteProductIds),
+      _saveStringSet(_favoriteOutfitIdsKey, _favoriteOutfitIds),
+      _writeStringList(_recentProductIdsKey, _recentProductIds),
+      _writeStringList(_recentOutfitIdsKey, _recentOutfitIds),
+    ]);
   }
 
   Future<void> _saveProducts() {
@@ -1176,6 +1542,35 @@ class AppRepository extends ChangeNotifier {
 
   void _sortThreads() {
     _threads.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+  }
+
+  void _applyProductFavoriteState() {
+    _products = _products
+        .map(
+          (product) => product.copyWith(
+            isLiked: _favoriteProductIds.contains(product.id),
+          ),
+        )
+        .toList();
+  }
+
+  void _applyOutfitFavoriteState() {
+    _outfits = _outfits
+        .map(
+          (outfit) =>
+              outfit.copyWith(isLiked: _favoriteOutfitIds.contains(outfit.id)),
+        )
+        .toList();
+  }
+
+  List<String> _mergeRecentIds(List<String> remote, List<String> local) {
+    final result = <String>[];
+    for (final id in [...remote, ...local]) {
+      if (id.isEmpty || result.contains(id)) continue;
+      result.add(id);
+      if (result.length == 24) break;
+    }
+    return result;
   }
 
   @override

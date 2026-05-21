@@ -44,13 +44,15 @@ create table if not exists public.profiles (
   city text not null default 'Москва',
   rating numeric not null default 4.8,
   sales_count integer not null default 0,
+  followers_count integer not null default 0,
   updated_at timestamptz not null default now()
 );
 
 alter table public.profiles enable row level security;
 
 alter table public.profiles
-  add column if not exists avatar_url text not null default '';
+  add column if not exists avatar_url text not null default '',
+  add column if not exists followers_count integer not null default 0;
 
 drop policy if exists "Public profiles are readable" on public.profiles;
 create policy "Public profiles are readable"
@@ -79,6 +81,7 @@ create table if not exists public.outfits (
   author_handle text not null default '@user',
   photos text[] not null default '{}',
   items jsonb not null default '[]'::jsonb,
+  likes_count integer not null default 0,
   preview_layout jsonb,
   created_at timestamptz not null default now()
 );
@@ -87,6 +90,7 @@ alter table public.outfits
   add column if not exists owner_id uuid references auth.users(id) on delete set null,
   add column if not exists author_name text not null default 'Автор',
   add column if not exists author_handle text not null default '@user',
+  add column if not exists likes_count integer not null default 0,
   add column if not exists preview_layout jsonb;
 
 alter table public.outfits enable row level security;
@@ -101,6 +105,119 @@ create policy "Authenticated users can publish outfits"
   on public.outfits for insert
   to authenticated
   with check (true);
+
+create table if not exists public.product_favorites (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  product_id text not null,
+  created_at timestamptz not null default now(),
+  primary key (user_id, product_id)
+);
+
+alter table public.product_favorites enable row level security;
+
+drop policy if exists "Users can manage product favorites" on public.product_favorites;
+create policy "Users can manage product favorites"
+  on public.product_favorites for all
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create table if not exists public.outfit_favorites (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  outfit_id uuid not null references public.outfits(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, outfit_id)
+);
+
+alter table public.outfit_favorites enable row level security;
+
+drop policy if exists "Users can manage outfit favorites" on public.outfit_favorites;
+create policy "Users can manage outfit favorites"
+  on public.outfit_favorites for all
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create or replace function public.sync_outfit_likes_count()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' then
+    update public.outfits
+      set likes_count = likes_count + 1
+      where id = new.outfit_id;
+    return new;
+  end if;
+
+  if tg_op = 'DELETE' then
+    update public.outfits
+      set likes_count = greatest(likes_count - 1, 0)
+      where id = old.outfit_id;
+    return old;
+  end if;
+
+  return null;
+end;
+$$;
+
+drop trigger if exists sync_outfit_likes_count_insert on public.outfit_favorites;
+create trigger sync_outfit_likes_count_insert
+after insert on public.outfit_favorites
+for each row execute function public.sync_outfit_likes_count();
+
+drop trigger if exists sync_outfit_likes_count_delete on public.outfit_favorites;
+create trigger sync_outfit_likes_count_delete
+after delete on public.outfit_favorites
+for each row execute function public.sync_outfit_likes_count();
+
+update public.outfits
+set likes_count = 0;
+
+update public.outfits
+set likes_count = counts.total
+from (
+  select outfit_id, count(*)::integer as total
+  from public.outfit_favorites
+  group by outfit_id
+) counts
+where public.outfits.id = counts.outfit_id;
+
+create table if not exists public.recent_products (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  product_id text not null,
+  viewed_at timestamptz not null default now(),
+  primary key (user_id, product_id)
+);
+
+alter table public.recent_products enable row level security;
+
+drop policy if exists "Users can manage recent products" on public.recent_products;
+create policy "Users can manage recent products"
+  on public.recent_products for all
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create table if not exists public.recent_outfits (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  outfit_id uuid not null references public.outfits(id) on delete cascade,
+  viewed_at timestamptz not null default now(),
+  primary key (user_id, outfit_id)
+);
+
+alter table public.recent_outfits enable row level security;
+
+drop policy if exists "Users can manage recent outfits" on public.recent_outfits;
+create policy "Users can manage recent outfits"
+  on public.recent_outfits for all
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+notify pgrst, 'reload schema';
 
 create table if not exists public.message_threads (
   id text primary key,

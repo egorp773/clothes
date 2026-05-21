@@ -5,6 +5,7 @@ class AppProfile {
     required this.city,
     required this.rating,
     required this.salesCount,
+    required this.followersCount,
   });
 
   final String name;
@@ -12,6 +13,7 @@ class AppProfile {
   final String city;
   final double rating;
   final int salesCount;
+  final int followersCount;
 
   factory AppProfile.fromJson(Map<String, dynamic> json) {
     return AppProfile(
@@ -19,7 +21,8 @@ class AppProfile {
       handle: json['handle'] as String,
       city: json['city'] as String,
       rating: (json['rating'] as num).toDouble(),
-      salesCount: json['salesCount'] as int,
+      salesCount: json['salesCount'] as int? ?? 0,
+      followersCount: json['followersCount'] as int? ?? 0,
     );
   }
 
@@ -30,6 +33,7 @@ class AppProfile {
       'city': city,
       'rating': rating,
       'salesCount': salesCount,
+      'followersCount': followersCount,
     };
   }
 
@@ -39,6 +43,7 @@ class AppProfile {
     String? city,
     double? rating,
     int? salesCount,
+    int? followersCount,
   }) {
     return AppProfile(
       name: name ?? this.name,
@@ -46,6 +51,7 @@ class AppProfile {
       city: city ?? this.city,
       rating: rating ?? this.rating,
       salesCount: salesCount ?? this.salesCount,
+      followersCount: followersCount ?? this.followersCount,
     );
   }
 }

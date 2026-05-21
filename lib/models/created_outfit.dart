@@ -108,6 +108,8 @@ class CreatedOutfit {
     this.authorHandle = '@user',
     this.previewBackgroundColor,
     this.layoutItems = const [],
+    this.isLiked = false,
+    this.likesCount = 0,
   });
 
   final String id;
@@ -118,6 +120,8 @@ class CreatedOutfit {
   final String authorHandle;
   final int? previewBackgroundColor;
   final List<OutfitLayoutItem> layoutItems;
+  final bool isLiked;
+  final int likesCount;
 
   factory CreatedOutfit.fromJson(Map<String, dynamic> json) {
     return CreatedOutfit(
@@ -138,6 +142,8 @@ class CreatedOutfit {
               )
               .toList() ??
           const [],
+      isLiked: json['isLiked'] as bool? ?? false,
+      likesCount: (json['likesCount'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -162,6 +168,8 @@ class CreatedOutfit {
               )
               .toList() ??
           const [],
+      isLiked: json['is_liked'] as bool? ?? false,
+      likesCount: (json['likes_count'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -175,6 +183,8 @@ class CreatedOutfit {
       'authorHandle': authorHandle,
       'previewBackgroundColor': previewBackgroundColor,
       'layoutItems': layoutItems.map((item) => item.toJson()).toList(),
+      'isLiked': isLiked,
+      'likesCount': likesCount,
     };
   }
 
@@ -187,6 +197,8 @@ class CreatedOutfit {
     String? authorHandle,
     int? previewBackgroundColor,
     List<OutfitLayoutItem>? layoutItems,
+    bool? isLiked,
+    int? likesCount,
   }) {
     return CreatedOutfit(
       id: id ?? this.id,
@@ -198,6 +210,8 @@ class CreatedOutfit {
       previewBackgroundColor:
           previewBackgroundColor ?? this.previewBackgroundColor,
       layoutItems: layoutItems ?? this.layoutItems,
+      isLiked: isLiked ?? this.isLiked,
+      likesCount: likesCount ?? this.likesCount,
     );
   }
 }
