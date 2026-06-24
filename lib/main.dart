@@ -24,13 +24,11 @@ import 'screens/publish_outfit_screen.dart';
 import 'screens/product_screen.dart';
 import 'screens/reviews_screen.dart';
 import 'screens/seller_profile_screen.dart';
-import 'services/push_notification_service.dart';
 import 'widgets/app_bottom_nav.dart';
 import 'widgets/create_entry_sheet.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await PushNotificationService.initialize();
   await SupabaseConfig.initialize();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
