@@ -12,6 +12,7 @@ class Product {
   final String size;
   final String color;
   final String condition;
+  final String location;
   final String ownerId;
   final String sellerName;
   final String sellerHandle;
@@ -36,6 +37,7 @@ class Product {
     required this.size,
     required this.color,
     required this.condition,
+    this.location = '',
     this.ownerId = '',
     this.sellerName = 'Продавец',
     this.sellerHandle = '@seller',
@@ -67,6 +69,7 @@ class Product {
       size: json['size'] as String,
       color: json['color'] as String,
       condition: json['condition'] as String,
+      location: json['location'] as String? ?? '',
       ownerId: json['ownerId'] as String? ?? '',
       sellerName: json['sellerName'] as String? ?? 'Продавец',
       sellerHandle: json['sellerHandle'] as String? ?? '@seller',
@@ -113,6 +116,7 @@ class Product {
       size: json['size'] as String? ?? 'One Size',
       color: json['color'] as String? ?? '',
       condition: json['condition'] as String? ?? 'Хорошее',
+      location: json['location'] as String? ?? json['city'] as String? ?? '',
       ownerId:
           json['seller_id'] as String? ?? json['owner_id'] as String? ?? '',
       sellerName: json['seller_name'] as String? ?? 'Продавец',
@@ -151,8 +155,8 @@ class Product {
 
     final hasBrokenCurrency =
         trimmed.contains('?') ||
-        trimmed.contains('в‚Ѕ') ||
-        trimmed.contains('�');
+        trimmed.contains('₽') ||
+        trimmed.contains('\uFFFD');
     if (trimmed.contains(_ruble) && !hasBrokenCurrency) return trimmed;
 
     final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
@@ -176,6 +180,7 @@ class Product {
       'size': size,
       'color': color,
       'condition': condition,
+      'location': location,
       'ownerId': ownerId,
       'sellerName': sellerName,
       'sellerHandle': sellerHandle,
@@ -206,6 +211,7 @@ class Product {
       'size': size,
       'color': color,
       'condition': condition,
+      'location': location,
       'is_hidden': isHidden,
       'original_image': image,
       'background_status': outfitImages.isEmpty ? 'queued' : 'completed',
@@ -230,6 +236,7 @@ class Product {
     String? size,
     String? color,
     String? condition,
+    String? location,
     String? ownerId,
     String? sellerName,
     String? sellerHandle,
@@ -254,6 +261,7 @@ class Product {
       size: size ?? this.size,
       color: color ?? this.color,
       condition: condition ?? this.condition,
+      location: location ?? this.location,
       ownerId: ownerId ?? this.ownerId,
       sellerName: sellerName ?? this.sellerName,
       sellerHandle: sellerHandle ?? this.sellerHandle,

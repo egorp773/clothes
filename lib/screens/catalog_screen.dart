@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../core/app_typography.dart';
+import '../models/app_profile.dart';
 import '../models/message_thread.dart';
 import '../models/product.dart';
+import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
 import '../widgets/promo_banner_carousel.dart';
 import 'messages_screen.dart';
 import 'product_screen.dart';
+import 'reviews_screen.dart';
+import 'seller_profile_screen.dart';
 
 class CatalogScreen extends StatefulWidget {
   final double scale;
@@ -15,11 +19,30 @@ class CatalogScreen extends StatefulWidget {
   final Future<void> Function(String productId) onToggleLike;
   final Future<void> Function(String productId) onHideProduct;
   final Future<MessageThread?> Function(Product product) onContactSeller;
+  final Future<SellerProfile?> Function(Product product) onLoadSellerProfile;
+  final Future<List<Product>> Function(String sellerId) onLoadSellerProducts;
+  final Future<MessageThread?> Function(AppUserProfile recipient)
+  onStartDirectChat;
   final Future<void> Function(String threadId, String text) onSendMessage;
   final void Function(Product product) onProductViewed;
+  final DeliveryProfile deliveryProfile;
+  final Future<void> Function(DeliveryProfile profile) onSaveDeliveryProfile;
+  final Future<void> Function(Product product) onCreateDeliveryOrder;
+  final Future<List<SellerReview>> Function(String sellerId) onLoadReviews;
+  final Future<void> Function({
+    required String sellerId,
+    required String productId,
+    required String productTitle,
+    required String productImage,
+    required int rating,
+    required String text,
+    bool hasPhoto,
+  })
+  onCreateReview;
   final String currentUserId;
   final Listenable threadsListenable;
   final MessageThread? Function(String threadId) resolveThread;
+  final DateTime? Function(String userId) lastSeenForUser;
 
   const CatalogScreen({
     super.key,
@@ -29,11 +52,20 @@ class CatalogScreen extends StatefulWidget {
     required this.onToggleLike,
     required this.onHideProduct,
     required this.onContactSeller,
+    required this.onLoadSellerProfile,
+    required this.onLoadSellerProducts,
+    required this.onStartDirectChat,
     required this.onSendMessage,
     required this.onProductViewed,
+    required this.deliveryProfile,
+    required this.onSaveDeliveryProfile,
+    required this.onCreateDeliveryOrder,
+    required this.onLoadReviews,
+    required this.onCreateReview,
     required this.currentUserId,
     required this.threadsListenable,
     required this.resolveThread,
+    required this.lastSeenForUser,
   });
 
   @override
@@ -61,16 +93,16 @@ class _CatalogScreenState extends State<CatalogScreen>
   List<PromoBanner> get _promoBanners {
     return [
       PromoBanner(
-        image: 'assets/mock/outfit_hero.jpg',
-        title: 'РОПНО',
-        subtitle: 'тататататат та тата тата\nтаа, та та тата?',
+        image: 'assets/mock/post_3.jpg',
+        title: 'НОВЫЙ ДРОП',
+        subtitle: 'Собери образ из вещей, которые уже ждут в каталоге',
         buttonText: 'ПЕРЕЙТИ',
         onTap: () => _showSnackBar('Переход по промо-баннеру'),
       ),
       PromoBanner(
-        image: 'assets/mock/post_3.jpg',
-        title: 'НОВЫЙ ДРОП',
-        subtitle: 'Собери образ из вещей, которые уже ждут в каталоге',
+        image: 'assets/mock/outfit_hero.jpg',
+        title: 'РОПНО',
+        subtitle: 'тататататат та тата тата\nтаа, та та тата?',
         buttonText: 'ПЕРЕЙТИ',
         onTap: () => _showSnackBar('Переход по промо-баннеру'),
       ),
@@ -423,6 +455,51 @@ class _CatalogScreenState extends State<CatalogScreen>
     await widget.onHideProduct(productId);
   }
 
+  void _openSellerProfile(Product product) {
+    final initialProducts = widget.products
+        .where((item) => item.ownerId == product.ownerId)
+        .toList();
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => SellerProfileScreen(
+          sourceProduct: product,
+          initialProducts: initialProducts,
+          loadProfile: widget.onLoadSellerProfile,
+          loadProducts: widget.onLoadSellerProducts,
+          onToggleLike: widget.onToggleLike,
+          onShare: _showShareSheet,
+          onProductTap: _showProductDetails,
+          loadReviews: widget.onLoadReviews,
+          onCreateReview: widget.onCreateReview,
+          canCreateReview: widget.currentUserId.isNotEmpty,
+          onMessage: (seller) async {
+            final navigator = Navigator.of(context, rootNavigator: true);
+            final thread = await widget.onStartDirectChat(
+              seller.toUserProfile(),
+            );
+            if (!mounted) return;
+            if (thread == null) {
+              _showSnackBar('Не удалось открыть чат');
+              return;
+            }
+            navigator.push(
+              MaterialPageRoute<void>(
+                builder: (context) => ChatScreen(
+                  thread: thread,
+                  onSendMessage: widget.onSendMessage,
+                  currentUserId: widget.currentUserId,
+                  threadsListenable: widget.threadsListenable,
+                  resolveThread: widget.resolveThread,
+                  lastSeenForUser: widget.lastSeenForUser,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   void _showProductDetails(Product product) {
     widget.onProductViewed(product);
     Navigator.of(context, rootNavigator: true).push(
@@ -433,24 +510,39 @@ class _CatalogScreenState extends State<CatalogScreen>
         reverseTransitionDuration: const Duration(milliseconds: 350),
         pageBuilder: (context, animation, secondaryAnimation) {
           return ProductScreen(
+            sourceProduct: product,
             product: ProductDetailData(
               id: product.id,
               title: product.title,
               description: product.description,
               price: product.price,
+              priceValue: product.priceValue,
               image: product.image,
               images: product.images.isNotEmpty
                   ? product.images
                   : [product.image],
+              category: product.category,
               brand: product.brand,
+              color: product.color,
               sellerName: product.sellerName,
               sellerHandle: product.sellerHandle,
               size: product.size,
               condition: product.condition,
+              location: product.location,
               isLiked: product.isLiked,
             ),
             onLike: () => _toggleLike(product.id),
             onAddToCart: () => _showSnackBar('Добавлено в корзину'),
+            onOpenSeller: () => _openSellerProfile(product),
+            onOpenReviews: () => _openReviewsForProduct(product),
+            loadSellerProfile: widget.onLoadSellerProfile,
+            loadReviews: widget.onLoadReviews,
+            onToggleRelatedLike: widget.onToggleLike,
+            relatedProducts: _relatedProductsFor(product),
+            onRelatedProductTap: _showProductDetails,
+            deliveryProfile: widget.deliveryProfile,
+            onSaveDeliveryProfile: widget.onSaveDeliveryProfile,
+            onCreateDeliveryOrder: () => widget.onCreateDeliveryOrder(product),
             onContactSeller: () async {
               final navigator = Navigator.of(context, rootNavigator: true);
               final thread = await widget.onContactSeller(product);
@@ -469,12 +561,47 @@ class _CatalogScreenState extends State<CatalogScreen>
                     currentUserId: widget.currentUserId,
                     threadsListenable: widget.threadsListenable,
                     resolveThread: widget.resolveThread,
+                    lastSeenForUser: widget.lastSeenForUser,
                   ),
                 ),
               );
             },
           );
         },
+      ),
+    );
+  }
+
+  List<Product> _relatedProductsFor(Product product) {
+    return widget.products
+        .where(
+          (item) =>
+              item.id != product.id &&
+              !item.isHidden &&
+              item.category == product.category,
+        )
+        .take(8)
+        .toList();
+  }
+
+  Future<void> _openReviewsForProduct(Product product) async {
+    final seller =
+        await widget.onLoadSellerProfile(product) ??
+        SellerProfile(
+          id: product.ownerId,
+          name: product.sellerName,
+          handle: product.sellerHandle,
+        );
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ReviewsScreen(
+          seller: seller,
+          sourceProduct: product,
+          loadReviews: widget.onLoadReviews,
+          onCreateReview: widget.onCreateReview,
+          canCreateReview: widget.currentUserId.isNotEmpty,
+        ),
       ),
     );
   }

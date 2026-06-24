@@ -31,8 +31,8 @@ class OutfitItem {
     const ruble = '\u20BD';
     final hasBrokenCurrency =
         trimmed.contains('?') ||
-        trimmed.contains('в‚Ѕ') ||
-        trimmed.contains('�');
+        trimmed.contains('₽') ||
+        trimmed.contains('\uFFFD');
     if (trimmed.contains(ruble) && !hasBrokenCurrency) return trimmed;
 
     final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');

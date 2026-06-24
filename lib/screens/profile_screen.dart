@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../models/app_profile.dart';
 import '../models/created_outfit.dart';
 import '../models/product.dart';
+import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
+import 'profile_feature_screens.dart';
 
 const _outfitMediaBackground = Color(0xFFF4F4F4);
 const _outfitItemBackground = Color(0xFFFFFFFF);
@@ -23,12 +25,23 @@ class ProfileScreen extends StatelessWidget {
     required this.isSigningIn,
     required this.accountLabel,
     required this.authError,
+    required this.currentUserId,
+    required this.notifications,
+    required this.notificationPreferences,
+    required this.orders,
+    required this.sellerDashboardStats,
     required this.onSignInWithYandex,
     required this.onSignInWithTelegram,
     required this.onSignOut,
     required this.onUpdateProfile,
     required this.onToggleProductLike,
     required this.onToggleOutfitLike,
+    required this.onDeleteProduct,
+    required this.onProductTap,
+    required this.onOutfitAuthorTap,
+    required this.onMarkNotificationRead,
+    required this.onUpdateNotificationPreferences,
+    required this.onOpenCatalog,
   });
 
   final AppProfile profile;
@@ -43,6 +56,11 @@ class ProfileScreen extends StatelessWidget {
   final bool isSigningIn;
   final String? accountLabel;
   final String? authError;
+  final String currentUserId;
+  final List<ProfileNotification> notifications;
+  final NotificationPreferences notificationPreferences;
+  final List<AppOrder> orders;
+  final SellerDashboardStats sellerDashboardStats;
   final Future<void> Function() onSignInWithYandex;
   final VoidCallback onSignInWithTelegram;
   final Future<void> Function() onSignOut;
@@ -50,6 +68,13 @@ class ProfileScreen extends StatelessWidget {
   onUpdateProfile;
   final Future<void> Function(String productId) onToggleProductLike;
   final Future<void> Function(String outfitId) onToggleOutfitLike;
+  final Future<void> Function(String productId) onDeleteProduct;
+  final ValueChanged<Product> onProductTap;
+  final ValueChanged<CreatedOutfit> onOutfitAuthorTap;
+  final Future<void> Function(String notificationId) onMarkNotificationRead;
+  final Future<void> Function(NotificationPreferences preferences)
+  onUpdateNotificationPreferences;
+  final VoidCallback onOpenCatalog;
 
   @override
   Widget build(BuildContext context) {
@@ -64,7 +89,10 @@ class ProfileScreen extends StatelessWidget {
           physics: const BouncingScrollPhysics(),
           padding: EdgeInsets.fromLTRB(18, topInset + 20, 18, 136),
           children: [
-            const _ProfileTopBar(),
+            _ProfileTopBar(
+              onNotificationsTap: () => _openNotifications(context),
+              onSettingsTap: () => _openNotificationSettings(context),
+            ),
             const SizedBox(height: 27),
             _ProfileHeader(profile: profile),
             const SizedBox(height: 16),
@@ -94,15 +122,22 @@ class ProfileScreen extends StatelessWidget {
               onOpen: () => _openOutfits(context),
             ),
             const SizedBox(height: 4),
-            const _ProfileMenuSection(
+            _ProfileMenuSection(
               rows: [
-                _MenuRowData('мои заказы'),
-                _MenuRowData('уведомления'),
-                _MenuRowData('настройки уведомлений'),
-                _MenuRowData('мои адреса'),
-                _MenuRowData('подарочная карта'),
-                _MenuRowData('дашборд продавца'),
+                _MenuRowData('мои заказы', _ProfileMenuAction.orders),
+                _MenuRowData('уведомления', _ProfileMenuAction.notifications),
+                _MenuRowData(
+                  'настройки уведомлений',
+                  _ProfileMenuAction.notificationSettings,
+                ),
+                _MenuRowData('мои адреса', _ProfileMenuAction.addresses),
+                _MenuRowData('подарочная карта', _ProfileMenuAction.giftCard),
+                _MenuRowData(
+                  'дашборд продавца',
+                  _ProfileMenuAction.sellerDashboard,
+                ),
               ],
+              onSelected: (action) => _openProfileMenu(context, action),
             ),
             const _CountrySection(),
             const _SupportSection(),
@@ -136,6 +171,8 @@ class ProfileScreen extends StatelessWidget {
           allProducts: allProducts,
           onToggleProductLike: onToggleProductLike,
           onToggleOutfitLike: onToggleOutfitLike,
+          onProductTap: onProductTap,
+          onOutfitAuthorTap: onOutfitAuthorTap,
         ),
       ),
     );
@@ -153,6 +190,8 @@ class ProfileScreen extends StatelessWidget {
           allProducts: allProducts,
           onToggleProductLike: onToggleProductLike,
           onToggleOutfitLike: onToggleOutfitLike,
+          onProductTap: onProductTap,
+          onOutfitAuthorTap: onOutfitAuthorTap,
         ),
       ),
     );
@@ -170,7 +209,9 @@ class ProfileScreen extends StatelessWidget {
           title: title,
           emptyText: emptyText,
           products: products,
+          onDeleteProduct: onDeleteProduct,
           onToggleLike: onToggleProductLike,
+          onProductTap: onProductTap,
         ),
       ),
     );
@@ -183,14 +224,115 @@ class ProfileScreen extends StatelessWidget {
           outfits: outfits,
           products: allProducts,
           onToggleLike: onToggleOutfitLike,
+          onAuthorTap: onOutfitAuthorTap,
         ),
+      ),
+    );
+  }
+
+  void _openProfileMenu(BuildContext context, _ProfileMenuAction action) {
+    switch (action) {
+      case _ProfileMenuAction.orders:
+        _openOrders(context);
+        break;
+      case _ProfileMenuAction.notifications:
+        _openNotifications(context);
+        break;
+      case _ProfileMenuAction.notificationSettings:
+        _openNotificationSettings(context);
+        break;
+      case _ProfileMenuAction.sellerDashboard:
+        _openSellerDashboard(context);
+        break;
+      case _ProfileMenuAction.addresses:
+        _openAddresses(context);
+        break;
+      case _ProfileMenuAction.giftCard:
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Раздел сохраняется в профиле и будет доступен после добавления данных.',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        break;
+    }
+  }
+
+  void _openNotifications(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ProfileNotificationsScreen(
+          notifications: notifications,
+          onMarkRead: onMarkNotificationRead,
+        ),
+      ),
+    );
+  }
+
+  void _openNotificationSettings(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => NotificationSettingsScreen(
+          preferences: notificationPreferences,
+          onSave: onUpdateNotificationPreferences,
+        ),
+      ),
+    );
+  }
+
+  void _openCatalogFromFeature(BuildContext context) {
+    Navigator.of(
+      context,
+      rootNavigator: true,
+    ).popUntil((route) => route.isFirst);
+    onOpenCatalog();
+  }
+
+  void _openOrders(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ProfileOrdersScreen(
+          orders: orders,
+          recommendedProducts: allProducts,
+          currentUserId: currentUserId,
+          onProductTap: onProductTap,
+          onToggleProductLike: onToggleProductLike,
+          onOpenCatalog: () => _openCatalogFromFeature(context),
+        ),
+      ),
+    );
+  }
+
+  void _openAddresses(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ProfileAddressesScreen(
+          onOpenCatalog: () => _openCatalogFromFeature(context),
+        ),
+      ),
+    );
+  }
+
+  void _openSellerDashboard(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) =>
+            SellerDashboardScreen(stats: sellerDashboardStats),
       ),
     );
   }
 }
 
 class _ProfileTopBar extends StatelessWidget {
-  const _ProfileTopBar();
+  const _ProfileTopBar({
+    required this.onNotificationsTap,
+    required this.onSettingsTap,
+  });
+
+  final VoidCallback onNotificationsTap;
+  final VoidCallback onSettingsTap;
 
   @override
   Widget build(BuildContext context) {
@@ -216,30 +358,43 @@ class _ProfileTopBar extends StatelessWidget {
           ),
         ),
         const Spacer(),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            // TODO: Open notifications or profile actions.
-          },
-          child: Container(
-            width: 66,
-            height: 34,
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.circular(17),
-            ),
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  Icons.notifications_none_outlined,
-                  size: 18,
-                  color: Colors.white,
+        Container(
+          width: 66,
+          height: 34,
+          decoration: BoxDecoration(
+            color: Colors.black,
+            borderRadius: BorderRadius.circular(17),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onNotificationsTap,
+                child: const SizedBox(
+                  width: 29,
+                  height: 34,
+                  child: Icon(
+                    Icons.notifications_none_outlined,
+                    size: 18,
+                    color: Colors.white,
+                  ),
                 ),
-                SizedBox(width: 8),
-                Icon(Icons.settings_outlined, size: 18, color: Colors.white),
-              ],
-            ),
+              ),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onSettingsTap,
+                child: const SizedBox(
+                  width: 29,
+                  height: 34,
+                  child: Icon(
+                    Icons.settings_outlined,
+                    size: 18,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -668,6 +823,8 @@ class _ProfileCollectionScreen extends StatefulWidget {
     required this.allProducts,
     required this.onToggleProductLike,
     required this.onToggleOutfitLike,
+    required this.onProductTap,
+    required this.onOutfitAuthorTap,
   });
 
   final String title;
@@ -678,6 +835,8 @@ class _ProfileCollectionScreen extends StatefulWidget {
   final List<Product> allProducts;
   final Future<void> Function(String productId) onToggleProductLike;
   final Future<void> Function(String outfitId) onToggleOutfitLike;
+  final ValueChanged<Product> onProductTap;
+  final ValueChanged<CreatedOutfit> onOutfitAuthorTap;
 
   @override
   State<_ProfileCollectionScreen> createState() =>
@@ -711,11 +870,13 @@ class _ProfileCollectionScreenState extends State<_ProfileCollectionScreen> {
           ? _ProductsGrid(
               products: widget.products,
               onToggleLike: widget.onToggleProductLike,
+              onProductTap: widget.onProductTap,
             )
           : _OutfitsList(
               outfits: widget.outfits,
               products: widget.allProducts,
               onToggleLike: widget.onToggleOutfitLike,
+              onAuthorTap: widget.onOutfitAuthorTap,
             ),
     );
   }
@@ -801,10 +962,17 @@ class _ProfileCollectionTab extends StatelessWidget {
 }
 
 class _ProductsGrid extends StatelessWidget {
-  const _ProductsGrid({required this.products, required this.onToggleLike});
+  const _ProductsGrid({
+    required this.products,
+    required this.onToggleLike,
+    required this.onProductTap,
+    this.onDeleteProduct,
+  });
 
   final List<Product> products;
   final Future<void> Function(String productId) onToggleLike;
+  final ValueChanged<Product> onProductTap;
+  final Future<void> Function(String productId)? onDeleteProduct;
 
   @override
   Widget build(BuildContext context) {
@@ -821,12 +989,10 @@ class _ProductsGrid extends StatelessWidget {
       itemBuilder: (context, index) {
         return _CatalogProductCard(
           product: products[index],
-          onTap: () {
-            // TODO: Open product details.
-          },
-          onMenu: () {
-            // TODO: Open product actions.
-          },
+          onTap: () => onProductTap(products[index]),
+          onMenu: onDeleteProduct == null
+              ? null
+              : () => onDeleteProduct!(products[index].id),
           onLike: () {
             onToggleLike(products[index].id);
           },
@@ -844,11 +1010,13 @@ class _OutfitsList extends StatelessWidget {
     required this.outfits,
     required this.products,
     required this.onToggleLike,
+    required this.onAuthorTap,
   });
 
   final List<CreatedOutfit> outfits;
   final List<Product> products;
   final Future<void> Function(String outfitId) onToggleLike;
+  final ValueChanged<CreatedOutfit> onAuthorTap;
 
   @override
   Widget build(BuildContext context) {
@@ -862,32 +1030,63 @@ class _OutfitsList extends StatelessWidget {
           outfit: outfits[index],
           products: products,
           onToggleLike: () => onToggleLike(outfits[index].id),
+          onAuthorTap: onAuthorTap,
         );
       },
     );
   }
 }
 
-class _AllProductsScreen extends StatelessWidget {
+class _AllProductsScreen extends StatefulWidget {
   const _AllProductsScreen({
     required this.title,
     required this.emptyText,
     required this.products,
     required this.onToggleLike,
+    required this.onDeleteProduct,
+    required this.onProductTap,
   });
 
   final String title;
   final String emptyText;
   final List<Product> products;
   final Future<void> Function(String productId) onToggleLike;
+  final Future<void> Function(String productId) onDeleteProduct;
+  final ValueChanged<Product> onProductTap;
+
+  @override
+  State<_AllProductsScreen> createState() => _AllProductsScreenState();
+}
+
+class _AllProductsScreenState extends State<_AllProductsScreen> {
+  late List<Product> _products;
+
+  @override
+  void initState() {
+    super.initState();
+    _products = List<Product>.from(widget.products);
+  }
+
+  Future<void> _deleteProduct(String productId) async {
+    await widget.onDeleteProduct(productId);
+    if (!mounted) return;
+    setState(() {
+      _products.removeWhere((product) => product.id == productId);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return _ProfileGridScaffold(
-      title: title,
-      isEmpty: products.isEmpty,
-      emptyText: emptyText,
-      child: _ProductsGrid(products: products, onToggleLike: onToggleLike),
+      title: widget.title,
+      isEmpty: _products.isEmpty,
+      emptyText: widget.emptyText,
+      child: _ProductsGrid(
+        products: _products,
+        onToggleLike: widget.onToggleLike,
+        onDeleteProduct: _deleteProduct,
+        onProductTap: widget.onProductTap,
+      ),
     );
   }
 }
@@ -897,11 +1096,13 @@ class _AllOutfitsScreen extends StatelessWidget {
     required this.outfits,
     required this.products,
     required this.onToggleLike,
+    required this.onAuthorTap,
   });
 
   final List<CreatedOutfit> outfits;
   final List<Product> products;
   final Future<void> Function(String outfitId) onToggleLike;
+  final ValueChanged<CreatedOutfit> onAuthorTap;
 
   @override
   Widget build(BuildContext context) {
@@ -915,6 +1116,7 @@ class _AllOutfitsScreen extends StatelessWidget {
         outfits: outfits,
         products: products,
         onToggleLike: onToggleLike,
+        onAuthorTap: onAuthorTap,
       ),
     );
   }
@@ -925,11 +1127,13 @@ class _ProfileOutfitCard extends StatefulWidget {
     required this.outfit,
     required this.products,
     required this.onToggleLike,
+    required this.onAuthorTap,
   });
 
   final CreatedOutfit outfit;
   final List<Product> products;
   final VoidCallback onToggleLike;
+  final ValueChanged<CreatedOutfit> onAuthorTap;
 
   @override
   State<_ProfileOutfitCard> createState() => _ProfileOutfitCardState();
@@ -987,6 +1191,8 @@ class _ProfileOutfitCardState extends State<_ProfileOutfitCard> {
               _OutfitHeroMedia(
                 scale: scale,
                 photos: widget.outfit.photos,
+                previewBackgroundColor: widget.outfit.previewBackgroundColor,
+                layoutItems: widget.outfit.layoutItems,
                 pageController: _pageController,
               ),
               _OutfitProductsStrip(scale: scale, products: outfitProducts),
@@ -1006,9 +1212,7 @@ class _ProfileOutfitCardState extends State<_ProfileOutfitCard> {
               isLiked: widget.outfit.isLiked,
               likesCount: 0,
               onLikeTap: widget.onToggleLike,
-              onAuthorTap: () {
-                // TODO: Open author profile.
-              },
+              onAuthorTap: () => widget.onAuthorTap(widget.outfit),
             ),
           ),
         ],
@@ -1021,11 +1225,15 @@ class _OutfitHeroMedia extends StatelessWidget {
   const _OutfitHeroMedia({
     required this.scale,
     required this.photos,
+    required this.previewBackgroundColor,
+    required this.layoutItems,
     required this.pageController,
   });
 
   final double scale;
   final List<String> photos;
+  final int? previewBackgroundColor;
+  final List<OutfitLayoutItem> layoutItems;
   final PageController pageController;
 
   @override
@@ -1038,25 +1246,86 @@ class _OutfitHeroMedia extends StatelessWidget {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            PageView.builder(
-              controller: pageController,
-              itemCount: photos.isEmpty ? 1 : photos.length,
-              itemBuilder: (context, index) {
-                if (photos.isEmpty) {
-                  return const DecoratedBox(
-                    decoration: BoxDecoration(color: _outfitMediaBackground),
+            if (layoutItems.isNotEmpty)
+              _OutfitLayoutCanvas(
+                backgroundColor: Color(
+                  previewBackgroundColor ?? _outfitMediaBackground.toARGB32(),
+                ),
+                items: layoutItems,
+              )
+            else
+              PageView.builder(
+                controller: pageController,
+                itemCount: photos.isEmpty ? 1 : photos.length,
+                itemBuilder: (context, index) {
+                  if (photos.isEmpty) {
+                    return const DecoratedBox(
+                      decoration: BoxDecoration(color: _outfitMediaBackground),
+                    );
+                  }
+                  return AppImage(
+                    imageUrl: photos[index],
+                    fit: BoxFit.fill,
+                    alignment: Alignment.topCenter,
+                    placeholderColor: _outfitMediaBackground,
                   );
-                }
-                return AppImage(
-                  imageUrl: photos[index],
-                  fit: BoxFit.fill,
-                  alignment: Alignment.topCenter,
-                  placeholderColor: _outfitMediaBackground,
-                );
-              },
-            ),
+                },
+              ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _OutfitLayoutCanvas extends StatelessWidget {
+  const _OutfitLayoutCanvas({
+    required this.backgroundColor,
+    required this.items,
+  });
+
+  final Color backgroundColor;
+  final List<OutfitLayoutItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(color: backgroundColor),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              for (final item in items)
+                Positioned.fill(
+                  child: Center(
+                    child: Transform.translate(
+                      offset: Offset(
+                        item.offsetX * constraints.maxWidth,
+                        item.offsetY * constraints.maxHeight,
+                      ),
+                      child: Transform.rotate(
+                        angle: item.rotation,
+                        child: Transform.scale(
+                          scale: item.scale,
+                          child: SizedBox(
+                            width: constraints.maxWidth * item.widthFactor,
+                            height: constraints.maxHeight * item.heightFactor,
+                            child: AppImage(
+                              imageUrl: item.image,
+                              fit: BoxFit.contain,
+                              alignment: Alignment.center,
+                              placeholderColor: Colors.transparent,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1385,16 +1654,16 @@ class _CatalogProductCard extends StatelessWidget {
   const _CatalogProductCard({
     required this.product,
     required this.onTap,
-    required this.onMenu,
     required this.onLike,
     required this.onShare,
+    this.onMenu,
   });
 
   final Product product;
   final VoidCallback onTap;
-  final VoidCallback onMenu;
   final VoidCallback onLike;
   final VoidCallback onShare;
+  final VoidCallback? onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -1410,6 +1679,7 @@ class _CatalogProductCard extends StatelessWidget {
               image: product.image,
               dotsOnDark: product.dotsOnDark,
               onMenu: onMenu,
+              actionIcon: Icons.delete_outline,
             ),
             const SizedBox(height: 2),
             Padding(
@@ -1437,11 +1707,13 @@ class _CatalogImageCard extends StatelessWidget {
     required this.image,
     this.dotsOnDark = false,
     this.onMenu,
+    this.actionIcon = Icons.more_horiz,
   });
 
   final String image;
   final bool dotsOnDark;
   final VoidCallback? onMenu;
+  final IconData actionIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -1478,7 +1750,7 @@ class _CatalogImageCard extends StatelessWidget {
                   onTap: onMenu,
                   child: Padding(
                     padding: const EdgeInsets.all(6),
-                    child: Icon(Icons.more_horiz, size: 21, color: dotColor),
+                    child: Icon(actionIcon, size: 22, color: dotColor),
                   ),
                 ),
               ),
@@ -1628,9 +1900,10 @@ class _ProfileOutfit {
 }
 
 class _ProfileMenuSection extends StatelessWidget {
-  const _ProfileMenuSection({required this.rows});
+  const _ProfileMenuSection({required this.rows, required this.onSelected});
 
   final List<_MenuRowData> rows;
+  final ValueChanged<_ProfileMenuAction> onSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -1638,12 +1911,8 @@ class _ProfileMenuSection extends StatelessWidget {
       children: [
         const _SectionDivider(),
         ...rows.map(
-          (row) => _MenuRow(
-            title: row.title,
-            onTap: () {
-              // TODO: Open profile menu item.
-            },
-          ),
+          (row) =>
+              _MenuRow(title: row.title, onTap: () => onSelected(row.action)),
         ),
       ],
     );
@@ -1651,9 +1920,19 @@ class _ProfileMenuSection extends StatelessWidget {
 }
 
 class _MenuRowData {
-  const _MenuRowData(this.title);
+  const _MenuRowData(this.title, this.action);
 
   final String title;
+  final _ProfileMenuAction action;
+}
+
+enum _ProfileMenuAction {
+  orders,
+  notifications,
+  notificationSettings,
+  addresses,
+  giftCard,
+  sellerDashboard,
 }
 
 class _MenuRow extends StatelessWidget {

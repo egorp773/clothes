@@ -1,9 +1,11 @@
-import 'dart:io';
 import 'dart:convert';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import 'app_local_image_stub.dart'
+    if (dart.library.io) 'app_local_image_io.dart';
 
 class AppImage extends StatelessWidget {
   final String imageUrl;
@@ -25,15 +27,19 @@ class AppImage extends StatelessWidget {
     this.alignment = Alignment.center,
   });
 
+  String get _source => imageUrl.trim();
+
   bool get _isHttpNetwork {
-    return imageUrl.startsWith('http://') || imageUrl.startsWith('https://');
+    return _source.startsWith('http://') || _source.startsWith('https://');
   }
 
-  bool get _isBrowserBlob => imageUrl.startsWith('blob:');
+  bool get _isBrowserBlob => _source.startsWith('blob:');
 
-  bool get _isDataImage => imageUrl.startsWith('data:image/');
+  bool get _isDataImage => _source.startsWith('data:image/');
 
-  bool get _isAsset => imageUrl.startsWith('assets/');
+  bool get _isAsset => _source.startsWith('assets/');
+
+  bool get _isFileUri => _source.startsWith('file://');
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +47,7 @@ class AppImage extends StatelessWidget {
 
     if (_isDataImage) {
       image = _MemoryDataImage(
-        imageUrl: imageUrl,
+        imageUrl: _source,
         width: width,
         height: height,
         fit: fit,
@@ -49,19 +55,28 @@ class AppImage extends StatelessWidget {
         placeholder: _placeholder,
       );
     } else if (_isHttpNetwork) {
-      image = CachedNetworkImage(
-        imageUrl: imageUrl,
-        width: width,
-        height: height,
-        fit: fit,
-        alignment: alignment,
-        placeholder: (context, url) => _placeholder(),
-        errorWidget: (context, url, error) => _placeholder(),
-        fadeInDuration: const Duration(milliseconds: 200),
-      );
+      image = kIsWeb
+          ? Image.network(
+              _source,
+              width: width,
+              height: height,
+              fit: fit,
+              alignment: alignment,
+              errorBuilder: (context, error, stackTrace) => _placeholder(),
+            )
+          : CachedNetworkImage(
+              imageUrl: _source,
+              width: width,
+              height: height,
+              fit: fit,
+              alignment: alignment,
+              placeholder: (context, url) => _placeholder(),
+              errorWidget: (context, url, error) => _placeholder(),
+              fadeInDuration: const Duration(milliseconds: 200),
+            );
     } else if (_isBrowserBlob) {
       image = Image.network(
-        imageUrl,
+        _source,
         width: width,
         height: height,
         fit: fit,
@@ -70,7 +85,7 @@ class AppImage extends StatelessWidget {
       );
     } else if (_isAsset) {
       image = Image.asset(
-        imageUrl,
+        _source,
         width: width,
         height: height,
         fit: fit,
@@ -78,23 +93,21 @@ class AppImage extends StatelessWidget {
         errorBuilder: (context, error, stackTrace) => _placeholder(),
       );
     } else if (!kIsWeb) {
-      image = Image.file(
-        File(imageUrl),
+      final path = _isFileUri ? Uri.parse(_source).toFilePath() : _source;
+      image = buildAppLocalImage(
+        path: path,
         width: width,
         height: height,
         fit: fit,
         alignment: alignment,
-        errorBuilder: (context, error, stackTrace) => _placeholder(),
+        placeholder: _placeholder,
       );
     } else {
       image = _placeholder();
     }
 
     if (borderRadius != null) {
-      return ClipRRect(
-        borderRadius: borderRadius!,
-        child: image,
-      );
+      return ClipRRect(borderRadius: borderRadius!, child: image);
     }
     return image;
   }
@@ -150,11 +163,16 @@ class _MemoryDataImageState extends State<_MemoryDataImage> {
   }
 
   Uint8List _decode(String value) {
-    return base64Decode(value.substring(value.indexOf(',') + 1));
+    try {
+      return base64Decode(value.substring(value.indexOf(',') + 1));
+    } catch (_) {
+      return Uint8List(0);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_bytes.isEmpty) return widget.placeholder();
     return Image.memory(
       _bytes,
       gaplessPlayback: true,

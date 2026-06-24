@@ -1,0 +1,798 @@
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
+
+import '../models/app_profile.dart';
+import '../models/product.dart';
+import '../widgets/app_image.dart';
+
+enum ReviewSort { helpful, newest, oldest, positive, negative }
+
+class ReviewsScreen extends StatefulWidget {
+  const ReviewsScreen({
+    super.key,
+    required this.seller,
+    required this.sourceProduct,
+    required this.loadReviews,
+    required this.onCreateReview,
+    required this.canCreateReview,
+  });
+
+  final SellerProfile seller;
+  final Product sourceProduct;
+  final Future<List<SellerReview>> Function(String sellerId) loadReviews;
+  final Future<void> Function({
+    required String sellerId,
+    required String productId,
+    required String productTitle,
+    required String productImage,
+    required int rating,
+    required String text,
+    bool hasPhoto,
+  })
+  onCreateReview;
+  final bool canCreateReview;
+
+  @override
+  State<ReviewsScreen> createState() => _ReviewsScreenState();
+}
+
+class _ReviewsScreenState extends State<ReviewsScreen> {
+  List<SellerReview> _reviews = const [];
+  ReviewSort _sort = ReviewSort.helpful;
+  bool _onlyPhoto = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final reviews = await widget.loadReviews(widget.seller.id);
+    if (!mounted) return;
+    setState(() => _reviews = reviews);
+  }
+
+  List<SellerReview> get _visibleReviews {
+    final next = _reviews
+        .where((review) => !_onlyPhoto || review.hasPhoto)
+        .toList();
+    switch (_sort) {
+      case ReviewSort.helpful:
+        next.sort((a, b) {
+          final byRating = b.rating.compareTo(a.rating);
+          return byRating == 0 ? b.createdAt.compareTo(a.createdAt) : byRating;
+        });
+      case ReviewSort.newest:
+        next.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      case ReviewSort.oldest:
+        next.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      case ReviewSort.positive:
+        next.sort((a, b) => b.rating.compareTo(a.rating));
+      case ReviewSort.negative:
+        next.sort((a, b) => a.rating.compareTo(b.rating));
+    }
+    return next;
+  }
+
+  double get _rating {
+    if (_reviews.isEmpty) return 0;
+    return _reviews.fold<int>(0, (sum, review) => sum + review.rating) /
+        _reviews.length;
+  }
+
+  Future<void> _showSortSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        var selected = _sort;
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return Container(
+              padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(CupertinoIcons.xmark, size: 20),
+                      ),
+                      const Expanded(
+                        child: Text(
+                          'сортировка',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 48),
+                    ],
+                  ),
+                  ...ReviewSort.values.map(
+                    (sort) => _SortOption(
+                      title: _sortTitle(sort),
+                      selected: selected == sort,
+                      onTap: () => setSheetState(() => selected = sort),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: () {
+                        setState(() => _sort = selected);
+                        Navigator.pop(context);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                        shape: const RoundedRectangleBorder(),
+                      ),
+                      child: const Text('ПРИМЕНИТЬ'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _createReview() async {
+    if (!widget.canCreateReview) {
+      _showSignInRequired();
+      return;
+    }
+    final draft = await showModalBottomSheet<_ReviewDraft>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      builder: (context) => const _ReviewEditor(),
+    );
+    if (draft == null) return;
+    await widget.onCreateReview(
+      sellerId: widget.seller.id,
+      productId: widget.sourceProduct.id,
+      productTitle: widget.sourceProduct.title,
+      productImage: widget.sourceProduct.image,
+      rating: draft.rating,
+      text: draft.text,
+      hasPhoto: draft.hasPhoto,
+    );
+    await _load();
+  }
+
+  void _showSignInRequired() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Войдите в профиль, чтобы оставить отзыв'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewPadding.bottom;
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Column(
+          children: [
+            Expanded(
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(4, 14, 14, 12),
+                          child: SizedBox(
+                            height: 44,
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  icon: const Icon(
+                                    CupertinoIcons.back,
+                                    size: 24,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                const Text(
+                                  'отзывы',
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    height: 1,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const Divider(
+                          height: 1,
+                          thickness: 1,
+                          color: Colors.black,
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+                          child: _ReviewsSummary(
+                            rating: _rating,
+                            reviews: _reviews,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 18, 16, 14),
+                          child: Row(
+                            children: [
+                              _FilterChipButton(
+                                title: _sortTitle(_sort),
+                                selected: false,
+                                icon: CupertinoIcons.slider_horizontal_3,
+                                onTap: _showSortSheet,
+                              ),
+                              const SizedBox(width: 8),
+                              _FilterChipButton(
+                                title: 'только с фото',
+                                selected: _onlyPhoto,
+                                onTap: () =>
+                                    setState(() => _onlyPhoto = !_onlyPhoto),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(16, 0, 16, 86 + bottomInset),
+                    sliver: _visibleReviews.isEmpty
+                        ? const SliverToBoxAdapter(child: _EmptyReviews())
+                        : SliverList.builder(
+                            itemCount: _visibleReviews.length * 2 - 1,
+                            itemBuilder: (context, index) {
+                              if (index.isOdd) {
+                                return const Divider(
+                                  height: 20,
+                                  color: Color(0xFFE8E8EA),
+                                );
+                              }
+                              return _ReviewTile(
+                                review: _visibleReviews[index ~/ 2],
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 10, 16, 10 + bottomInset),
+              child: SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton(
+                  onPressed: _createReview,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                    shape: const RoundedRectangleBorder(),
+                  ),
+                  child: const Text(
+                    'ОСТАВИТЬ ОТЗЫВ',
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewsSummary extends StatelessWidget {
+  const _ReviewsSummary({required this.rating, required this.reviews});
+
+  final double rating;
+  final List<SellerReview> reviews;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = reviews.length;
+    final buckets = {
+      for (var stars = 1; stars <= 5; stars++)
+        stars: reviews.where((review) => review.rating == stars).length,
+    };
+    final maxCount = buckets.values.fold<int>(
+      1,
+      (max, value) => value > max ? value : max,
+    );
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 78,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                rating.toStringAsFixed(1).replaceAll('.', ','),
+                style: const TextStyle(
+                  fontSize: 36,
+                  height: 0.95,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              _StarsRow(rating: rating, size: 13),
+              const SizedBox(height: 3),
+              Text(
+                '$count отзыва',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            children: List.generate(5, (index) {
+              final stars = 5 - index;
+              final value = buckets[stars] ?? 0;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 64,
+                      child: _StarsRow(rating: stars.toDouble(), size: 13),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: LinearProgressIndicator(
+                        value: value / maxCount,
+                        minHeight: 4,
+                        backgroundColor: const Color(0xFFDCDCE0),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.black,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 18,
+                      child: Text(
+                        '$value',
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StarsRow extends StatelessWidget {
+  const _StarsRow({required this.rating, required this.size});
+
+  final double rating;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(5, (index) {
+        return Icon(
+          Icons.star,
+          size: size,
+          color: index < rating.round()
+              ? const Color(0xFFFFB21A)
+              : const Color(0xFFDADADC),
+        );
+      }),
+    );
+  }
+}
+
+class _EmptyReviews extends StatelessWidget {
+  const _EmptyReviews();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 28, 10, 18),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 54,
+              height: 54,
+              decoration: const BoxDecoration(
+                color: Color(0xFFF1F1F3),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                CupertinoIcons.star,
+                size: 25,
+                color: Color(0xFF77777C),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Пока нет отзывов',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                height: 1.1,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0,
+                color: Colors.black,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Будьте первым, кто оставит отзыв продавцу.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.25,
+                fontWeight: FontWeight.w500,
+                color: Colors.black.withValues(alpha: 0.55),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterChipButton extends StatelessWidget {
+  const _FilterChipButton({
+    required this.title,
+    required this.selected,
+    required this.onTap,
+    this.icon,
+  });
+
+  final String title;
+  final bool selected;
+  final IconData? icon;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: selected ? Colors.black : const Color(0xFFE0E0E0),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: selected ? Colors.white : Colors.black,
+              ),
+            ),
+            if (icon != null) ...[
+              const SizedBox(width: 8),
+              Icon(
+                icon,
+                size: 15,
+                color: selected ? Colors.white : Colors.black,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewTile extends StatelessWidget {
+  const _ReviewTile({required this.review});
+
+  final SellerReview review;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              AppImage(
+                imageUrl: review.buyerAvatar,
+                width: 40,
+                height: 40,
+                fit: BoxFit.cover,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      review.buyerName.isEmpty
+                          ? 'Покупатель'
+                          : review.buyerName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        height: 1.05,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      _dateText(review.createdAt),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        height: 1.05,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              _StarsRow(rating: review.rating.toDouble(), size: 14),
+              const SizedBox(width: 8),
+              if (review.dealCompleted)
+                const Text(
+                  'Сделка состоялась',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            review.productTitle,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.15,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          if (review.productImage.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            AppImage(
+              imageUrl: review.productImage,
+              width: 46,
+              height: 46,
+              fit: BoxFit.cover,
+              borderRadius: BorderRadius.circular(6),
+            ),
+          ],
+          if (review.text.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              review.text,
+              style: const TextStyle(
+                fontSize: 13.5,
+                height: 1.28,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _SortOption extends StatelessWidget {
+  const _SortOption({
+    required this.title,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 13,
+              height: 13,
+              decoration: BoxDecoration(
+                color: selected ? Colors.black : const Color(0xFFD9D9D9),
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              title,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewEditor extends StatefulWidget {
+  const _ReviewEditor();
+
+  @override
+  State<_ReviewEditor> createState() => _ReviewEditorState();
+}
+
+class _ReviewEditorState extends State<_ReviewEditor> {
+  final _controller = TextEditingController();
+  int _rating = 5;
+  bool _hasPhoto = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(18, 18, 18, 18 + bottomInset),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'оставить отзыв',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(5, (index) {
+              final value = index + 1;
+              return IconButton(
+                onPressed: () => setState(() => _rating = value),
+                icon: Icon(
+                  Icons.star,
+                  color: value <= _rating
+                      ? const Color(0xFFFFB21A)
+                      : const Color(0xFFD9D9D9),
+                ),
+              );
+            }),
+          ),
+          TextField(
+            controller: _controller,
+            minLines: 3,
+            maxLines: 5,
+            decoration: const InputDecoration(hintText: 'Текст отзыва'),
+          ),
+          CheckboxListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _hasPhoto,
+            onChanged: (value) => setState(() => _hasPhoto = value ?? false),
+            title: const Text('с фото'),
+            controlAffinity: ListTileControlAffinity.leading,
+          ),
+          SizedBox(
+            height: 48,
+            child: ElevatedButton(
+              onPressed: () {
+                Navigator.pop(
+                  context,
+                  _ReviewDraft(
+                    rating: _rating,
+                    text: _controller.text,
+                    hasPhoto: _hasPhoto,
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+                shape: const RoundedRectangleBorder(),
+              ),
+              child: const Text('СОХРАНИТЬ'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewDraft {
+  const _ReviewDraft({
+    required this.rating,
+    required this.text,
+    required this.hasPhoto,
+  });
+
+  final int rating;
+  final String text;
+  final bool hasPhoto;
+}
+
+String _sortTitle(ReviewSort sort) {
+  return switch (sort) {
+    ReviewSort.helpful => 'сначала полезные',
+    ReviewSort.newest => 'сначала новые',
+    ReviewSort.oldest => 'сначала старые',
+    ReviewSort.positive => 'сначала положительные',
+    ReviewSort.negative => 'сначала отрицательные',
+  };
+}
+
+String _dateText(DateTime date) {
+  const months = [
+    'января',
+    'февраля',
+    'марта',
+    'апреля',
+    'мая',
+    'июня',
+    'июля',
+    'августа',
+    'сентября',
+    'октября',
+    'ноября',
+    'декабря',
+  ];
+  return '${date.day} ${months[date.month - 1]} ${date.year}';
+}

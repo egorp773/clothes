@@ -178,6 +178,13 @@ class MessageThread {
     return sellerAvatar;
   }
 
+  String otherPartyId(String currentUserId) {
+    if (currentUserId.isNotEmpty && currentUserId == sellerId) {
+      return buyerId;
+    }
+    return sellerId;
+  }
+
   bool get isProductChat => productId.isNotEmpty;
 
   MessageThread copyWith({

@@ -9,6 +9,7 @@ alter table public.products
   add column if not exists seller_id uuid references auth.users(id) on delete set null,
   add column if not exists seller_name text not null default 'Продавец',
   add column if not exists seller_handle text not null default '@seller',
+  add column if not exists location text not null default '',
   add column if not exists background_status text not null default 'queued',
   add column if not exists background_error text;
 
@@ -45,6 +46,7 @@ create table if not exists public.profiles (
   rating numeric not null default 4.8,
   sales_count integer not null default 0,
   followers_count integer not null default 0,
+  last_seen_at timestamptz,
   updated_at timestamptz not null default now()
 );
 
@@ -52,7 +54,8 @@ alter table public.profiles enable row level security;
 
 alter table public.profiles
   add column if not exists avatar_url text not null default '',
-  add column if not exists followers_count integer not null default 0;
+  add column if not exists followers_count integer not null default 0,
+  add column if not exists last_seen_at timestamptz;
 
 drop policy if exists "Public profiles are readable" on public.profiles;
 create policy "Public profiles are readable"
@@ -71,6 +74,31 @@ create policy "Users can update their profile"
   to authenticated
   using (auth.uid() = id)
   with check (auth.uid() = id);
+
+notify pgrst, 'reload schema';
+
+create table if not exists public.device_push_tokens (
+  token text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  platform text not null default 'unknown',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.device_push_tokens enable row level security;
+
+alter table public.device_push_tokens
+  add column if not exists user_id uuid references auth.users(id) on delete cascade,
+  add column if not exists platform text not null default 'unknown',
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();
+
+drop policy if exists "Users can manage their push tokens" on public.device_push_tokens;
+create policy "Users can manage their push tokens"
+  on public.device_push_tokens for all
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 
 notify pgrst, 'reload schema';
 
@@ -277,6 +305,174 @@ create policy "Users can update their message threads"
   to authenticated
   using (auth.uid() = buyer_id or auth.uid() = seller_id)
   with check (auth.uid() = buyer_id or auth.uid() = seller_id);
+
+create table if not exists public.notification_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  push_enabled boolean not null default true,
+  email_enabled boolean not null default false,
+  sms_enabled boolean not null default true,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.notification_settings enable row level security;
+
+drop policy if exists "Users can manage notification settings" on public.notification_settings;
+create policy "Users can manage notification settings"
+  on public.notification_settings for all
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create table if not exists public.notifications (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  title text not null,
+  body text not null,
+  kind text not null default 'general',
+  target_id text not null default '',
+  is_read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+alter table public.notifications enable row level security;
+
+drop policy if exists "Users can manage their notifications" on public.notifications;
+create policy "Users can manage their notifications"
+  on public.notifications for all
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create index if not exists notifications_user_created_idx
+  on public.notifications (user_id, created_at desc);
+
+create table if not exists public.orders (
+  id text primary key,
+  product_id text not null,
+  product_title text not null,
+  product_image text not null default '',
+  product_price text not null default '',
+  product_price_value integer not null default 0,
+  seller_id uuid not null references auth.users(id) on delete cascade,
+  buyer_id uuid not null references auth.users(id) on delete cascade,
+  tracking_number text not null default '',
+  delivery_service text not null default 'Яндекс Доставка',
+  delivery_address text not null default '',
+  recipient_name text not null default '',
+  recipient_phone text not null default '',
+  recipient_email text not null default '',
+  delivery_price integer not null default 0,
+  status text not null default 'pendingConfirmation',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.orders
+  add column if not exists delivery_address text not null default '',
+  add column if not exists recipient_name text not null default '',
+  add column if not exists recipient_phone text not null default '',
+  add column if not exists recipient_email text not null default '',
+  add column if not exists delivery_price integer not null default 0;
+
+alter table public.orders enable row level security;
+
+drop policy if exists "Order participants can read orders" on public.orders;
+create policy "Order participants can read orders"
+  on public.orders for select
+  to authenticated
+  using (auth.uid() = buyer_id or auth.uid() = seller_id);
+
+drop policy if exists "Buyers can create orders" on public.orders;
+create policy "Buyers can create orders"
+  on public.orders for insert
+  to authenticated
+  with check (auth.uid() = buyer_id);
+
+drop policy if exists "Order participants can update orders" on public.orders;
+create policy "Order participants can update orders"
+  on public.orders for update
+  to authenticated
+  using (auth.uid() = buyer_id or auth.uid() = seller_id)
+  with check (auth.uid() = buyer_id or auth.uid() = seller_id);
+
+create index if not exists orders_buyer_updated_idx
+  on public.orders (buyer_id, updated_at desc);
+
+create index if not exists orders_seller_updated_idx
+  on public.orders (seller_id, updated_at desc);
+
+create table if not exists public.seller_reviews (
+  id uuid primary key,
+  seller_id uuid not null references public.profiles(id) on delete cascade,
+  buyer_id uuid not null references auth.users(id) on delete cascade,
+  buyer_name text not null default '',
+  buyer_avatar text not null default '',
+  product_id text not null default '',
+  product_title text not null default '',
+  product_image text not null default '',
+  rating integer not null check (rating between 1 and 5),
+  text text not null default '',
+  has_photo boolean not null default false,
+  deal_completed boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+alter table public.seller_reviews enable row level security;
+
+drop policy if exists "Authenticated users can read seller reviews" on public.seller_reviews;
+create policy "Authenticated users can read seller reviews"
+  on public.seller_reviews for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Buyers can create seller reviews" on public.seller_reviews;
+create policy "Buyers can create seller reviews"
+  on public.seller_reviews for insert
+  to authenticated
+  with check (auth.uid() = buyer_id and auth.uid() <> seller_id);
+
+drop policy if exists "Buyers can update own seller reviews" on public.seller_reviews;
+create policy "Buyers can update own seller reviews"
+  on public.seller_reviews for update
+  to authenticated
+  using (auth.uid() = buyer_id)
+  with check (auth.uid() = buyer_id);
+
+create index if not exists seller_reviews_seller_created_idx
+  on public.seller_reviews (seller_id, created_at desc);
+
+create table if not exists public.delivery_profiles (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  full_name text not null default '',
+  phone text not null default '',
+  email text not null default '',
+  city text not null default '',
+  address text not null default '',
+  updated_at timestamptz not null default now()
+);
+
+alter table public.delivery_profiles enable row level security;
+
+drop policy if exists "Users can read own delivery profile" on public.delivery_profiles;
+create policy "Users can read own delivery profile"
+  on public.delivery_profiles for select
+  to authenticated
+  using (auth.uid() = user_id);
+
+drop policy if exists "Users can insert own delivery profile" on public.delivery_profiles;
+create policy "Users can insert own delivery profile"
+  on public.delivery_profiles for insert
+  to authenticated
+  with check (auth.uid() = user_id);
+
+drop policy if exists "Users can update own delivery profile" on public.delivery_profiles;
+create policy "Users can update own delivery profile"
+  on public.delivery_profiles for update
+  to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+notify pgrst, 'reload schema';
 
 create table if not exists public.outfit_accessories (
   id uuid primary key,

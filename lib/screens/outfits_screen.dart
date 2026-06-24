@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/created_outfit.dart';
 import '../models/product.dart';
+import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
 import 'product_screen.dart';
 
@@ -19,6 +20,12 @@ class OutfitsScreen extends StatefulWidget {
   final Future<void> Function(String outfitId) onToggleOutfitLike;
   final Future<void> Function(String productId) onProductViewed;
   final Future<void> Function(String outfitId) onOutfitViewed;
+  final Future<void> Function(Product product, {bool imageOnly})
+  onContactSeller;
+  final ValueChanged<Product> onOpenSellerProfile;
+  final DeliveryProfile deliveryProfile;
+  final Future<void> Function(DeliveryProfile profile) onSaveDeliveryProfile;
+  final Future<void> Function(Product product) onCreateDeliveryOrder;
 
   const OutfitsScreen({
     super.key,
@@ -31,6 +38,11 @@ class OutfitsScreen extends StatefulWidget {
     required this.onToggleOutfitLike,
     required this.onProductViewed,
     required this.onOutfitViewed,
+    required this.onContactSeller,
+    required this.onOpenSellerProfile,
+    required this.deliveryProfile,
+    required this.onSaveDeliveryProfile,
+    required this.onCreateDeliveryOrder,
   });
 
   @override
@@ -88,66 +100,183 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
     });
   }
 
-  void _showAuthorProfile() {
-    showModalBottomSheet(
+  Product _sellerProductForOutfit(CreatedOutfit outfit) {
+    final ownerId = outfit.ownerId.trim();
+    if (ownerId.isNotEmpty) {
+      for (final product in widget.products) {
+        if (product.ownerId == ownerId) return product;
+      }
+    }
+
+    final authorHandle = outfit.authorHandle.trim().toLowerCase();
+    if (authorHandle.isNotEmpty) {
+      for (final product in widget.products) {
+        if (product.sellerHandle.trim().toLowerCase() == authorHandle) {
+          return product;
+        }
+      }
+    }
+
+    final authorName = outfit.authorName.trim().toLowerCase();
+    if (authorName.isNotEmpty) {
+      for (final product in widget.products) {
+        if (product.sellerName.trim().toLowerCase() == authorName) {
+          return product;
+        }
+      }
+    }
+
+    final displayName = outfit.authorName.trim().isEmpty
+        ? 'Автор'
+        : outfit.authorName.trim();
+    final handle = outfit.authorHandle.trim().isEmpty
+        ? '@user'
+        : outfit.authorHandle.trim();
+    final image = outfit.photos.isNotEmpty
+        ? outfit.photos.first
+        : outfit.items.isNotEmpty
+        ? outfit.items.first.image
+        : '';
+
+    return Product(
+      id: 'outfit_author_${outfit.id}',
+      title: displayName,
+      detailTitle: displayName,
+      description: '',
+      price: '',
+      detailPrice: '',
+      priceValue: 0,
+      image: image,
+      category: '',
+      brand: '',
+      size: '',
+      color: '',
+      condition: '',
+      ownerId: ownerId,
+      sellerName: displayName,
+      sellerHandle: handle,
+      dotsOnDark: false,
+      isHidden: true,
+    );
+  }
+
+  Product _sellerProductForOutfitProduct(_OutfitProduct product) {
+    final source = product.sourceProduct;
+    if (source != null) return source;
+
+    return Product(
+      id: product.id.isEmpty ? 'outfit_product_${product.name}' : product.id,
+      title: product.name,
+      detailTitle: product.name,
+      description: '',
+      price: product.price,
+      detailPrice: product.price,
+      priceValue: 0,
+      image: product.image ?? '',
+      category: '',
+      brand: product.brand,
+      size: '',
+      color: '',
+      condition: '',
+      ownerId: '',
+      sellerName: 'Продавец',
+      sellerHandle: '@seller',
+      dotsOnDark: false,
+      isHidden: true,
+    );
+  }
+
+  void _openOutfitAuthorProfile(CreatedOutfit outfit) {
+    widget.onOpenSellerProfile(_sellerProductForOutfit(outfit));
+  }
+
+  void _showUnavailableProductSheet(_OutfitProduct product) {
+    final source = product.sourceProduct;
+    showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: const EdgeInsets.all(20),
-        child: SafeArea(
-          top: false,
+      builder: (sheetContext) {
+        final bottomInset = MediaQuery.of(sheetContext).viewPadding.bottom;
+        return Container(
+          width: double.infinity,
+          padding: EdgeInsets.fromLTRB(20, 18, 20, 20 + bottomInset),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              Center(
+                child: Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE0E0E4),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
               const Text(
-                'Nightshade',
+                'Упс, этот товар не продается',
+                textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
                   color: Color(0xFF111111),
                 ),
               ),
-              const SizedBox(height: 24),
-              const Text(
-                'Профиль автора будет добавлен позже',
-                style: TextStyle(fontSize: 15, color: Color(0xFF8F8F94)),
+              const SizedBox(height: 10),
+              Text(
+                'Можно написать продавцу и уточнить, готов ли он продать эту вещь.',
                 textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  height: 1.35,
+                  color: Colors.black.withValues(alpha: 0.62),
+                ),
               ),
-              const SizedBox(height: 24),
-              GestureDetector(
-                onTap: () => Navigator.pop(ctx),
-                child: Container(
-                  width: double.infinity,
-                  height: 50,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border.all(color: const Color(0xFFE7E7EA)),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: const Center(
-                    child: Text(
-                      'Закрыть',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF0B0B0B),
-                      ),
+              const SizedBox(height: 18),
+              SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(sheetContext, rootNavigator: true).pop();
+                    if (source != null) {
+                      widget.onContactSeller(source, imageOnly: true);
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(2),
                     ),
+                  ),
+                  child: const Text(
+                    'Написать продавцу',
+                    style: TextStyle(fontWeight: FontWeight.w500),
                   ),
                 ),
               ),
             ],
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
   void _showProductDetails(_OutfitProduct product) {
+    final source = product.sourceProduct;
+    final canPurchase = product.canPurchase;
+    if (!canPurchase) {
+      _showUnavailableProductSheet(product);
+      return;
+    }
     if (product.id.isNotEmpty) {
       widget.onProductViewed(product.id);
     }
@@ -160,30 +289,92 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
         pageBuilder: (context, animation, secondaryAnimation) {
           return ProductScreen(
             product: ProductDetailData(
-              id: product.id.isEmpty
-                  ? product.name.toLowerCase().replaceAll(' ', '_')
-                  : product.id,
-              title: product.name,
-              description: '',
-              price: product.price,
-              image: product.image ?? '',
-              images: product.image == null ? const [] : [product.image!],
-              brand: 'Brand',
-              sellerName: 'Продавец',
-              sellerHandle: '@seller',
-              size: 'M',
-              condition: 'Отличное',
-              isLiked: product.isLiked,
+              id:
+                  source?.id ??
+                  (product.id.isEmpty
+                      ? product.name.toLowerCase().replaceAll(' ', '_')
+                      : product.id),
+              title: source?.title ?? product.name,
+              description: source?.description ?? product.detailDescription,
+              price: source?.price ?? product.price,
+              priceValue: source?.priceValue ?? _parsePrice(product.price),
+              image: source?.image ?? product.image ?? '',
+              images: source?.images.isNotEmpty == true
+                  ? source!.images
+                  : [
+                      if ((source?.image ?? product.image ?? '').isNotEmpty)
+                        source?.image ?? product.image!,
+                    ],
+              category: source?.category ?? '',
+              brand: source?.brand ?? product.brand,
+              color: source?.color ?? '',
+              sellerName: source?.sellerName ?? 'Продавец',
+              sellerHandle: source?.sellerHandle ?? '@seller',
+              size: source?.size ?? 'M',
+              condition: source?.condition ?? 'Отличное',
+              location: source?.location ?? '',
+              isLiked: source?.isLiked ?? product.isLiked,
+              canPurchase: canPurchase,
             ),
-            onLike: product.id.isEmpty
+            onLike: product.id.isEmpty || !canPurchase
                 ? () {}
                 : () => widget.onToggleProductLike(product.id),
             onAddToCart: () {},
-            onContactSeller: () {},
+            onOpenSeller: () => widget.onOpenSellerProfile(
+              _sellerProductForOutfitProduct(product),
+            ),
+            onOpenReviews: () => widget.onOpenSellerProfile(
+              _sellerProductForOutfitProduct(product),
+            ),
+            relatedProducts: source == null
+                ? const []
+                : _relatedProductsFor(source),
+            onRelatedProductTap: (related) =>
+                _showProductDetails(_outfitProductForSourceProduct(related)),
+            deliveryProfile: widget.deliveryProfile,
+            onSaveDeliveryProfile: widget.onSaveDeliveryProfile,
+            onCreateDeliveryOrder: source == null
+                ? () async {}
+                : () => widget.onCreateDeliveryOrder(source),
+            onContactSeller: source == null
+                ? () {}
+                : () => widget.onContactSeller(source),
           );
         },
       ),
     );
+  }
+
+  List<Product> _relatedProductsFor(Product product) {
+    return widget.products
+        .where(
+          (item) =>
+              item.id != product.id &&
+              !item.isHidden &&
+              item.category == product.category,
+        )
+        .take(8)
+        .toList();
+  }
+
+  _OutfitProduct _outfitProductForSourceProduct(Product product) {
+    return _OutfitProduct(
+      id: product.id,
+      icon: Icons.checkroom_outlined,
+      sourceProduct: product,
+      brand: product.brand,
+      description: product.description,
+      name: product.title,
+      price: product.price,
+      image: product.image,
+      isLiked: product.isLiked,
+      canPurchase: !product.isHidden,
+    );
+  }
+
+  int _parsePrice(String value) {
+    final digits = value.replaceAll(RegExp(r'[^0-9]'), '');
+    return int.tryParse(digits) ?? 0;
   }
 
   List<_OutfitProduct> _outfitProducts(CreatedOutfit outfit) {
@@ -195,11 +386,20 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
       return _OutfitProduct(
         id: item.id,
         icon: Icons.checkroom_outlined,
+        sourceProduct: product,
         brand: product?.brand ?? '',
+        description: product?.description ?? '',
         name: product?.title ?? item.name,
-        price: product?.price ?? item.price,
+        price: product == null
+            ? item.price
+            : product.isHidden
+            ? 'Не продается'
+            : product.price,
         image: product?.outfitDisplayImage ?? item.image,
         isLiked: product?.isLiked ?? false,
+        canPurchase: product == null
+            ? item.price.trim().isNotEmpty
+            : !product.isHidden,
       );
     }).toList();
   }
@@ -237,7 +437,7 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
           products: _outfitProducts(outfit),
           moreOutfits: _relatedOutfits(outfit),
           onLikeTap: () => widget.onToggleOutfitLike(outfit.id),
-          onAuthorTap: _showAuthorProfile,
+          onAuthorTap: () => _openOutfitAuthorProfile(outfit),
           onProductTap: _showProductDetails,
           onOutfitTap: _showOutfitDetails,
         ),
@@ -259,7 +459,28 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
           products: const [],
           moreOutfits: const [],
           onLikeTap: () async => _toggleLike(),
-          onAuthorTap: _showAuthorProfile,
+          onAuthorTap: () => widget.onOpenSellerProfile(
+            Product(
+              id: 'sample_outfit_author',
+              title: 'Lil Yachty',
+              detailTitle: 'Lil Yachty',
+              description: '',
+              price: '',
+              detailPrice: '',
+              priceValue: 0,
+              image: 'assets/mock/outfit_hero.jpg',
+              category: '',
+              brand: '',
+              size: '',
+              color: '',
+              condition: '',
+              ownerId: '',
+              sellerName: 'Lil Yachty',
+              sellerHandle: '@lilyachty',
+              dotsOnDark: false,
+              isHidden: true,
+            ),
+          ),
           onProductTap: _showProductDetails,
           onOutfitTap: (_) {},
         ),
@@ -308,7 +529,7 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                   scale: widget.scale,
                   outfit: outfit,
                   products: widget.products,
-                  onAuthorTap: _showAuthorProfile,
+                  onAuthorTap: () => _openOutfitAuthorProfile(outfit),
                   onProductTap: _showProductDetails,
                   onOutfitTap: () => _showOutfitDetails(outfit),
                   onLikeTap: () => widget.onToggleOutfitLike(outfit.id),
@@ -326,7 +547,28 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                   likesCount: _likesCount,
                   pageController: _pageController,
                   onLikeTap: _toggleLike,
-                  onAuthorTap: _showAuthorProfile,
+                  onAuthorTap: () => widget.onOpenSellerProfile(
+                    Product(
+                      id: 'sample_outfit_author',
+                      title: 'Lil Yachty',
+                      detailTitle: 'Lil Yachty',
+                      description: '',
+                      price: '',
+                      detailPrice: '',
+                      priceValue: 0,
+                      image: 'assets/mock/outfit_hero.jpg',
+                      category: '',
+                      brand: '',
+                      size: '',
+                      color: '',
+                      condition: '',
+                      ownerId: '',
+                      sellerName: 'Lil Yachty',
+                      sellerHandle: '@lilyachty',
+                      dotsOnDark: false,
+                      isHidden: true,
+                    ),
+                  ),
                   onProductTap: _showProductDetails,
                   onOutfitTap: _showSampleOutfitDetails,
                 ),
@@ -816,7 +1058,7 @@ class _CreatorFloatingCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    '$user · $likesCount likes',
+                    '$user В· $likesCount likes',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -1252,11 +1494,19 @@ class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
                   return _OutfitProduct(
                     id: item.id,
                     icon: Icons.checkroom_outlined,
+                    sourceProduct: product,
                     brand: product?.brand ?? '',
                     name: product?.title ?? item.name,
-                    price: product?.price ?? item.price,
+                    price: product == null
+                        ? item.price
+                        : product.isHidden
+                        ? 'Не продается'
+                        : product.price,
                     image: product?.outfitDisplayImage ?? item.image,
                     isLiked: product?.isLiked ?? false,
+                    canPurchase: product == null
+                        ? item.price.trim().isNotEmpty
+                        : !product.isHidden,
                   );
                 }).toList(),
                 onProductTap: widget.onProductTap,
@@ -1812,20 +2062,34 @@ class _OutfitProduct {
   const _OutfitProduct({
     this.id = '',
     required this.icon,
+    this.sourceProduct,
     this.brand = '',
+    this.description = '',
     required this.name,
     required this.price,
     this.oldPrice,
     this.image,
     this.isLiked = false,
+    this.canPurchase = true,
   });
 
   final String id;
   final IconData icon;
+  final Product? sourceProduct;
   final String brand;
+  final String description;
   final String name;
   final String price;
   final String? oldPrice;
   final String? image;
   final bool isLiked;
+  final bool canPurchase;
+
+  String get detailDescription {
+    final clean = description.trim();
+    if (clean.isNotEmpty) return clean;
+    final label = [brand, name].where((part) => part.trim().isNotEmpty).join(' ');
+    if (label.trim().isEmpty) return 'Item from this outfit.';
+    return '$label. Item from this outfit.';
+  }
 }

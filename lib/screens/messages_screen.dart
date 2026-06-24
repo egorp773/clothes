@@ -19,18 +19,22 @@ class MessagesScreen extends StatefulWidget {
     required this.onSendMessage,
     required this.onSearchUsers,
     required this.onStartDirectChat,
+    this.onOpenProduct,
     required this.currentUserId,
     required this.threadsListenable,
     required this.resolveThread,
+    required this.lastSeenForUser,
   });
 
   final List<MessageThread> threads;
   final Future<void> Function(String threadId, String text) onSendMessage;
   final Future<List<AppUserProfile>> Function(String query) onSearchUsers;
   final Future<MessageThread?> Function(AppUserProfile user) onStartDirectChat;
+  final void Function(String productId)? onOpenProduct;
   final String currentUserId;
   final Listenable threadsListenable;
   final MessageThread? Function(String threadId) resolveThread;
+  final DateTime? Function(String userId) lastSeenForUser;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -80,9 +84,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
         builder: (context) => ChatScreen(
           thread: thread,
           onSendMessage: widget.onSendMessage,
+          onOpenProduct: widget.onOpenProduct,
           currentUserId: widget.currentUserId,
           threadsListenable: widget.threadsListenable,
           resolveThread: widget.resolveThread,
+          lastSeenForUser: widget.lastSeenForUser,
         ),
       ),
     );
@@ -322,16 +328,20 @@ class ChatScreen extends StatefulWidget {
     super.key,
     required this.thread,
     required this.onSendMessage,
+    this.onOpenProduct,
     required this.currentUserId,
     required this.threadsListenable,
     required this.resolveThread,
+    required this.lastSeenForUser,
   });
 
   final MessageThread thread;
   final Future<void> Function(String threadId, String text) onSendMessage;
+  final void Function(String productId)? onOpenProduct;
   final String currentUserId;
   final Listenable threadsListenable;
   final MessageThread? Function(String threadId) resolveThread;
+  final DateTime? Function(String userId) lastSeenForUser;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -343,28 +353,37 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isSending = false;
   late MessageThread _thread;
   late List<ChatMessage> _messages;
+  DateTime? _lastSeenAt;
 
   @override
   void initState() {
     super.initState();
     _thread = widget.thread;
     _messages = List.of(_thread.messages);
+    _lastSeenAt = widget.lastSeenForUser(
+      _thread.otherPartyId(widget.currentUserId),
+    );
     widget.threadsListenable.addListener(_refreshThread);
   }
 
   void _refreshThread() {
     final latest = widget.resolveThread(_thread.id);
     if (latest == null || !mounted) return;
+    final latestLastSeen = widget.lastSeenForUser(
+      latest.otherPartyId(widget.currentUserId),
+    );
 
     final hasChanged =
         latest.updatedAt != _thread.updatedAt ||
         latest.messages.length != _thread.messages.length ||
-        latest.lastMessage != _thread.lastMessage;
+        latest.lastMessage != _thread.lastMessage ||
+        latestLastSeen != _lastSeenAt;
     if (!hasChanged) return;
 
     setState(() {
       _thread = latest;
       _messages = List.of(latest.messages);
+      _lastSeenAt = latestLastSeen;
     });
   }
 
@@ -415,7 +434,11 @@ class _ChatScreenState extends State<ChatScreen> {
         top: false,
         child: Column(
           children: [
-            _ChatHeader(thread: _thread, currentUserId: widget.currentUserId),
+            _ChatHeader(
+              thread: _thread,
+              currentUserId: widget.currentUserId,
+              lastSeenAt: _lastSeenAt,
+            ),
             Expanded(
               child: _messages.isEmpty
                   ? _EmptyChat(thread: _thread)
@@ -427,7 +450,13 @@ class _ChatScreenState extends State<ChatScreen> {
                           _messages.length + (_thread.isProductChat ? 1 : 0),
                       itemBuilder: (context, index) {
                         if (_thread.isProductChat && index == 0) {
-                          return _ProductContextCard(thread: _thread);
+                          return _ProductContextCard(
+                            thread: _thread,
+                            onTap: widget.onOpenProduct == null
+                                ? null
+                                : () =>
+                                      widget.onOpenProduct!(_thread.productId),
+                          );
                         }
                         final messageIndex =
                             index - (_thread.isProductChat ? 1 : 0);
@@ -683,16 +712,20 @@ class _Avatar extends StatelessWidget {
 }
 
 class _ChatHeader extends StatelessWidget {
-  const _ChatHeader({required this.thread, required this.currentUserId});
+  const _ChatHeader({
+    required this.thread,
+    required this.currentUserId,
+    required this.lastSeenAt,
+  });
 
   final MessageThread thread;
   final String currentUserId;
+  final DateTime? lastSeenAt;
 
   @override
   Widget build(BuildContext context) {
-    final subtitle = thread.isProductChat
-        ? thread.productTitle
-        : thread.otherPartyHandle(currentUserId);
+    final activity = _activityLabel(lastSeenAt);
+    final isOnline = _isOnline(lastSeenAt);
     final topInset = MediaQuery.of(context).viewPadding.top;
 
     return Container(
@@ -726,15 +759,33 @@ class _ChatHeader extends StatelessWidget {
                     color: _ink,
                   ),
                 ),
-                if (subtitle.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12.5, color: _muted),
-                  ),
-                ],
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: isOnline
+                            ? const Color(0xFF2FBF71)
+                            : const Color(0xFFC9C9CE),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        activity,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: isOnline ? const Color(0xFF2C9F62) : _muted,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -758,7 +809,8 @@ class _EmptyChat extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
       children: [
-        if (thread.isProductChat) _ProductContextCard(thread: thread),
+        if (thread.isProductChat)
+          _ProductContextCard(thread: thread, onTap: null),
         const SizedBox(height: 88),
         const Center(
           child: Text(
@@ -776,30 +828,31 @@ class _EmptyChat extends StatelessWidget {
 }
 
 class _ProductContextCard extends StatelessWidget {
-  const _ProductContextCard({required this.thread});
+  const _ProductContextCard({required this.thread, this.onTap});
 
   final MessageThread thread;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(10),
-        width: double.infinity,
-        constraints: const BoxConstraints(maxWidth: 420),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.92),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _line),
-        ),
-        child: Row(
-          children: [
-            ClipRRect(
+    final title = thread.productTitle.trim();
+    final imageOnly = title.isEmpty;
+    final card = Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.all(imageOnly ? 6 : 8),
+      width: imageOnly ? 96 : double.infinity,
+      constraints: BoxConstraints(maxWidth: imageOnly ? 96 : 420),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _line),
+      ),
+      child: imageOnly
+          ? ClipRRect(
               borderRadius: BorderRadius.circular(10),
               child: SizedBox(
-                width: 58,
-                height: 58,
+                width: 84,
+                height: 84,
                 child: thread.productImage.isEmpty
                     ? const ColoredBox(
                         color: _soft,
@@ -807,28 +860,39 @@ class _ProductContextCard extends StatelessWidget {
                       )
                     : AppImage(
                         imageUrl: thread.productImage,
-                        width: 58,
-                        height: 58,
-                        fit: BoxFit.fill,
+                        width: 84,
+                        height: 84,
+                        fit: BoxFit.cover,
                       ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Диалог по вещи',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: _muted,
-                    ),
+            )
+          : Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: thread.productImage.isEmpty
+                        ? const ColoredBox(
+                            color: _soft,
+                            child: Icon(
+                              Icons.checkroom_outlined,
+                              color: _muted,
+                            ),
+                          )
+                        : AppImage(
+                            imageUrl: thread.productImage,
+                            width: 48,
+                            height: 48,
+                            fit: BoxFit.fill,
+                          ),
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    thread.productTitle,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
@@ -838,12 +902,19 @@ class _ProductContextCard extends StatelessWidget {
                       color: _ink,
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+    );
+
+    return Center(
+      child: onTap == null
+          ? card
+          : InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(14),
+              child: card,
+            ),
     );
   }
 }
@@ -1042,6 +1113,52 @@ String _timeLabel(DateTime value) {
   final hour = value.hour.toString().padLeft(2, '0');
   final minute = value.minute.toString().padLeft(2, '0');
   return '$hour:$minute';
+}
+
+bool _isOnline(DateTime? value) {
+  if (value == null) return false;
+  return DateTime.now().difference(value.toLocal()) <
+      const Duration(seconds: 90);
+}
+
+String _activityLabel(DateTime? value) {
+  if (value == null) return 'был давно';
+
+  final lastSeen = value.toLocal();
+  final difference = DateTime.now().difference(lastSeen);
+  if (difference < const Duration(seconds: 90)) return 'онлайн';
+  if (difference < const Duration(minutes: 2)) return 'был только что';
+  if (difference < const Duration(hours: 1)) {
+    final minutes = difference.inMinutes;
+    return 'был $minutes ${_plural(minutes, 'минуту', 'минуты', 'минут')} назад';
+  }
+  if (difference < const Duration(days: 1)) {
+    final hours = difference.inHours;
+    return 'был $hours ${_plural(hours, 'час', 'часа', 'часов')} назад';
+  }
+  if (difference < const Duration(days: 7)) {
+    final days = difference.inDays;
+    return 'был $days ${_plural(days, 'день', 'дня', 'дней')} назад';
+  }
+
+  final day = lastSeen.day.toString().padLeft(2, '0');
+  final month = lastSeen.month.toString().padLeft(2, '0');
+  return 'был $day.$month.${lastSeen.year}';
+}
+
+String _plural(int value, String one, String few, String many) {
+  final mod100 = value % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  switch (value % 10) {
+    case 1:
+      return one;
+    case 2:
+    case 3:
+    case 4:
+      return few;
+    default:
+      return many;
+  }
 }
 
 String _dateLabel(DateTime value) {

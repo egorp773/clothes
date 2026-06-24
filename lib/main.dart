@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:device_preview/device_preview.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'core/app_typography.dart';
 import 'core/supabase_config.dart';
 import 'data/app_repository.dart';
+import 'models/app_profile.dart';
 import 'models/created_outfit.dart';
 import 'models/product.dart';
 import 'screens/catalog_screen.dart';
@@ -18,11 +21,16 @@ import 'screens/outfit_only_item_screen.dart';
 import 'screens/phone_login_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/publish_outfit_screen.dart';
+import 'screens/product_screen.dart';
+import 'screens/reviews_screen.dart';
+import 'screens/seller_profile_screen.dart';
+import 'services/push_notification_service.dart';
 import 'widgets/app_bottom_nav.dart';
 import 'widgets/create_entry_sheet.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await PushNotificationService.initialize();
   await SupabaseConfig.initialize();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -60,6 +68,11 @@ class FashionApp extends StatelessWidget {
         colorScheme: const ColorScheme.light(
           primary: Color(0xFF070707),
           surface: Colors.white,
+        ),
+        textSelectionTheme: const TextSelectionThemeData(
+          cursorColor: Color(0xFF070707),
+          selectionColor: Color(0x22070707),
+          selectionHandleColor: Color(0xFF070707),
         ),
       ),
       home: const AppShell(),
@@ -120,26 +133,396 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   static const double _sidePadding = 18.0;
 
   int _currentIndex = 0;
   _CreateMode _createMode = _CreateMode.none;
   bool _returnToPublishOutfitAfterItem = false;
   bool _createItemForOutfitOnly = false;
+  bool _isAppActive = true;
+  MessageNotification? _visibleMessageNotification;
+  String? _handledMessageNotificationId;
+  Timer? _messageNotificationTimer;
+  Timer? _messageNotificationRemoveTimer;
+  OverlayEntry? _messageNotificationEntry;
   final List<Product> _draftOutfitProducts = [];
   final AppRepository _repository = AppRepository();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _repository.load();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _messageNotificationTimer?.cancel();
+    _messageNotificationRemoveTimer?.cancel();
+    _messageNotificationEntry?.remove();
     _repository.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final isActive = state == AppLifecycleState.resumed;
+    if (_isAppActive == isActive) return;
+    _isAppActive = isActive;
+    if (!isActive) {
+      _hideMessageNotification();
+    }
+  }
+
+  void _handleMessageNotification(MessageNotification? notification) {
+    if (notification == null ||
+        notification.id == _handledMessageNotificationId) {
+      return;
+    }
+    _handledMessageNotificationId = notification.id;
+    if (!_isAppActive) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(HapticFeedback.lightImpact());
+      _messageNotificationRemoveTimer?.cancel();
+      setState(() => _visibleMessageNotification = notification);
+      _ensureMessageNotificationOverlay();
+      _messageNotificationEntry?.markNeedsBuild();
+      _messageNotificationTimer?.cancel();
+      _messageNotificationTimer = Timer(const Duration(seconds: 4), () {
+        if (!mounted || _visibleMessageNotification?.id != notification.id) {
+          return;
+        }
+        _hideMessageNotification();
+      });
+    });
+  }
+
+  void _ensureMessageNotificationOverlay() {
+    if (_messageNotificationEntry != null) return;
+    final overlay = Overlay.of(context, rootOverlay: true);
+    _messageNotificationEntry = OverlayEntry(
+      builder: (context) => _MessageNotificationOverlay(
+        notification: _visibleMessageNotification,
+        onDismiss: _hideMessageNotification,
+        onTap: _openMessageNotification,
+      ),
+    );
+    overlay.insert(_messageNotificationEntry!);
+  }
+
+  void _hideMessageNotification() {
+    _messageNotificationTimer?.cancel();
+    if (!mounted) return;
+    setState(() => _visibleMessageNotification = null);
+    _messageNotificationEntry?.markNeedsBuild();
+    _messageNotificationRemoveTimer?.cancel();
+    _messageNotificationRemoveTimer = Timer(
+      const Duration(milliseconds: 260),
+      () {
+        if (_visibleMessageNotification != null) return;
+        _messageNotificationEntry?.remove();
+        _messageNotificationEntry = null;
+      },
+    );
+  }
+
+  void _openMessageNotification(MessageNotification notification) {
+    final thread = _repository.threadById(notification.threadId);
+    if (thread == null) {
+      _hideMessageNotification();
+      return;
+    }
+    _hideMessageNotification();
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ChatScreen(
+          thread: thread,
+          onSendMessage: _repository.sendMessage,
+          onOpenProduct: _openProductFromChat,
+          currentUserId: _repository.currentUserId,
+          threadsListenable: _repository,
+          resolveThread: _repository.threadById,
+          lastSeenForUser: _repository.lastSeenForUser,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _contactSellerFromProduct(
+    Product product, {
+    bool imageOnly = false,
+  }) async {
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final thread = await _repository.contactSeller(
+      product,
+      imageOnly: imageOnly,
+    );
+    if (!mounted) return;
+    if (thread == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось открыть чат'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    await navigator.maybePop();
+    if (!mounted) return;
+    navigator.push(
+      MaterialPageRoute<void>(
+        builder: (context) => ChatScreen(
+          thread: thread,
+          onSendMessage: _repository.sendMessage,
+          currentUserId: _repository.currentUserId,
+          threadsListenable: _repository,
+          resolveThread: _repository.threadById,
+          lastSeenForUser: _repository.lastSeenForUser,
+        ),
+      ),
+    );
+  }
+
+  void _openProductDetails(Product product) {
+    _repository.recordProductView(product.id);
+    Navigator.of(context, rootNavigator: true).push(
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierColor: Colors.black.withValues(alpha: 0.24),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: const Duration(milliseconds: 350),
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return ProductScreen(
+            sourceProduct: product,
+            product: ProductDetailData(
+              id: product.id,
+              title: product.title,
+              description: product.description,
+              price: product.price,
+              priceValue: product.priceValue,
+              image: product.image,
+              images: product.images.isNotEmpty
+                  ? product.images
+                  : [if (product.image.isNotEmpty) product.image],
+              category: product.category,
+              brand: product.brand,
+              color: product.color,
+              sellerName: product.sellerName,
+              sellerHandle: product.sellerHandle,
+              size: product.size,
+              condition: product.condition,
+              location: product.location,
+              isLiked: product.isLiked,
+              canPurchase: !product.isHidden,
+            ),
+            onLike: () => _repository.toggleProductLike(product.id),
+            onAddToCart: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Добавлено в корзину'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+            onOpenSeller: () => _openSellerProfile(product),
+            onOpenReviews: () => _openReviewsForProduct(product),
+            loadSellerProfile: _repository.fetchSellerProfile,
+            loadReviews: _repository.fetchSellerReviews,
+            onToggleRelatedLike: _repository.toggleProductLike,
+            onContactSeller: () => _contactSellerFromProduct(product),
+            relatedProducts: _relatedProductsFor(product),
+            onRelatedProductTap: _openProductDetails,
+            deliveryProfile: _repository.deliveryProfile,
+            onSaveDeliveryProfile: _repository.updateDeliveryProfile,
+            onCreateDeliveryOrder: () =>
+                _repository.createDeliveryOrder(product),
+          );
+        },
+      ),
+    );
+  }
+
+  void _openProductFromChat(String productId) {
+    if (productId.isEmpty) return;
+    for (final product in _repository.products) {
+      if (product.id == productId) {
+        _openProductDetails(product);
+        return;
+      }
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Товар не найден'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Future<void> _openReviewsForProduct(Product product) async {
+    final seller =
+        await _repository.fetchSellerProfile(product) ??
+        SellerProfile(
+          id: product.ownerId,
+          name: product.sellerName,
+          handle: product.sellerHandle,
+        );
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ReviewsScreen(
+          seller: seller,
+          sourceProduct: product,
+          loadReviews: _repository.fetchSellerReviews,
+          onCreateReview: _repository.createSellerReview,
+          canCreateReview: _repository.isSignedIn,
+        ),
+      ),
+    );
+  }
+
+  List<Product> _relatedProductsFor(Product product) {
+    return _repository.products
+        .where(
+          (item) =>
+              item.id != product.id &&
+              !item.isHidden &&
+              item.category == product.category,
+        )
+        .take(8)
+        .toList();
+  }
+
+  void _openSellerProfile(Product product) {
+    final initialProducts = _repository.products.where((item) {
+      if (product.ownerId.isNotEmpty) {
+        return item.ownerId == product.ownerId;
+      }
+      final handle = product.sellerHandle.trim().toLowerCase();
+      return handle.isNotEmpty &&
+          item.sellerHandle.trim().toLowerCase() == handle;
+    }).toList();
+
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => SellerProfileScreen(
+          sourceProduct: product,
+          initialProducts: initialProducts,
+          loadProfile: _repository.fetchSellerProfile,
+          loadProducts: _repository.fetchSellerProducts,
+          onProductTap: _openProductDetails,
+          onToggleLike: _repository.toggleProductLike,
+          onShare: _showProductShareStub,
+          loadReviews: _repository.fetchSellerReviews,
+          onCreateReview: _repository.createSellerReview,
+          canCreateReview: _repository.isSignedIn,
+          onMessage: (seller) async {
+            final navigator = Navigator.of(context, rootNavigator: true);
+            final messenger = ScaffoldMessenger.of(context);
+            final thread = await _repository.startDirectChat(
+              seller.toUserProfile(),
+            );
+            if (!mounted) return;
+            if (thread == null) {
+              messenger.showSnackBar(
+                const SnackBar(
+                  content: Text('Не удалось открыть чат'),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+              return;
+            }
+            navigator.push(
+              MaterialPageRoute<void>(
+                builder: (context) => ChatScreen(
+                  thread: thread,
+                  onSendMessage: _repository.sendMessage,
+                  currentUserId: _repository.currentUserId,
+                  threadsListenable: _repository,
+                  resolveThread: _repository.threadById,
+                  lastSeenForUser: _repository.lastSeenForUser,
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  void _openOutfitAuthorProfile(CreatedOutfit outfit) {
+    _openSellerProfile(_sellerProductForOutfit(outfit));
+  }
+
+  Product _sellerProductForOutfit(CreatedOutfit outfit) {
+    final ownerId = outfit.ownerId.trim();
+    if (ownerId.isNotEmpty) {
+      for (final product in _repository.products) {
+        if (product.ownerId == ownerId) return product;
+      }
+    }
+
+    final authorHandle = outfit.authorHandle.trim().toLowerCase();
+    if (authorHandle.isNotEmpty) {
+      for (final product in _repository.products) {
+        if (product.sellerHandle.trim().toLowerCase() == authorHandle) {
+          return product;
+        }
+      }
+    }
+
+    final authorName = outfit.authorName.trim().toLowerCase();
+    if (authorName.isNotEmpty) {
+      for (final product in _repository.products) {
+        if (product.sellerName.trim().toLowerCase() == authorName) {
+          return product;
+        }
+      }
+    }
+
+    final displayName = outfit.authorName.trim().isEmpty
+        ? 'Автор'
+        : outfit.authorName.trim();
+    final handle = outfit.authorHandle.trim().isEmpty
+        ? '@user'
+        : outfit.authorHandle.trim();
+    final image = outfit.photos.isNotEmpty
+        ? outfit.photos.first
+        : outfit.items.isNotEmpty
+        ? outfit.items.first.image
+        : '';
+
+    return Product(
+      id: 'outfit_author_${outfit.id}',
+      title: displayName,
+      detailTitle: displayName,
+      description: '',
+      price: '',
+      detailPrice: '',
+      priceValue: 0,
+      image: image,
+      category: '',
+      brand: '',
+      size: '',
+      color: '',
+      condition: '',
+      ownerId: ownerId,
+      sellerName: displayName,
+      sellerHandle: handle,
+      dotsOnDark: false,
+      isHidden: true,
+    );
+  }
+
+  void _showProductShareStub(Product product) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Ссылка скопирована'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   void _changeTab(int index) {
@@ -398,6 +781,8 @@ class _AppShellState extends State<AppShell> {
     return AnimatedBuilder(
       animation: _repository,
       builder: (context, _) {
+        _handleMessageNotification(_repository.latestMessageNotification);
+
         if (!_repository.isReady) {
           return const Scaffold(
             backgroundColor: Colors.white,
@@ -431,12 +816,21 @@ class _AppShellState extends State<AppShell> {
                   onToggleLike: _repository.toggleProductLike,
                   onHideProduct: _repository.hideProduct,
                   onContactSeller: _repository.contactSeller,
+                  onLoadSellerProfile: _repository.fetchSellerProfile,
+                  onLoadSellerProducts: _repository.fetchSellerProducts,
+                  onStartDirectChat: _repository.startDirectChat,
                   onSendMessage: _repository.sendMessage,
                   onProductViewed: (product) =>
                       _repository.recordProductView(product.id),
+                  deliveryProfile: _repository.deliveryProfile,
+                  onSaveDeliveryProfile: _repository.updateDeliveryProfile,
+                  onCreateDeliveryOrder: _repository.createDeliveryOrder,
+                  onLoadReviews: _repository.fetchSellerReviews,
+                  onCreateReview: _repository.createSellerReview,
                   currentUserId: _repository.currentUserId,
                   threadsListenable: _repository,
                   resolveThread: _repository.threadById,
+                  lastSeenForUser: _repository.lastSeenForUser,
                 ),
                 OutfitsScreen(
                   scale: 1.0,
@@ -448,6 +842,11 @@ class _AppShellState extends State<AppShell> {
                   onToggleOutfitLike: _repository.toggleOutfitLike,
                   onProductViewed: _repository.recordProductView,
                   onOutfitViewed: _repository.recordOutfitView,
+                  onContactSeller: _contactSellerFromProduct,
+                  onOpenSellerProfile: _openSellerProfile,
+                  deliveryProfile: _repository.deliveryProfile,
+                  onSaveDeliveryProfile: _repository.updateDeliveryProfile,
+                  onCreateDeliveryOrder: _repository.createDeliveryOrder,
                 ),
                 _buildCreateScreen(),
                 MessagesScreen(
@@ -455,9 +854,11 @@ class _AppShellState extends State<AppShell> {
                   onSendMessage: _repository.sendMessage,
                   onSearchUsers: _repository.searchUserProfiles,
                   onStartDirectChat: _repository.startDirectChat,
+                  onOpenProduct: _openProductFromChat,
                   currentUserId: _repository.currentUserId,
                   threadsListenable: _repository,
                   resolveThread: _repository.threadById,
+                  lastSeenForUser: _repository.lastSeenForUser,
                 ),
                 ProfileScreen(
                   profile: _repository.profile,
@@ -470,6 +871,7 @@ class _AppShellState extends State<AppShell> {
                   allProducts: _repository.products,
                   isSignedIn: _repository.isSignedIn,
                   isSigningIn: _repository.isSigningIn,
+                  currentUserId: _repository.currentUserId,
                   accountLabel:
                       (_repository.currentUser?.email?.endsWith(
                             '@telegram.local',
@@ -478,12 +880,23 @@ class _AppShellState extends State<AppShell> {
                       ? _repository.profile.handle
                       : _repository.currentUser?.email,
                   authError: _repository.authError,
+                  notifications: _repository.notifications,
+                  notificationPreferences: _repository.notificationPreferences,
+                  orders: _repository.orders,
+                  sellerDashboardStats: _repository.sellerDashboardStats(),
                   onSignInWithYandex: _repository.signInWithYandex,
                   onSignInWithTelegram: _repository.signInWithTelegram,
                   onSignOut: _repository.signOut,
                   onUpdateProfile: _repository.updateProfile,
                   onToggleProductLike: _repository.toggleProductLike,
                   onToggleOutfitLike: _repository.toggleOutfitLike,
+                  onDeleteProduct: _repository.deleteProduct,
+                  onProductTap: _openProductDetails,
+                  onOutfitAuthorTap: _openOutfitAuthorProfile,
+                  onMarkNotificationRead: _repository.markNotificationRead,
+                  onUpdateNotificationPreferences:
+                      _repository.updateNotificationPreferences,
+                  onOpenCatalog: () => _changeTab(0),
                 ),
               ],
             ),
@@ -566,6 +979,139 @@ class _AppShellState extends State<AppShell> {
       onAddItem: _showOutfitItemChoiceSheet,
     );
   }
+}
+
+class _MessageNotificationOverlay extends StatelessWidget {
+  const _MessageNotificationOverlay({
+    required this.notification,
+    required this.onDismiss,
+    required this.onTap,
+  });
+
+  final MessageNotification? notification;
+  final VoidCallback onDismiss;
+  final ValueChanged<MessageNotification> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final topInset = MediaQuery.of(context).viewPadding.top;
+    final current = notification;
+    final isVisible = current != null;
+
+    return Positioned(
+      left: 0,
+      right: 0,
+      top: 0,
+      child: IgnorePointer(
+        ignoring: !isVisible,
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: -1.2, end: isVisible ? 0 : -1.2),
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+          builder: (context, offset, child) {
+            final opacity = ((offset + 1.2) / 1.2).clamp(0.0, 1.0);
+            return FractionalTranslation(
+              translation: Offset(0, offset),
+              child: Opacity(opacity: opacity, child: child),
+            );
+          },
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(12, topInset + 8, 12, 0),
+            child: current == null
+                ? const SizedBox(height: 68)
+                : GestureDetector(
+                    onTap: () => onTap(current),
+                    behavior: HitTestBehavior.opaque,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(color: const Color(0xFFE8E8EA)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.14),
+                            blurRadius: 24,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 42,
+                              height: 42,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF070707),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  _notificationInitial(current.senderName),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 11),
+                            Expanded(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    current.senderName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 14.5,
+                                      height: 1.15,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF070707),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    current.text,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      height: 1.2,
+                                      color: Color(0xFF6F6F76),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            IconButton(
+                              onPressed: onDismiss,
+                              icon: const Icon(
+                                Icons.close,
+                                size: 18,
+                                color: Color(0xFF8F8F94),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _notificationInitial(String value) {
+  final clean = value.trim();
+  if (clean.isEmpty) return '?';
+  return clean.characters.first.toUpperCase();
 }
 
 class _OutfitItemChoiceSheet extends StatelessWidget {
