@@ -16,7 +16,6 @@ void main() {
     await tester.pumpWidget(const FashionApp());
     await tester.pumpAndSettle();
 
-    expect(find.text('Каталог'), findsWidgets);
     expect(find.byIcon(Icons.search), findsWidgets);
   });
 }

@@ -20,6 +20,7 @@ dependencies:
   path: ^1.9.1
   image: ^4.8.0
   http: ^1.6.0
+  http_parser: ^4.1.2
   url_launcher: ^6.3.2
 
 dev_dependencies:
@@ -43,3 +44,4 @@ flutter:
   assets:
     - assets/products/
     - assets/mock/
+    - assets/icons/

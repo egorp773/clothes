@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../models/app_profile.dart';
 import '../models/created_outfit.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
+import 'edit_profile_screen.dart';
 import 'profile_feature_screens.dart';
+import 'reviews_screen.dart';
 
 const _outfitMediaBackground = Color(0xFFF4F4F4);
+const _profileInk = Color(0xFF111113);
 const _outfitItemBackground = Color(0xFFFFFFFF);
 
 class ProfileScreen extends StatelessWidget {
@@ -34,6 +38,9 @@ class ProfileScreen extends StatelessWidget {
     required this.onSignInWithTelegram,
     required this.onSignOut,
     required this.onUpdateProfile,
+    required this.onSavePersonalProfile,
+    required this.onConfirmEmail,
+    required this.onDeleteAccount,
     required this.onToggleProductLike,
     required this.onToggleOutfitLike,
     required this.onDeleteProduct,
@@ -41,6 +48,7 @@ class ProfileScreen extends StatelessWidget {
     required this.onOutfitAuthorTap,
     required this.onMarkNotificationRead,
     required this.onUpdateNotificationPreferences,
+    required this.onLoadReviews,
     required this.onOpenCatalog,
   });
 
@@ -66,6 +74,10 @@ class ProfileScreen extends StatelessWidget {
   final Future<void> Function() onSignOut;
   final Future<String?> Function({required String name, required String handle})
   onUpdateProfile;
+  final Future<String?> Function(AppProfile profile, XFile? avatarFile)
+  onSavePersonalProfile;
+  final Future<String?> Function(String email) onConfirmEmail;
+  final Future<String?> Function() onDeleteAccount;
   final Future<void> Function(String productId) onToggleProductLike;
   final Future<void> Function(String outfitId) onToggleOutfitLike;
   final Future<void> Function(String productId) onDeleteProduct;
@@ -74,6 +86,7 @@ class ProfileScreen extends StatelessWidget {
   final Future<void> Function(String notificationId) onMarkNotificationRead;
   final Future<void> Function(NotificationPreferences preferences)
   onUpdateNotificationPreferences;
+  final Future<List<SellerReview>> Function(String sellerId) onLoadReviews;
   final VoidCallback onOpenCatalog;
 
   @override
@@ -87,20 +100,37 @@ class ProfileScreen extends StatelessWidget {
         top: false,
         child: ListView(
           physics: const BouncingScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(18, topInset + 20, 18, 136),
+          padding: EdgeInsets.fromLTRB(18, topInset + 12, 18, 136),
           children: [
             _ProfileTopBar(
+              hasUnreadNotifications: notifications.any(
+                (notification) => !notification.isRead,
+              ),
               onNotificationsTap: () => _openNotifications(context),
-              onSettingsTap: () => _openNotificationSettings(context),
+              onSettingsTap: () => _openEditProfile(context),
             ),
-            const SizedBox(height: 27),
-            _ProfileHeader(profile: profile),
             const SizedBox(height: 16),
-            _RatingCard(rating: profile.rating),
+            _ProfileOverviewCard(
+              profile: profile,
+              onEditTap: () => _openEditProfile(context),
+              onReviewsTap: () => _openReviews(context),
+            ),
             _ProfileShortcutSection(
               favoritesCount: likedProducts.length + likedOutfits.length,
               recentCount:
                   recentlyViewedProducts.length + recentlyViewedOutfits.length,
+              favoritesBackgroundImage: likedProducts.isNotEmpty
+                  ? likedProducts.first.image
+                  : likedOutfits.isNotEmpty &&
+                        likedOutfits.first.photos.isNotEmpty
+                  ? likedOutfits.first.photos.first
+                  : null,
+              recentBackgroundImage: recentlyViewedProducts.isNotEmpty
+                  ? recentlyViewedProducts.first.image
+                  : recentlyViewedOutfits.isNotEmpty &&
+                        recentlyViewedOutfits.first.photos.isNotEmpty
+                  ? recentlyViewedOutfits.first.photos.first
+                  : null,
               onFavoritesTap: () => _openLikedProducts(context),
               onRecentTap: () => _openRecentlyViewedProducts(context),
             ),
@@ -108,7 +138,9 @@ class ProfileScreen extends StatelessWidget {
               title: 'мои объявления',
               count: products.length,
               images: products.map((product) => product.image).take(3).toList(),
-              topPadding: 10,
+              emptyText: 'Пока нет объявлений',
+              emptyIcon: Icons.sell_outlined,
+              topPadding: 22,
               onOpen: () => _openProducts(context),
             ),
             _PhotoPreviewSection(
@@ -118,10 +150,12 @@ class ProfileScreen extends StatelessWidget {
                   .map((outfit) => outfit.image)
                   .take(3)
                   .toList(),
-              topPadding: 10,
+              emptyText: 'Пока нет образов',
+              emptyIcon: Icons.checkroom_outlined,
+              topPadding: 22,
               onOpen: () => _openOutfits(context),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 24),
             _ProfileMenuSection(
               rows: [
                 _MenuRowData('мои заказы', _ProfileMenuAction.orders),
@@ -156,6 +190,44 @@ class ProfileScreen extends StatelessWidget {
       title: 'мои объявления',
       emptyText: 'активных объявлений пока нет',
       products: products,
+    );
+  }
+
+  void _openEditProfile(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => EditProfileScreen(
+          profile: profile,
+          accountEmail: accountLabel ?? '',
+          isSignedIn: isSignedIn,
+          onSave: onSavePersonalProfile,
+          onConfirmEmail: onConfirmEmail,
+          onDeleteAccount: onDeleteAccount,
+        ),
+      ),
+    );
+  }
+
+  void _openReviews(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ReviewsScreen(
+          seller: SellerProfile(
+            id: currentUserId,
+            name: profile.name,
+            handle: profile.handle,
+            avatarUrl: profile.avatarUrl,
+            city: profile.city,
+            rating: profile.rating,
+            salesCount: profile.salesCount,
+            followersCount: profile.followersCount,
+          ),
+          sourceProduct: null,
+          loadReviews: onLoadReviews,
+          onCreateReview: null,
+          canCreateReview: false,
+        ),
+      ),
     );
   }
 
@@ -327,85 +399,108 @@ class ProfileScreen extends StatelessWidget {
 
 class _ProfileTopBar extends StatelessWidget {
   const _ProfileTopBar({
+    required this.hasUnreadNotifications,
     required this.onNotificationsTap,
     required this.onSettingsTap,
   });
 
+  final bool hasUnreadNotifications;
   final VoidCallback onNotificationsTap;
   final VoidCallback onSettingsTap;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            // TODO: Navigate to main screen.
-          },
-          child: Container(
-            width: 39,
-            height: 39,
-            decoration: const BoxDecoration(
-              color: Colors.black,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.ios_share_outlined,
-              size: 21,
-              color: Colors.white,
+    return SizedBox(
+      height: 44,
+      child: Row(
+        children: [
+          const Expanded(
+            child: Text(
+              'профиль',
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                height: 1,
+                letterSpacing: -0.4,
+                color: Color(0xFF070707),
+              ),
             ),
           ),
-        ),
-        const Spacer(),
-        Container(
-          width: 66,
-          height: 34,
-          decoration: BoxDecoration(
-            color: Colors.black,
-            borderRadius: BorderRadius.circular(17),
+          _ProfileActionButton(
+            icon: Icons.notifications_none_rounded,
+            hasIndicator: hasUnreadNotifications,
+            onTap: onNotificationsTap,
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: onNotificationsTap,
-                child: const SizedBox(
-                  width: 29,
-                  height: 34,
-                  child: Icon(
-                    Icons.notifications_none_outlined,
-                    size: 18,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: onSettingsTap,
-                child: const SizedBox(
-                  width: 29,
-                  height: 34,
-                  child: Icon(
-                    Icons.settings_outlined,
-                    size: 18,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ],
+          const SizedBox(width: 8),
+          _ProfileActionButton(
+            icon: Icons.settings_outlined,
+            onTap: onSettingsTap,
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
 
-class _ProfileHeader extends StatelessWidget {
-  const _ProfileHeader({required this.profile});
+class _ProfileActionButton extends StatelessWidget {
+  const _ProfileActionButton({
+    required this.icon,
+    required this.onTap,
+    this.hasIndicator = false,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool hasIndicator;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFF5F5F7),
+      borderRadius: BorderRadius.circular(13),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(13),
+        child: SizedBox(
+          width: 42,
+          height: 42,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Icon(icon, size: 20, color: const Color(0xFF111114)),
+              if (hasIndicator)
+                Positioned(
+                  top: 9,
+                  right: 9,
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF4D46),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileOverviewCard extends StatelessWidget {
+  const _ProfileOverviewCard({
+    required this.profile,
+    required this.onEditTap,
+    required this.onReviewsTap,
+  });
 
   final AppProfile profile;
+  final VoidCallback onEditTap;
+  final VoidCallback onReviewsTap;
 
   @override
   Widget build(BuildContext context) {
@@ -413,78 +508,200 @@ class _ProfileHeader extends StatelessWidget {
         ? 'Имя Фамилия'
         : profile.name.trim();
     final handle = _normalizedHandle(profile.handle);
+    final city = profile.city.trim();
+    final rating = profile.rating.toStringAsFixed(1).replaceAll('.', ',');
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Container(
-          width: 74,
-          height: 74,
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            color: Color(0xFFF1F1F1),
-          ),
-          child: const Icon(
-            Icons.person_outline,
-            size: 36,
-            color: Colors.black,
-          ),
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0D0D0F), Color(0xFF26262A)],
         ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x30000000),
+            blurRadius: 26,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Text(
-                displayName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 27,
-                  fontWeight: FontWeight.w700,
-                  height: 1.05,
-                  letterSpacing: 0,
-                  color: Colors.black,
-                ),
+              _ProfileAvatar(
+                avatarUrl: profile.avatarUrl,
+                displayName: displayName,
               ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      handle,
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontFamily: 'Montserrat',
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w500,
-                        height: 1,
-                        letterSpacing: 0,
-                        color: Color(0xFF8E8E8E),
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        height: 1.15,
+                        letterSpacing: -0.2,
+                        color: Colors.white,
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    _formatFollowers(profile.followersCount),
-                    maxLines: 1,
-                    style: const TextStyle(
-                      fontFamily: 'Montserrat',
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      height: 1,
-                      letterSpacing: 0,
-                      color: Colors.black,
+                    const SizedBox(height: 7),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0x17FFFFFF),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              handle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                height: 1,
+                                letterSpacing: 0,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
+                    if (city.isNotEmpty) ...[
+                      const SizedBox(height: 7),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.location_on_outlined,
+                            size: 13,
+                            color: Color(0xFF9C9CA4),
+                          ),
+                          const SizedBox(width: 3),
+                          Expanded(
+                            child: Text(
+                              city,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontFamily: 'Montserrat',
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                                height: 1,
+                                letterSpacing: 0,
+                                color: Color(0xFF9C9CA4),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _ProfileEditButton(onTap: onEditTap),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _ProfileStatTile(value: rating, label: 'рейтинг'),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _ProfileStatTile(
+                  value: '${profile.salesCount}',
+                  label: 'продажи',
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _ProfileStatTile(
+                  value: '${profile.followersCount}',
+                  label: 'подписчики',
+                ),
               ),
             ],
           ),
-        ),
-      ],
+          const SizedBox(height: 10),
+          Material(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            child: InkWell(
+              onTap: onReviewsTap,
+              borderRadius: BorderRadius.circular(16),
+              child: SizedBox(
+                height: 46,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.star_rounded,
+                        size: 19,
+                        color: _profileInk,
+                      ),
+                      const SizedBox(width: 7),
+                      Text(
+                        '$rating  ·  Отзывы',
+                        style: TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          height: 1,
+                          letterSpacing: 0,
+                          color: _profileInk,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          _profileReviewCountLabel(profile.salesCount),
+                          textAlign: TextAlign.right,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            height: 1,
+                            letterSpacing: 0,
+                            color: Color(0x99111113),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        size: 20,
+                        color: _profileInk,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -493,63 +710,103 @@ class _ProfileHeader extends StatelessWidget {
     if (trimmed.isEmpty) return '@user';
     return trimmed.startsWith('@') ? trimmed : '@$trimmed';
   }
-
-  static String _formatFollowers(int count) {
-    if (count == 1) return '1 подписчик';
-    if (count > 1 && count < 5) return '$count подписчика';
-    return '$count подписчиков';
-  }
 }
 
-class _RatingCard extends StatelessWidget {
-  const _RatingCard({required this.rating});
+class _ProfileAvatar extends StatelessWidget {
+  const _ProfileAvatar({required this.avatarUrl, required this.displayName});
 
-  final double rating;
+  final String avatarUrl;
+  final String displayName;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: double.infinity,
-      height: 66,
-      margin: const EdgeInsets.only(top: 16),
-      padding: const EdgeInsets.symmetric(horizontal: 21),
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(18),
+      width: 78,
+      height: 78,
+      padding: const EdgeInsets.all(2.5),
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Colors.white, Color(0xFF55555C)],
+        ),
       ),
-      child: Row(
+      child: Container(
+        padding: const EdgeInsets.all(2.5),
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          color: Color(0xFF0D0D0F),
+        ),
+        child: ClipOval(
+          child: ColoredBox(
+            color: const Color(0xFFEEEEF0),
+            child: avatarUrl.trim().isEmpty
+                ? Center(
+                    child: Text(
+                      displayName.characters.first.toUpperCase(),
+                      style: const TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
+                        color: _profileInk,
+                      ),
+                    ),
+                  )
+                : AppImage(
+                    imageUrl: avatarUrl,
+                    width: 68,
+                    height: 68,
+                    fit: BoxFit.cover,
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileStatTile extends StatelessWidget {
+  const _ProfileStatTile({required this.value, required this.label});
+
+  final String value;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 11),
+      decoration: BoxDecoration(
+        color: const Color(0x14FFFFFF),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
         children: [
           Text(
-            rating.toStringAsFixed(1).replaceAll('.', ','),
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontFamily: 'Montserrat',
-              fontSize: 25,
-              fontWeight: FontWeight.w700,
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
               height: 1,
               letterSpacing: 0,
               color: Colors.white,
             ),
           ),
-          const SizedBox(width: 14),
-          const Row(
-            children: [
-              _RatingStar(),
-              _RatingStar(),
-              _RatingStar(),
-              _RatingStar(),
-              _RatingStar(),
-            ],
-          ),
-          const Spacer(),
-          const Text(
-            '102 отзыва',
-            style: TextStyle(
+          const SizedBox(height: 5),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
               fontFamily: 'Montserrat',
-              fontSize: 11.5,
-              fontWeight: FontWeight.w500,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
               height: 1,
-              letterSpacing: 0,
-              color: Colors.white,
+              letterSpacing: 0.2,
+              color: Color(0xFF9C9CA4),
             ),
           ),
         ],
@@ -558,53 +815,82 @@ class _RatingCard extends StatelessWidget {
   }
 }
 
-class _RatingStar extends StatelessWidget {
-  const _RatingStar();
+class _ProfileEditButton extends StatelessWidget {
+  const _ProfileEditButton({required this.onTap});
+
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.only(right: 2.5),
-      child: Icon(Icons.star, size: 17, color: Color(0xFFFFB800)),
+    return Semantics(
+      button: true,
+      label: 'Редактировать профиль',
+      child: Material(
+        color: const Color(0x1FFFFFFF),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: const SizedBox(
+            width: 42,
+            height: 42,
+            child: Icon(Icons.edit_outlined, size: 19, color: Colors.white),
+          ),
+        ),
+      ),
     );
   }
+}
+
+String _profileReviewCountLabel(int count) {
+  final mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) return '$count отзывов покупателей';
+  return switch (count % 10) {
+    1 => '$count отзыв покупателя',
+    2 || 3 || 4 => '$count отзыва покупателей',
+    _ => '$count отзывов покупателей',
+  };
 }
 
 class _ProfileShortcutSection extends StatelessWidget {
   const _ProfileShortcutSection({
     required this.favoritesCount,
     required this.recentCount,
+    required this.favoritesBackgroundImage,
+    required this.recentBackgroundImage,
     required this.onFavoritesTap,
     required this.onRecentTap,
   });
 
   final int favoritesCount;
   final int recentCount;
+  final String? favoritesBackgroundImage;
+  final String? recentBackgroundImage;
   final VoidCallback onFavoritesTap;
   final VoidCallback onRecentTap;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 18),
+      padding: const EdgeInsets.only(top: 12),
       child: Row(
         children: [
           Expanded(
             child: _ProfileShortcutTile(
-              icon: Icons.favorite_border,
+              icon: Icons.favorite_border_rounded,
               title: 'избранное',
               count: favoritesCount,
-              isDark: false,
+              backgroundImage: favoritesBackgroundImage,
               onTap: onFavoritesTap,
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: _ProfileShortcutTile(
-              icon: Icons.history,
-              title: 'недавно просмотренное',
+              icon: Icons.history_rounded,
+              title: 'недавно смотрели',
               count: recentCount,
-              isDark: false,
+              backgroundImage: recentBackgroundImage,
               onTap: onRecentTap,
             ),
           ),
@@ -619,94 +905,191 @@ class _ProfileShortcutTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.count,
-    required this.isDark,
+    required this.backgroundImage,
     required this.onTap,
   });
 
   final IconData icon;
   final String title;
   final int count;
-  final bool isDark;
+  final String? backgroundImage;
   final VoidCallback onTap;
+
+  bool get _hasBackgroundImage =>
+      backgroundImage != null && backgroundImage!.trim().isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
-    final backgroundColor = isDark ? Colors.black : const Color(0xFFDCDCE0);
-    final foregroundColor = isDark ? Colors.white : Colors.black;
-    final iconBackground = isDark
-        ? Colors.white.withValues(alpha: 0.14)
-        : Colors.white;
+    const radius = 21.0;
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        height: 104,
-        padding: const EdgeInsets.all(13),
-        decoration: BoxDecoration(
-          color: backgroundColor,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: isDark ? Colors.black : const Color(0xFFEDEDEF),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(radius),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(radius),
+        child: Ink(
+          height: 86,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFFFFFFFF), Color(0xFFF5F5F6)],
+            ),
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(color: const Color(0xFFECECEF), width: 1),
           ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: iconBackground,
-                    shape: BoxShape.circle,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (_hasBackgroundImage)
+                Positioned(
+                  left: 34,
+                  right: -14,
+                  top: -18,
+                  bottom: -24,
+                  child: Opacity(
+                    opacity: 0.11,
+                    child: ColorFiltered(
+                      colorFilter: const ColorFilter.matrix([
+                        0.2126,
+                        0.7152,
+                        0.0722,
+                        0,
+                        0,
+                        0.2126,
+                        0.7152,
+                        0.0722,
+                        0,
+                        0,
+                        0.2126,
+                        0.7152,
+                        0.0722,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        1,
+                        0,
+                      ]),
+                      child: AppImage(
+                        imageUrl: backgroundImage!,
+                        width: double.infinity,
+                        height: double.infinity,
+                        fit: BoxFit.cover,
+                        alignment: Alignment.center,
+                        placeholderColor: Colors.transparent,
+                      ),
+                    ),
                   ),
-                  child: Icon(icon, size: 19, color: foregroundColor),
+                )
+              else
+                Positioned(
+                  right: -14,
+                  bottom: -23,
+                  child: Opacity(
+                    opacity: 0.045,
+                    child: Icon(icon, size: 104, color: _profileInk),
+                  ),
                 ),
-                const Spacer(),
-                Container(
-                  constraints: const BoxConstraints(minWidth: 28),
-                  height: 24,
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                      colors: [
+                        Colors.white.withValues(alpha: 0.96),
+                        Colors.white.withValues(alpha: 0.78),
+                        Colors.white.withValues(alpha: 0.22),
+                      ],
+                      stops: const [0, 0.52, 1],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 11,
+                top: 11,
+                child: Container(
+                  width: 31,
+                  height: 31,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.92),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFE8E8EB)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.045),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Icon(icon, size: 18, color: _profileInk),
+                ),
+              ),
+              Positioned(
+                right: 11,
+                top: 11,
+                child: Container(
+                  height: 25,
+                  constraints: const BoxConstraints(minWidth: 27),
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: isDark
-                        ? Colors.white.withValues(alpha: 0.14)
-                        : Colors.white,
+                    color: _profileInk,
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
                     count.toString(),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontFamily: 'Montserrat',
-                      fontSize: 12,
+                      fontSize: 11,
                       fontWeight: FontWeight.w700,
                       height: 1,
-                      letterSpacing: 0,
-                      color: foregroundColor,
+                      color: Colors.white,
                     ),
                   ),
                 ),
-              ],
-            ),
-            Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontFamily: 'Montserrat',
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                height: 1.08,
-                letterSpacing: 0,
-                color: foregroundColor,
               ),
-            ),
-          ],
+              Positioned(
+                left: 12,
+                right: 10,
+                bottom: 11,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          height: 1,
+                          letterSpacing: -0.1,
+                          color: _profileInk,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 19,
+                      color: _profileInk,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -718,6 +1101,8 @@ class _PhotoPreviewSection extends StatelessWidget {
     required this.title,
     required this.count,
     required this.images,
+    required this.emptyText,
+    required this.emptyIcon,
     required this.onOpen,
     this.topPadding = 18,
   });
@@ -725,6 +1110,8 @@ class _PhotoPreviewSection extends StatelessWidget {
   final String title;
   final int count;
   final List<String> images;
+  final String emptyText;
+  final IconData emptyIcon;
   final VoidCallback onOpen;
   final double topPadding;
 
@@ -737,52 +1124,134 @@ class _PhotoPreviewSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
+          InkWell(
             onTap: onOpen,
+            borderRadius: BorderRadius.circular(10),
             child: SizedBox(
-              height: 30,
+              height: 32,
               child: Row(
                 children: [
                   Text(
-                    count == 0 ? title : '$title • $count',
+                    title,
                     style: const TextStyle(
                       fontFamily: 'Montserrat',
-                      fontSize: 12.5,
+                      fontSize: 15,
                       fontWeight: FontWeight.w700,
-                      height: 1,
+                      height: 1.1,
                       letterSpacing: 0,
-                      color: Colors.black,
+                      color: _profileInk,
                     ),
                   ),
                   const Spacer(),
+                  Container(
+                    height: 22,
+                    constraints: const BoxConstraints(minWidth: 26),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF2F2F4),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      count.toString(),
+                      style: const TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        height: 1,
+                        letterSpacing: 0,
+                        color: _profileInk,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 3),
                   const Icon(
                     Icons.chevron_right,
-                    size: 21,
-                    color: Colors.black,
+                    size: 20,
+                    color: Color(0xFF85858C),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          SizedBox(
-            height: 124,
-            child: Row(
-              children: List.generate(3, (index) {
-                final image = index < visibleImages.length
-                    ? visibleImages[index]
-                    : '';
-                return Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.only(right: index == 2 ? 0 : 10),
-                    child: _PreviewPhoto(image: image),
-                  ),
-                );
-              }),
+          const SizedBox(height: 9),
+          if (visibleImages.isEmpty)
+            _EmptyPhotoPreview(icon: emptyIcon, text: emptyText, onTap: onOpen)
+          else
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onOpen,
+              child: SizedBox(
+                height: 104,
+                child: Row(
+                  children: List.generate(3, (index) {
+                    final image = index < visibleImages.length
+                        ? visibleImages[index]
+                        : '';
+                    return Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(right: index == 2 ? 0 : 8),
+                        child: _PreviewPhoto(image: image),
+                      ),
+                    );
+                  }),
+                ),
+              ),
             ),
-          ),
         ],
+      ),
+    );
+  }
+}
+
+class _EmptyPhotoPreview extends StatelessWidget {
+  const _EmptyPhotoPreview({
+    required this.icon,
+    required this.text,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String text;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFF7F7F8),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: SizedBox(
+          height: 82,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, size: 17, color: const Color(0xFF77777F)),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                text,
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                  letterSpacing: 0,
+                  color: Color(0xFF77777F),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -796,16 +1265,22 @@ class _PreviewPhoto extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(16),
       child: ColoredBox(
         color: _outfitMediaBackground,
         child: image.trim().isEmpty
-            ? const SizedBox.expand()
+            ? const Center(
+                child: Icon(
+                  Icons.image_outlined,
+                  size: 24,
+                  color: Color(0xFFC7C7CC),
+                ),
+              )
             : AppImage(
                 imageUrl: image,
                 width: double.infinity,
                 height: double.infinity,
-                fit: BoxFit.fill,
+                fit: BoxFit.cover,
                 placeholderColor: _outfitMediaBackground,
               ),
       ),

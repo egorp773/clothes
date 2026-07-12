@@ -1,0 +1,1 @@
+"""Masked color analysis."""

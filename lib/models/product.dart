@@ -1,3 +1,9 @@
+import '../features/listing_publish/data/listing_catalogs.dart';
+
+/// Backward-compatible catalog model.
+///
+/// Legacy presentation fields stay intact while the optional listing fields
+/// allow newly published products to retain the richer draft metadata.
 class Product {
   final String id;
   final String title;
@@ -23,6 +29,28 @@ class Product {
   final List<String> images;
   final List<String> outfitImages;
 
+  final String status;
+  final String section;
+  final String categoryId;
+  final String subcategory;
+  final String itemType;
+  final String gender;
+  final String primaryColor;
+  final List<String> secondaryColors;
+  final String material;
+  final String pattern;
+  final String season;
+  final String style;
+  final String fit;
+  final String sleeveLength;
+  final String closure;
+  final String city;
+  final String shippingAddressId;
+  final List<String> deliveryMethods;
+  final String mainImage;
+  final DateTime? publishedAt;
+  final String analysisStatus;
+
   Product({
     required this.id,
     required this.title,
@@ -47,6 +75,27 @@ class Product {
     this.isLocal = false,
     this.images = const [],
     this.outfitImages = const [],
+    this.status = 'published',
+    this.section = '',
+    this.categoryId = '',
+    this.subcategory = '',
+    this.itemType = '',
+    this.gender = '',
+    this.primaryColor = '',
+    this.secondaryColors = const [],
+    this.material = '',
+    this.pattern = '',
+    this.season = '',
+    this.style = '',
+    this.fit = '',
+    this.sleeveLength = '',
+    this.closure = '',
+    this.city = '',
+    this.shippingAddressId = '',
+    this.deliveryMethods = const [],
+    this.mainImage = '',
+    this.publishedAt,
+    this.analysisStatus = 'pending',
   });
 
   String get outfitImage => outfitImages.isNotEmpty ? outfitImages.first : '';
@@ -61,25 +110,45 @@ class Product {
       detailTitle: json['detailTitle'] as String? ?? json['title'] as String,
       description: json['description'] as String? ?? '',
       price: _normalizePrice(json['price'] as String?, priceValue),
-      detailPrice: json['detailPrice'] as String,
+      detailPrice: json['detailPrice'] as String? ?? priceValue.toString(),
       priceValue: priceValue,
-      image: json['image'] as String,
-      category: json['category'] as String,
-      brand: json['brand'] as String,
-      size: json['size'] as String,
-      color: json['color'] as String,
-      condition: json['condition'] as String,
+      image: json['image'] as String? ?? '',
+      category: json['category'] as String? ?? '',
+      brand: json['brand'] as String? ?? '',
+      size: json['size'] as String? ?? '',
+      color: json['color'] as String? ?? '',
+      condition: json['condition'] as String? ?? '',
       location: json['location'] as String? ?? '',
       ownerId: json['ownerId'] as String? ?? '',
       sellerName: json['sellerName'] as String? ?? 'Продавец',
       sellerHandle: json['sellerHandle'] as String? ?? '@seller',
-      dotsOnDark: json['dotsOnDark'] as bool,
+      dotsOnDark: json['dotsOnDark'] as bool? ?? false,
       isLiked: json['isLiked'] as bool? ?? false,
       isHidden: json['isHidden'] as bool? ?? false,
       isLocal: json['isLocal'] as bool? ?? false,
-      images: (json['images'] as List<dynamic>?)?.cast<String>() ?? const [],
-      outfitImages:
-          (json['outfitImages'] as List<dynamic>?)?.cast<String>() ?? const [],
+      images: _strings(json['images']),
+      outfitImages: _strings(json['outfitImages']),
+      status: json['status'] as String? ?? 'published',
+      section: json['section'] as String? ?? '',
+      categoryId: json['categoryId'] as String? ?? '',
+      subcategory: json['subcategory'] as String? ?? '',
+      itemType: json['itemType'] as String? ?? '',
+      gender: json['gender'] as String? ?? '',
+      primaryColor: json['primaryColor'] as String? ?? '',
+      secondaryColors: _strings(json['secondaryColors']),
+      material: json['material'] as String? ?? '',
+      pattern: json['pattern'] as String? ?? '',
+      season: json['season'] as String? ?? '',
+      style: json['style'] as String? ?? '',
+      fit: json['fit'] as String? ?? '',
+      sleeveLength: json['sleeveLength'] as String? ?? '',
+      closure: json['closure'] as String? ?? '',
+      city: json['city'] as String? ?? json['location'] as String? ?? '',
+      shippingAddressId: json['shippingAddressId'] as String? ?? '',
+      deliveryMethods: _strings(json['deliveryMethods']),
+      mainImage: json['mainImage'] as String? ?? json['image'] as String? ?? '',
+      publishedAt: DateTime.tryParse(json['publishedAt'] as String? ?? ''),
+      analysisStatus: json['analysisStatus'] as String? ?? 'pending',
     );
   }
 
@@ -88,15 +157,25 @@ class Product {
         (json['price'] as num?)?.toInt() ??
         (json['price_value'] as num?)?.toInt() ??
         0;
-    final images =
-        (json['images'] as List<dynamic>?)?.cast<String>() ?? const <String>[];
-    final outfitImages = [
-      ...(json['outfit_images'] as List<dynamic>?)?.cast<String>() ??
-          const <String>[],
+    final images = _strings(json['images']);
+    final outfitImages = <String>[
+      ..._strings(json['outfit_images']),
       if ((json['cutout_image'] as String?)?.isNotEmpty ?? false)
         json['cutout_image'] as String,
     ];
     final title = json['title'] as String? ?? '';
+    final categoryId = json['category'] as String? ?? '';
+    final brandId = json['brand'] as String? ?? '';
+    final sizeId = json['size'] as String? ?? '';
+    final conditionId = json['condition'] as String? ?? '';
+    final primaryColor =
+        json['primary_color'] as String? ?? json['color'] as String? ?? '';
+    final image =
+        json['main_image'] as String? ??
+        json['image'] as String? ??
+        json['original_image'] as String? ??
+        (images.isNotEmpty ? images.first : '');
+    final city = json['city'] as String? ?? json['location'] as String? ?? '';
     return Product(
       id: json['id'] as String,
       title: title,
@@ -107,16 +186,13 @@ class Product {
           : _priceWithCurrency(priceValue),
       detailPrice: json['detail_price'] as String? ?? priceValue.toString(),
       priceValue: priceValue,
-      image:
-          json['image'] as String? ??
-          json['original_image'] as String? ??
-          (images.isNotEmpty ? images.first : ''),
-      category: json['category'] as String? ?? 'Другое',
-      brand: json['brand'] as String? ?? '',
-      size: json['size'] as String? ?? 'One Size',
-      color: json['color'] as String? ?? '',
-      condition: json['condition'] as String? ?? 'Хорошее',
-      location: json['location'] as String? ?? json['city'] as String? ?? '',
+      image: image,
+      category: _displayName(categoryId),
+      brand: _displayName(brandId),
+      size: _displayName(sizeId),
+      color: _displayName(primaryColor),
+      condition: _displayName(conditionId),
+      location: city,
       ownerId:
           json['seller_id'] as String? ?? json['owner_id'] as String? ?? '',
       sellerName: json['seller_name'] as String? ?? 'Продавец',
@@ -127,77 +203,82 @@ class Product {
       isLocal: false,
       images: images,
       outfitImages: outfitImages,
+      status: json['status'] as String? ?? 'published',
+      section: json['section'] as String? ?? '',
+      categoryId: categoryId,
+      subcategory: json['subcategory'] as String? ?? '',
+      itemType: json['item_type'] as String? ?? '',
+      gender: json['gender'] as String? ?? '',
+      primaryColor: primaryColor,
+      secondaryColors: _strings(json['secondary_colors']),
+      material: json['material'] as String? ?? '',
+      pattern: json['pattern'] as String? ?? '',
+      season: json['season'] as String? ?? '',
+      style: json['style'] as String? ?? '',
+      fit: json['fit'] as String? ?? '',
+      sleeveLength: json['sleeve_length'] as String? ?? '',
+      closure: json['closure'] as String? ?? '',
+      city: city,
+      shippingAddressId: json['shipping_address_id'] as String? ?? '',
+      deliveryMethods: _strings(json['delivery_methods']),
+      mainImage: image,
+      publishedAt: DateTime.tryParse(json['published_at'] as String? ?? ''),
+      analysisStatus: json['analysis_status'] as String? ?? 'pending',
     );
   }
 
-  static String _formatPrice(int value) {
-    final raw = value.toString();
-    final buffer = StringBuffer();
-    for (var i = 0; i < raw.length; i++) {
-      final remaining = raw.length - i;
-      buffer.write(raw[i]);
-      if (remaining > 1 && remaining % 3 == 1) {
-        buffer.write(' ');
-      }
-    }
-    return buffer.toString();
-  }
-
-  static const String _ruble = '\u20BD';
-
-  static String _priceWithCurrency(int value) {
-    return '${_formatPrice(value)} $_ruble';
-  }
-
-  static String _normalizePrice(String? price, int priceValue) {
-    final trimmed = price?.trim() ?? '';
-    if (trimmed.isEmpty) return _priceWithCurrency(priceValue);
-
-    final hasBrokenCurrency =
-        trimmed.contains('?') ||
-        trimmed.contains('₽') ||
-        trimmed.contains('\uFFFD');
-    if (trimmed.contains(_ruble) && !hasBrokenCurrency) return trimmed;
-
-    final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
-    if (digits.isEmpty) return trimmed;
-
-    return '${_formatPrice(int.tryParse(digits) ?? priceValue)} $_ruble';
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'title': title,
-      'detailTitle': detailTitle,
-      'description': description,
-      'price': price,
-      'detailPrice': detailPrice,
-      'priceValue': priceValue,
-      'image': image,
-      'category': category,
-      'brand': brand,
-      'size': size,
-      'color': color,
-      'condition': condition,
-      'location': location,
-      'ownerId': ownerId,
-      'sellerName': sellerName,
-      'sellerHandle': sellerHandle,
-      'dotsOnDark': dotsOnDark,
-      'isLiked': isLiked,
-      'isHidden': isHidden,
-      'isLocal': isLocal,
-      'images': images,
-      'outfitImages': outfitImages,
-    };
-  }
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'detailTitle': detailTitle,
+    'description': description,
+    'price': price,
+    'detailPrice': detailPrice,
+    'priceValue': priceValue,
+    'image': image,
+    'category': category,
+    'brand': brand,
+    'size': size,
+    'color': color,
+    'condition': condition,
+    'location': location,
+    'ownerId': ownerId,
+    'sellerName': sellerName,
+    'sellerHandle': sellerHandle,
+    'dotsOnDark': dotsOnDark,
+    'isLiked': isLiked,
+    'isHidden': isHidden,
+    'isLocal': isLocal,
+    'images': images,
+    'outfitImages': outfitImages,
+    'status': status,
+    'section': section,
+    'categoryId': categoryId,
+    'subcategory': subcategory,
+    'itemType': itemType,
+    'gender': gender,
+    'primaryColor': primaryColor,
+    'secondaryColors': secondaryColors,
+    'material': material,
+    'pattern': pattern,
+    'season': season,
+    'style': style,
+    'fit': fit,
+    'sleeveLength': sleeveLength,
+    'closure': closure,
+    'city': city,
+    'shippingAddressId': shippingAddressId,
+    'deliveryMethods': deliveryMethods,
+    'mainImage': mainImage,
+    'publishedAt': publishedAt?.toIso8601String(),
+    'analysisStatus': analysisStatus,
+  };
 
   Map<String, dynamic> toSupabaseJson({
     required String sellerId,
     bool includeOutfitImages = true,
   }) {
-    final data = {
+    final data = <String, dynamic>{
       'id': id,
       'seller_id': sellerId,
       'seller_name': sellerName,
@@ -206,19 +287,39 @@ class Product {
       'description': description,
       'price': priceValue,
       'images': images.isNotEmpty ? images : [image],
-      'category': category,
+      'category': categoryId.isEmpty ? category : categoryId,
       'brand': brand,
       'size': size,
-      'color': color,
+      'color': primaryColor.isEmpty ? color : primaryColor,
       'condition': condition,
       'location': location,
       'is_hidden': isHidden,
       'original_image': image,
       'background_status': outfitImages.isEmpty ? 'queued' : 'completed',
+      'status': status,
+      'section': section,
+      'subcategory': subcategory,
+      'item_type': itemType,
+      'gender': gender,
+      'primary_color': primaryColor,
+      'secondary_colors': secondaryColors,
+      'material': material,
+      'pattern': pattern,
+      'season': season,
+      'style': style,
+      'fit': fit,
+      'sleeve_length': sleeveLength,
+      'closure': closure,
+      'city': city.isEmpty ? location : city,
+      'shipping_address_id': shippingAddressId.isEmpty
+          ? null
+          : shippingAddressId,
+      'delivery_methods': deliveryMethods,
+      'main_image': mainImage.isEmpty ? image : mainImage,
+      'published_at': publishedAt?.toIso8601String(),
+      'analysis_status': analysisStatus,
     };
-    if (includeOutfitImages) {
-      data['outfit_images'] = outfitImages;
-    }
+    if (includeOutfitImages) data['outfit_images'] = outfitImages;
     return data;
   }
 
@@ -246,31 +347,106 @@ class Product {
     bool? isLocal,
     List<String>? images,
     List<String>? outfitImages,
-  }) {
-    return Product(
-      id: id ?? this.id,
-      title: title ?? this.title,
-      detailTitle: detailTitle ?? this.detailTitle,
-      description: description ?? this.description,
-      price: price ?? this.price,
-      detailPrice: detailPrice ?? this.detailPrice,
-      priceValue: priceValue ?? this.priceValue,
-      image: image ?? this.image,
-      category: category ?? this.category,
-      brand: brand ?? this.brand,
-      size: size ?? this.size,
-      color: color ?? this.color,
-      condition: condition ?? this.condition,
-      location: location ?? this.location,
-      ownerId: ownerId ?? this.ownerId,
-      sellerName: sellerName ?? this.sellerName,
-      sellerHandle: sellerHandle ?? this.sellerHandle,
-      dotsOnDark: dotsOnDark ?? this.dotsOnDark,
-      isLiked: isLiked ?? this.isLiked,
-      isHidden: isHidden ?? this.isHidden,
-      isLocal: isLocal ?? this.isLocal,
-      images: images ?? this.images,
-      outfitImages: outfitImages ?? this.outfitImages,
-    );
+    String? status,
+    String? section,
+    String? categoryId,
+    String? subcategory,
+    String? itemType,
+    String? gender,
+    String? primaryColor,
+    List<String>? secondaryColors,
+    String? material,
+    String? pattern,
+    String? season,
+    String? style,
+    String? fit,
+    String? sleeveLength,
+    String? closure,
+    String? city,
+    String? shippingAddressId,
+    List<String>? deliveryMethods,
+    String? mainImage,
+    DateTime? publishedAt,
+    String? analysisStatus,
+  }) => Product(
+    id: id ?? this.id,
+    title: title ?? this.title,
+    detailTitle: detailTitle ?? this.detailTitle,
+    description: description ?? this.description,
+    price: price ?? this.price,
+    detailPrice: detailPrice ?? this.detailPrice,
+    priceValue: priceValue ?? this.priceValue,
+    image: image ?? this.image,
+    category: category ?? this.category,
+    brand: brand ?? this.brand,
+    size: size ?? this.size,
+    color: color ?? this.color,
+    condition: condition ?? this.condition,
+    location: location ?? this.location,
+    ownerId: ownerId ?? this.ownerId,
+    sellerName: sellerName ?? this.sellerName,
+    sellerHandle: sellerHandle ?? this.sellerHandle,
+    dotsOnDark: dotsOnDark ?? this.dotsOnDark,
+    isLiked: isLiked ?? this.isLiked,
+    isHidden: isHidden ?? this.isHidden,
+    isLocal: isLocal ?? this.isLocal,
+    images: images ?? this.images,
+    outfitImages: outfitImages ?? this.outfitImages,
+    status: status ?? this.status,
+    section: section ?? this.section,
+    categoryId: categoryId ?? this.categoryId,
+    subcategory: subcategory ?? this.subcategory,
+    itemType: itemType ?? this.itemType,
+    gender: gender ?? this.gender,
+    primaryColor: primaryColor ?? this.primaryColor,
+    secondaryColors: secondaryColors ?? this.secondaryColors,
+    material: material ?? this.material,
+    pattern: pattern ?? this.pattern,
+    season: season ?? this.season,
+    style: style ?? this.style,
+    fit: fit ?? this.fit,
+    sleeveLength: sleeveLength ?? this.sleeveLength,
+    closure: closure ?? this.closure,
+    city: city ?? this.city,
+    shippingAddressId: shippingAddressId ?? this.shippingAddressId,
+    deliveryMethods: deliveryMethods ?? this.deliveryMethods,
+    mainImage: mainImage ?? this.mainImage,
+    publishedAt: publishedAt ?? this.publishedAt,
+    analysisStatus: analysisStatus ?? this.analysisStatus,
+  );
+
+  static List<String> _strings(Object? value) =>
+      (value as List<dynamic>? ?? const []).whereType<String>().toList();
+
+  static String _displayName(String id) =>
+      ListingCatalogs.nameOf(id, fallback: id);
+
+  static String _formatPrice(int value) {
+    final raw = value.toString();
+    final buffer = StringBuffer();
+    for (var index = 0; index < raw.length; index++) {
+      final remaining = raw.length - index;
+      buffer.write(raw[index]);
+      if (remaining > 1 && remaining % 3 == 1) buffer.write(' ');
+    }
+    return buffer.toString();
+  }
+
+  static const _ruble = '\u20BD';
+
+  static String _priceWithCurrency(int value) =>
+      '${_formatPrice(value)} $_ruble';
+
+  static String _normalizePrice(String? price, int priceValue) {
+    final trimmed = price?.trim() ?? '';
+    if (trimmed.isEmpty) return _priceWithCurrency(priceValue);
+    final hasBrokenCurrency =
+        trimmed.contains('?') ||
+        trimmed.contains('в‚Ѕ') ||
+        trimmed.contains('\uFFFD');
+    if (trimmed.contains(_ruble) && !hasBrokenCurrency) return trimmed;
+    final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) return trimmed;
+    return '${_formatPrice(int.tryParse(digits) ?? priceValue)} $_ruble';
   }
 }

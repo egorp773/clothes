@@ -1,0 +1,25 @@
+{
+    email admin@109.172.37.219.sslip.io
+}
+
+109.172.37.219.sslip.io {
+    encode zstd gzip
+
+    request_body {
+        max_size 16MB
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        -Server
+    }
+
+    reverse_proxy analyzer:8090 {
+        transport http {
+            read_timeout 90s
+            write_timeout 90s
+        }
+    }
+}

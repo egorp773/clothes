@@ -8,11 +8,14 @@ import 'package:flutter/services.dart';
 import 'core/app_typography.dart';
 import 'core/supabase_config.dart';
 import 'data/app_repository.dart';
+import 'features/chat/chat_actions.dart';
+import 'features/chat/product_share_sheet.dart';
+import 'features/listing_publish/screens/listing_publish_flow_screen.dart';
 import 'models/app_profile.dart';
 import 'models/created_outfit.dart';
+import 'models/message_thread.dart';
 import 'models/product.dart';
 import 'screens/catalog_screen.dart';
-import 'screens/create_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/messages_screen.dart';
 import 'screens/outfit_create_screen.dart';
@@ -147,6 +150,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   final List<Product> _draftOutfitProducts = [];
   final AppRepository _repository = AppRepository();
 
+  ChatActions get _chatActions => ChatActions(
+    sendReply: _repository.sendReply,
+    sendImage: _repository.sendChatImage,
+    editMessage: _repository.editMessage,
+    deleteMessage: _repository.deleteMessage,
+    updateThread: _repository.updateThreadPreferences,
+    saveDraft: _repository.saveThreadDraft,
+    markRead: _repository.markThreadRead,
+  );
+
   @override
   void initState() {
     super.initState();
@@ -244,6 +257,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           threadsListenable: _repository,
           resolveThread: _repository.threadById,
           lastSeenForUser: _repository.lastSeenForUser,
+          actions: _chatActions,
+          onOpenSellerProfile: () => _openSellerFromChat(thread),
+          onBuyProduct: () => _buyFromChat(thread),
         ),
       ),
     );
@@ -275,10 +291,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         builder: (context) => ChatScreen(
           thread: thread,
           onSendMessage: _repository.sendMessage,
+          onOpenProduct: _openProductFromChat,
           currentUserId: _repository.currentUserId,
           threadsListenable: _repository,
           resolveThread: _repository.threadById,
           lastSeenForUser: _repository.lastSeenForUser,
+          actions: _chatActions,
+          onOpenSellerProfile: () => _openSellerFromChat(thread),
+          onBuyProduct: () => _buyFromChat(thread),
         ),
       ),
     );
@@ -331,6 +351,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             loadReviews: _repository.fetchSellerReviews,
             onToggleRelatedLike: _repository.toggleProductLike,
             onContactSeller: () => _contactSellerFromProduct(product),
+            onShare: () => _shareProduct(product),
             relatedProducts: _relatedProductsFor(product),
             onRelatedProductTap: _openProductDetails,
             deliveryProfile: _repository.deliveryProfile,
@@ -355,6 +376,74 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       const SnackBar(
         content: Text('Товар не найден'),
         behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  Product? _productForThread(MessageThread thread) {
+    for (final product in _repository.products) {
+      if (thread.productId.isNotEmpty && product.id == thread.productId) {
+        return product;
+      }
+    }
+    final sellerId = thread.otherPartyId(_repository.currentUserId);
+    for (final product in _repository.products) {
+      if (sellerId.isNotEmpty && product.ownerId == sellerId) return product;
+    }
+    return null;
+  }
+
+  void _openSellerFromChat(MessageThread thread) {
+    final product = _productForThread(thread);
+    if (product != null) {
+      _openSellerProfile(product);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Профиль продавца не найден'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _buyFromChat(MessageThread thread) {
+    final product = _productForThread(thread);
+    if (product == null || product.isHidden) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Товар больше недоступен'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => DeliveryCheckoutScreen(
+          product: ProductDetailData(
+            id: product.id,
+            title: product.title,
+            description: product.description,
+            price: product.price,
+            priceValue: product.priceValue,
+            image: product.image,
+            images: product.images,
+            category: product.category,
+            brand: product.brand,
+            color: product.color,
+            sellerName: product.sellerName,
+            sellerHandle: product.sellerHandle,
+            size: product.size,
+            condition: product.condition,
+            location: product.location,
+            isLiked: product.isLiked,
+            canPurchase: true,
+          ),
+          deliveryProfile: _repository.deliveryProfile,
+          onSaveProfile: _repository.updateDeliveryProfile,
+          onSubmitOrder: () => _repository.createDeliveryOrder(product),
+        ),
       ),
     );
   }
@@ -412,7 +501,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           loadProducts: _repository.fetchSellerProducts,
           onProductTap: _openProductDetails,
           onToggleLike: _repository.toggleProductLike,
-          onShare: _showProductShareStub,
+          onShare: _shareProduct,
           loadReviews: _repository.fetchSellerReviews,
           onCreateReview: _repository.createSellerReview,
           canCreateReview: _repository.isSignedIn,
@@ -437,10 +526,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 builder: (context) => ChatScreen(
                   thread: thread,
                   onSendMessage: _repository.sendMessage,
+                  onOpenProduct: _openProductFromChat,
                   currentUserId: _repository.currentUserId,
                   threadsListenable: _repository,
                   resolveThread: _repository.threadById,
                   lastSeenForUser: _repository.lastSeenForUser,
+                  actions: _chatActions,
+                  onOpenSellerProfile: () => _openSellerFromChat(thread),
+                  onBuyProduct: () => _buyFromChat(thread),
                 ),
               ),
             );
@@ -514,11 +607,20 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
-  void _showProductShareStub(Product product) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Ссылка скопирована'),
-        behavior: SnackBarBehavior.floating,
+  void _shareProduct(Product product) {
+    if (!_repository.isSignedIn) {
+      _openLoginScreen(onSignedIn: () => _shareProduct(product));
+      return;
+    }
+    unawaited(
+      showProductShareSheet(
+        context,
+        product: product,
+        threads: _repository.threads,
+        currentUserId: _repository.currentUserId,
+        searchUsers: _repository.searchUserProfiles,
+        shareToThread: _repository.shareProductToThread,
+        shareToUser: _repository.shareProductToUser,
       ),
     );
   }
@@ -632,6 +734,28 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       });
     }
     return didPublish;
+  }
+
+  Future<void> _completeAutomatedListing(Product product) async {
+    final adoptedProduct = await _repository.adoptPublishedProduct(product);
+    if (!mounted) return;
+    final shouldReturnToOutfit = _returnToPublishOutfitAfterItem;
+    setState(() {
+      if (shouldReturnToOutfit) {
+        _currentIndex = 2;
+        _createMode = _CreateMode.publishOutfit;
+      } else {
+        _currentIndex = 0;
+        _createMode = _CreateMode.none;
+      }
+      _returnToPublishOutfitAfterItem = false;
+      _createItemForOutfitOnly = false;
+    });
+    if (!shouldReturnToOutfit) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openProductDetails(adoptedProduct);
+      });
+    }
   }
 
   Future<bool> _addProductToOutfitOnly(Product product) async {
@@ -813,6 +937,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   products: _repository.products,
                   onToggleLike: _repository.toggleProductLike,
                   onHideProduct: _repository.hideProduct,
+                  onShareProduct: _shareProduct,
                   onContactSeller: _repository.contactSeller,
                   onLoadSellerProfile: _repository.fetchSellerProfile,
                   onLoadSellerProducts: _repository.fetchSellerProducts,
@@ -829,6 +954,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   threadsListenable: _repository,
                   resolveThread: _repository.threadById,
                   lastSeenForUser: _repository.lastSeenForUser,
+                  chatActions: _chatActions,
                 ),
                 OutfitsScreen(
                   scale: 1.0,
@@ -852,11 +978,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   onSendMessage: _repository.sendMessage,
                   onSearchUsers: _repository.searchUserProfiles,
                   onStartDirectChat: _repository.startDirectChat,
+                  onCreateConversation: _repository.createConversation,
                   onOpenProduct: _openProductFromChat,
                   currentUserId: _repository.currentUserId,
                   threadsListenable: _repository,
                   resolveThread: _repository.threadById,
                   lastSeenForUser: _repository.lastSeenForUser,
+                  actions: _chatActions,
+                  onOpenSellerProfile: _openSellerFromChat,
+                  onBuyProduct: _buyFromChat,
                 ),
                 ProfileScreen(
                   profile: _repository.profile,
@@ -886,6 +1016,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   onSignInWithTelegram: _repository.signInWithTelegram,
                   onSignOut: _repository.signOut,
                   onUpdateProfile: _repository.updateProfile,
+                  onSavePersonalProfile: _repository.savePersonalProfile,
+                  onConfirmEmail: _repository.requestEmailConfirmation,
+                  onDeleteAccount: _repository.deleteAccount,
                   onToggleProductLike: _repository.toggleProductLike,
                   onToggleOutfitLike: _repository.toggleOutfitLike,
                   onDeleteProduct: _repository.deleteProduct,
@@ -894,16 +1027,20 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   onMarkNotificationRead: _repository.markNotificationRead,
                   onUpdateNotificationPreferences:
                       _repository.updateNotificationPreferences,
+                  onLoadReviews: _repository.fetchSellerReviews,
                   onOpenCatalog: () => _changeTab(0),
                 ),
               ],
             ),
           ),
-          bottomNavigationBar: AppBottomNav(
-            currentIndex: _currentIndex,
-            onTabSelected: _changeTab,
-            onCreateTap: _showCreateSheet,
-          ),
+          bottomNavigationBar:
+              _currentIndex == 2 && _createMode != _CreateMode.none
+              ? null
+              : AppBottomNav(
+                  currentIndex: _currentIndex,
+                  onTabSelected: _changeTab,
+                  onCreateTap: _showCreateSheet,
+                ),
         );
       },
     );
@@ -933,9 +1070,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       case _CreateMode.publishOutfit:
         return _buildPublishOutfitScreen();
       case _CreateMode.createItem:
-        return CreateScreen(
+        return ListingPublishFlowScreen(
           scale: 1.0,
           sidePadding: _sidePadding,
+          sellerName: _repository.profile.name,
+          sellerHandle: _repository.profile.handle,
+          initialCity: _repository.profile.city,
+          onPublished: _completeAutomatedListing,
           onClose: _closeCreateItem,
           onTabChange: _changeTab,
           onPublish: _createItemForOutfitOnly

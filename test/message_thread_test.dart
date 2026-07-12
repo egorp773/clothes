@@ -36,4 +36,50 @@ void main() {
     expect(thread.messages.first.isMine, isFalse);
     expect(thread.messages.last.isMine, isTrue);
   });
+
+  test('round-trips group members and structured product shares', () {
+    final thread = MessageThread(
+      id: 'group-1',
+      sellerName: 'Alice',
+      buyerName: 'Me',
+      productTitle: '',
+      lastMessage: 'Объявление: Куртка',
+      updatedAt: DateTime.utc(2026, 7, 12),
+      buyerId: 'me',
+      sellerId: 'alice',
+      isGroup: true,
+      title: 'Стильный чат',
+      createdBy: 'me',
+      members: const [
+        ConversationMember(id: 'me', name: 'Me', handle: '@me'),
+        ConversationMember(id: 'alice', name: 'Alice', handle: '@alice'),
+        ConversationMember(id: 'bob', name: 'Bob', handle: '@bob'),
+      ],
+      messages: [
+        ChatMessage(
+          id: 'share-1',
+          text: 'Объявление: Куртка',
+          createdAt: DateTime.utc(2026, 7, 12),
+          isMine: true,
+          senderId: 'me',
+          type: 'product',
+          sharedProduct: const SharedProductPreview(
+            id: 'product-1',
+            title: 'Куртка',
+            image: 'https://example.com/jacket.jpg',
+            price: '12 000 ₽',
+          ),
+        ),
+      ],
+    );
+
+    final restored = MessageThread.fromJson(thread.toJson());
+
+    expect(restored.isGroup, isTrue);
+    expect(restored.displayTitle('me'), 'Стильный чат');
+    expect(restored.memberIds, containsAll(['me', 'alice', 'bob']));
+    expect(restored.messages.single.isProductShare, isTrue);
+    expect(restored.messages.single.sharedProduct?.price, '12 000 ₽');
+    expect(restored.toSupabaseJson()['member_ids'], hasLength(3));
+  });
 }

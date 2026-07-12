@@ -438,13 +438,17 @@ class _RatingPill extends StatelessWidget {
             const SizedBox(width: 14),
             Expanded(child: _Stars(rating: rating.toDouble())),
             const SizedBox(width: 14),
-            Text(
-              '${seller.salesCount} отзывов',
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                letterSpacing: 0,
-                color: Colors.white,
+            Flexible(
+              child: Text(
+                _reviewCountLabel(seller.salesCount),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  letterSpacing: 0,
+                  color: Colors.white,
+                ),
               ),
             ),
           ],
@@ -546,30 +550,30 @@ class _TabsHeaderDelegate extends SliverPersistentHeaderDelegate {
         padding: EdgeInsets.only(top: topInset),
         child: DecoratedBox(
           decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(
-          top: BorderSide(color: Colors.black, width: 2),
-          bottom: BorderSide(color: Color(0xFFDADADD), width: 1),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _TabButton(
-              label: 'активные',
-              isActive: tabIndex == 0,
-              onTap: () => onChanged(0),
+            color: Colors.white,
+            border: Border(
+              top: BorderSide(color: Colors.black, width: 2),
+              bottom: BorderSide(color: Color(0xFFDADADD), width: 1),
             ),
           ),
-          Expanded(
-            child: _TabButton(
-              label: 'завершенные',
-              isActive: tabIndex == 1,
-              onTap: () => onChanged(1),
-            ),
+          child: Row(
+            children: [
+              Expanded(
+                child: _TabButton(
+                  label: 'активные',
+                  isActive: tabIndex == 0,
+                  onTap: () => onChanged(0),
+                ),
+              ),
+              Expanded(
+                child: _TabButton(
+                  label: 'завершенные',
+                  isActive: tabIndex == 1,
+                  onTap: () => onChanged(1),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
         ),
       ),
     );
@@ -750,4 +754,22 @@ class _SmallIconButton extends StatelessWidget {
 String _followersText(int count) {
   final value = count.toString();
   return '$value подписчика';
+}
+
+String _reviewCountLabel(int count) {
+  final mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) {
+    return '$count отзывов';
+  }
+
+  switch (count % 10) {
+    case 1:
+      return '$count отзыв';
+    case 2:
+    case 3:
+    case 4:
+      return '$count отзыва';
+    default:
+      return '$count отзывов';
+  }
 }

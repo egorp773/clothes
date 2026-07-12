@@ -11,6 +11,8 @@ type ChatMessage = {
   text?: string;
   sender_id?: string;
   sender_name?: string;
+  type?: string;
+  product?: { title?: string };
 };
 
 type ServiceAccount = {
@@ -64,7 +66,9 @@ Deno.serve(async (req) => {
 
   const { data: thread, error: threadError } = await userClient
     .from("message_threads")
-    .select("id,buyer_id,seller_id,buyer_name,seller_name,messages")
+    .select(
+      "id,buyer_id,seller_id,buyer_name,seller_name,title,is_group,member_ids",
+    )
     .eq("id", threadId)
     .maybeSingle();
 
@@ -72,27 +76,37 @@ Deno.serve(async (req) => {
   if (!thread) return json({ error: "Thread not found" }, 404);
 
   const senderId = user.id;
-  if (thread.buyer_id !== senderId && thread.seller_id !== senderId) {
+  const memberIds = Array.isArray(thread.member_ids)
+    ? thread.member_ids.map(String)
+    : [thread.buyer_id, thread.seller_id].filter(Boolean).map(String);
+  if (!memberIds.includes(senderId)) {
     return json({ error: "Forbidden" }, 403);
   }
 
-  const messages = Array.isArray(thread.messages) ? thread.messages : [];
-  const message = messages.find(
-    (item: ChatMessage) => item?.id === messageId,
-  ) as ChatMessage | undefined;
+  const { data: message, error: messageError } = await userClient
+    .from("chat_messages")
+    .select("id,text,sender_id,sender_name,type,product")
+    .eq("id", messageId)
+    .eq("thread_id", threadId)
+    .maybeSingle() as {
+      data: ChatMessage | null;
+      error: { message: string } | null;
+    };
 
+  if (messageError) return json({ error: messageError.message }, 500);
   if (!message || message.sender_id !== senderId) {
     return json({ error: "Message not found" }, 404);
   }
 
-  const recipientId =
-    senderId === thread.buyer_id ? thread.seller_id : thread.buyer_id;
-  if (!recipientId) return json({ sent: 0, skipped: "empty_recipient" });
+  const recipientIds = memberIds.filter((id: string) => id !== senderId);
+  if (recipientIds.length === 0) {
+    return json({ sent: 0, skipped: "empty_recipient" });
+  }
 
   const { data: tokens, error: tokensError } = await serviceClient
     .from("device_push_tokens")
     .select("token")
-    .eq("user_id", recipientId);
+    .in("user_id", recipientIds);
 
   if (tokensError) return json({ error: tokensError.message }, 500);
   if (!tokens || tokens.length === 0) return json({ sent: 0 });
@@ -101,7 +115,9 @@ Deno.serve(async (req) => {
   const title = message.sender_name?.trim() ||
     (senderId === thread.buyer_id ? thread.buyer_name : thread.seller_name) ||
     "Новое сообщение";
-  const body = message.text?.trim() || "Новое сообщение";
+  const body = message.type === "product"
+    ? `Объявление: ${message.product?.title ?? "товар"}`
+    : message.text?.trim() || "Новое сообщение";
 
   const results = await Promise.all(
     tokens.map(async ({ token }: { token: string }) => {

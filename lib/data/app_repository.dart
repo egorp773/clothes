@@ -85,6 +85,7 @@ class AppRepository extends ChangeNotifier {
   Timer? _syncTimer;
   StreamSubscription<AuthState>? _authSubscription;
   StreamSubscription<String>? _pushTokenSubscription;
+  RealtimeChannel? _messagesChannel;
   String? _registeredPushToken;
 
   bool get isReady => _isReady;
@@ -146,20 +147,35 @@ class AppRepository extends ChangeNotifier {
   }
 
   List<MessageThread> get threads {
+    bool hasVisibleContent(MessageThread thread) {
+      return thread.lastMessage.trim().isNotEmpty ||
+          thread.messages.isNotEmpty ||
+          thread.productTitle.trim().isNotEmpty ||
+          thread.productImage.trim().isNotEmpty;
+    }
+
     if (!_hasSupabase || currentUserId.isEmpty) {
-      return List.unmodifiable(_threads);
+      return List.unmodifiable(_threads.where(hasVisibleContent));
     }
     return List.unmodifiable(
       _threads.where(
         (thread) =>
-            thread.buyerId == currentUserId || thread.sellerId == currentUserId,
+            thread.containsUser(currentUserId) &&
+            (thread.isGroup ||
+                thread.otherPartyId(currentUserId).trim().isNotEmpty) &&
+            hasVisibleContent(thread),
       ),
     );
   }
 
   AppProfile get profile => _profile;
-  List<ProfileNotification> get notifications =>
-      List.unmodifiable(_notifications);
+  List<ProfileNotification> get notifications => List.unmodifiable(
+    _notifications.where(
+      (notification) =>
+          notification.title.trim().isNotEmpty ||
+          notification.body.trim().isNotEmpty,
+    ),
+  );
   NotificationPreferences get notificationPreferences =>
       _notificationPreferences;
   DeliveryProfile get deliveryProfile => _deliveryProfileWithFallbacks();
@@ -197,8 +213,7 @@ class AppRepository extends ChangeNotifier {
       if (thread.id != threadId) continue;
       if (_hasSupabase &&
           currentUserId.isNotEmpty &&
-          thread.buyerId != currentUserId &&
-          thread.sellerId != currentUserId) {
+          !thread.containsUser(currentUserId)) {
         return null;
       }
       return thread;
@@ -269,6 +284,7 @@ class AppRepository extends ChangeNotifier {
           .order('created_at', ascending: false);
       final remoteProducts = (response as List<dynamic>)
           .map((item) => Product.fromSupabase(item as Map<String, dynamic>))
+          .where((product) => product.status == 'published')
           .toList();
       if (remoteProducts.isEmpty) return localProducts;
 
@@ -294,12 +310,8 @@ class AppRepository extends ChangeNotifier {
     if (sellerId.isEmpty) return const [];
     if (_hasSupabase) {
       try {
-        final response = await _client
-            .from('seller_reviews')
-            .select()
-            .eq('seller_id', sellerId)
-            .order('created_at', ascending: false);
-        final remote = (response as List<dynamic>)
+        final response = await _fetchSellerReviewsFromSupabase(sellerId);
+        final remote = response
             .map((item) => SellerReview.fromJson(item as Map<String, dynamic>))
             .toList();
         final remoteIds = remote.map((review) => review.id).toSet();
@@ -361,10 +373,36 @@ class AppRepository extends ChangeNotifier {
 
     if (!_hasSupabase) return;
     try {
-      await _client.from('seller_reviews').insert(review.toSupabaseJson());
+      await _insertSellerReviewToSupabase(review);
       await _pushSellerRatingToSupabase(sellerId);
     } catch (e) {
       debugPrint('Seller review save error: $e');
+    }
+  }
+
+  Future<List<dynamic>> _fetchSellerReviewsFromSupabase(String sellerId) async {
+    try {
+      return await _client
+          .from('reviews')
+          .select()
+          .eq('seller_id', sellerId)
+          .order('created_at', ascending: false);
+    } on PostgrestException catch (e) {
+      if (e.code != 'PGRST205') rethrow;
+      return await _client
+          .from('seller_reviews')
+          .select()
+          .eq('seller_id', sellerId)
+          .order('created_at', ascending: false);
+    }
+  }
+
+  Future<void> _insertSellerReviewToSupabase(SellerReview review) async {
+    try {
+      await _client.from('reviews').insert(review.toSupabaseJson());
+    } on PostgrestException catch (e) {
+      if (e.code != 'PGRST205') rethrow;
+      await _client.from('seller_reviews').insert(review.toSupabaseJson());
     }
   }
 
@@ -478,12 +516,16 @@ class AppRepository extends ChangeNotifier {
       await _applyUserProfile(_currentUser, notify: false);
       if (_currentUser != null) {
         unawaited(_registerPushToken(_currentUser!.id));
+        _subscribeToMessages();
       }
       _authSubscription = _client.auth.onAuthStateChange.listen((state) {
         unawaited(_handleAuthState(state.session?.user));
       });
     }
 
+    if (_ensureUploadedAssetProduct()) {
+      await _saveProducts();
+    }
     _sortThreads();
     _isReady = true;
     notifyListeners();
@@ -509,6 +551,50 @@ class AppRepository extends ChangeNotifier {
         _syncThreadsFromSupabase();
       });
     }
+  }
+
+  bool _ensureUploadedAssetProduct() {
+    const uploadedImage =
+        'assets/products/be8b281aeb457d9e2884298331debba1c7dab8c4.png';
+    if (_products.any((product) => product.image == uploadedImage)) {
+      return false;
+    }
+
+    final sellerName = _profile.name.trim().isEmpty
+        ? 'showroom'
+        : _profile.name;
+    final sellerHandle = _profile.handle.trim().isEmpty
+        ? '@seller'
+        : _profile.handle;
+    final city = _profile.city.trim().isEmpty ? 'Москва' : _profile.city;
+
+    _products = <Product>[
+      Product(
+        id: 'product-uploaded-be8b281a',
+        title: 'Черный топ с драпировкой',
+        detailTitle: 'Черный топ с драпировкой',
+        description: 'Локальный товар из загруженной фотографии.',
+        price: '6 900 ₽',
+        detailPrice: '6 900 ₽',
+        priceValue: 6900,
+        image: uploadedImage,
+        category: 'Одежда',
+        brand: 'showroom',
+        size: 'S',
+        color: 'Черный',
+        condition: 'Новое',
+        location: city,
+        ownerId: _currentUser?.id ?? 'local-showroom',
+        sellerName: sellerName,
+        sellerHandle: sellerHandle,
+        dotsOnDark: true,
+        isLocal: true,
+        images: const [uploadedImage],
+        outfitImages: const [uploadedImage],
+      ),
+      ..._products,
+    ];
+    return true;
   }
 
   Future<void> signInWithYandex() async {
@@ -676,11 +762,178 @@ class AppRepository extends ChangeNotifier {
     return null;
   }
 
+  Future<String?> savePersonalProfile(
+    AppProfile updatedProfile,
+    XFile? avatarFile,
+  ) async {
+    var avatarUrl = updatedProfile.avatarUrl;
+    if (avatarFile != null) {
+      avatarUrl =
+          await uploadImage(
+            avatarFile,
+            folder: currentUserId.isEmpty
+                ? 'avatars/local'
+                : 'avatars/$currentUserId',
+          ) ??
+          await _inlineImage(avatarFile) ??
+          '';
+      if (avatarUrl.isEmpty) return 'Не удалось сохранить фото профиля';
+    }
+
+    _profile = updatedProfile.copyWith(avatarUrl: avatarUrl);
+    await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
+    notifyListeners();
+
+    final user = _hasSupabase ? _client.auth.currentUser : null;
+    if (user == null) return null;
+    try {
+      await _upsertProfile(userId: user.id, profile: _profile);
+      await _savePrivateProfileDetails(user.id, _profile);
+      final response = await _client.auth.updateUser(
+        UserAttributes(
+          data: {
+            ...?user.userMetadata,
+            'full_name': _profile.name,
+            'avatar_url': _profile.avatarUrl,
+          },
+        ),
+      );
+      _currentUser = response.user ?? _client.auth.currentUser;
+      await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
+    } catch (e) {
+      debugPrint('Personal profile update error: $e');
+      return 'Данные сохранены на устройстве, но не синхронизированы';
+    }
+    return null;
+  }
+
+  Future<String?> requestEmailConfirmation(String email) async {
+    final normalized = email.trim().toLowerCase();
+    if (normalized.isEmpty ||
+        !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(normalized)) {
+      return 'Проверьте формат email';
+    }
+    if (!_hasSupabase || _client.auth.currentUser == null) {
+      return 'Войдите в аккаунт, чтобы подтвердить email';
+    }
+    final user = _client.auth.currentUser!;
+    try {
+      if ((user.email ?? '').toLowerCase() == normalized) {
+        if (user.emailConfirmedAt != null) return 'Email уже подтвержден';
+        await _client.auth.resend(type: OtpType.signup, email: normalized);
+      } else {
+        await _client.auth.updateUser(UserAttributes(email: normalized));
+      }
+      _profile = _profile.copyWith(email: normalized);
+      await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
+      notifyListeners();
+      return null;
+    } catch (e) {
+      debugPrint('Email confirmation error: $e');
+      return 'Не удалось отправить письмо. Попробуйте позже';
+    }
+  }
+
+  Future<String?> deleteAccount() async {
+    if (!_hasSupabase || _client.auth.currentUser == null) {
+      await _prefs.remove(_profileKey);
+      _profile = const AppProfile(
+        name: 'Ваш профиль',
+        handle: '@seller',
+        city: 'Москва',
+        rating: 4.8,
+        salesCount: 0,
+        followersCount: 0,
+      );
+      notifyListeners();
+      return null;
+    }
+
+    try {
+      await _removeCurrentPushToken();
+      await _client.rpc('delete_current_user');
+      await _client.auth.signOut(scope: SignOutScope.local);
+      _currentUser = null;
+      await _prefs.remove(_profileKey);
+      _profile = const AppProfile(
+        name: 'Ваш профиль',
+        handle: '@seller',
+        city: 'Москва',
+        rating: 4.8,
+        salesCount: 0,
+        followersCount: 0,
+      );
+      notifyListeners();
+      return null;
+    } catch (e) {
+      debugPrint('Account delete error: $e');
+      return 'Не удалось удалить аккаунт. Попробуйте ещё раз';
+    }
+  }
+
+  Future<String?> _inlineImage(XFile imageFile) async {
+    try {
+      final bytes = await imageFile.readAsBytes();
+      final mimeType = _mimeTypeForImage(imageFile.name, imageFile.path);
+      return 'data:$mimeType;base64,${base64Encode(bytes)}';
+    } catch (e) {
+      debugPrint('Inline avatar error: $e');
+      return null;
+    }
+  }
+
+  Future<void> _savePrivateProfileDetails(
+    String userId,
+    AppProfile profile,
+  ) async {
+    try {
+      await _client.from('profile_private_details').upsert({
+        'user_id': userId,
+        'first_name': profile.firstName,
+        'last_name': profile.lastName,
+        'middle_name': profile.middleName,
+        'gender': profile.gender,
+        'birth_date': profile.birthDate.isEmpty ? null : profile.birthDate,
+        'phone': profile.phone,
+        'email': profile.email,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, onConflict: 'user_id');
+    } on PostgrestException catch (e) {
+      if (e.code != 'PGRST205') rethrow;
+      debugPrint('Private profile table is not installed yet');
+    }
+  }
+
+  Future<void> _loadPrivateProfileDetails(String userId) async {
+    try {
+      final response = await _client
+          .from('profile_private_details')
+          .select()
+          .eq('user_id', userId)
+          .limit(1);
+      final rows = response as List<dynamic>;
+      if (rows.isEmpty) return;
+      final row = rows.first as Map<String, dynamic>;
+      _profile = _profile.copyWith(
+        firstName: row['first_name'] as String? ?? _profile.firstName,
+        lastName: row['last_name'] as String? ?? _profile.lastName,
+        middleName: row['middle_name'] as String? ?? _profile.middleName,
+        gender: row['gender'] as String? ?? _profile.gender,
+        birthDate: row['birth_date']?.toString() ?? _profile.birthDate,
+        phone: row['phone'] as String? ?? _profile.phone,
+        email: row['email'] as String? ?? _profile.email,
+      );
+    } on PostgrestException catch (e) {
+      if (e.code != 'PGRST205') rethrow;
+    }
+  }
+
   Future<void> _handleAuthState(User? user) async {
     _currentUser = user;
     _authError = null;
     await _applyUserProfile(user, notify: false);
     if (user != null) {
+      _subscribeToMessages();
       unawaited(_registerPushToken(user.id));
       unawaited(_updatePresence());
       unawaited(_syncFromSupabase());
@@ -690,6 +943,8 @@ class AppRepository extends ChangeNotifier {
       unawaited(_syncProfileFeaturesFromSupabase());
       unawaited(_syncThreadsFromSupabase());
     } else {
+      await _messagesChannel?.unsubscribe();
+      _messagesChannel = null;
       await _pushTokenSubscription?.cancel();
       _pushTokenSubscription = null;
       _registeredPushToken = null;
@@ -714,17 +969,20 @@ class AppRepository extends ChangeNotifier {
       final rows = response as List<dynamic>;
       if (rows.isNotEmpty) {
         final row = rows.first as Map<String, dynamic>;
-        _profile = AppProfile(
+        _profile = _profile.copyWith(
           name: row['name'] as String? ?? _profile.name,
           handle: row['handle'] as String? ?? _profile.handle,
           city: row['city'] as String? ?? _profile.city,
+          avatarUrl: row['avatar_url'] as String? ?? _profile.avatarUrl,
           rating: (row['rating'] as num?)?.toDouble() ?? _profile.rating,
           salesCount:
               (row['sales_count'] as num?)?.toInt() ?? _profile.salesCount,
           followersCount:
               (row['followers_count'] as num?)?.toInt() ??
               _profile.followersCount,
+          email: _profile.email.isEmpty ? (user.email ?? '') : _profile.email,
         );
+        await _loadPrivateProfileDetails(user.id);
         await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
         await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
         if (notify) notifyListeners();
@@ -755,13 +1013,12 @@ class AppRepository extends ChangeNotifier {
     );
 
     if (name != null && name.isNotEmpty) {
-      _profile = AppProfile(
+      _profile = _profile.copyWith(
         name: name,
         handle: handle,
-        city: _profile.city,
-        rating: _profile.rating,
-        salesCount: _profile.salesCount,
-        followersCount: _profile.followersCount,
+        firstName: _profile.firstName.isEmpty ? name.split(' ').first : null,
+        email: _profile.email.isEmpty ? (user.email ?? '') : _profile.email,
+        avatarUrl: _profile.avatarUrl.isEmpty ? _currentAvatarUrl() : null,
       );
       await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
       await _upsertProfile(userId: user.id, profile: _profile);
@@ -917,7 +1174,8 @@ class AppRepository extends ChangeNotifier {
     if (!_hasSupabase || currentUserId.isEmpty || threads.isEmpty) return;
 
     final userIds = threads
-        .map((thread) => thread.otherPartyId(currentUserId))
+        .expand((thread) => thread.memberIds)
+        .where((id) => id != currentUserId)
         .where((id) => id.isNotEmpty)
         .toSet();
     if (userIds.isEmpty) return;
@@ -987,6 +1245,7 @@ class AppRepository extends ChangeNotifier {
 
       final fetched = (response as List<dynamic>)
           .map((e) => Product.fromSupabase(e))
+          .where((product) => product.status == 'published')
           .toList();
 
       if (fetched.isNotEmpty) {
@@ -997,12 +1256,68 @@ class AppRepository extends ChangeNotifier {
           merged.putIfAbsent(product.id, () => product);
         }
         _products = merged.values.toList();
+        _ensureUploadedAssetProduct();
         _applyProductFavoriteState();
         await _saveProducts();
         notifyListeners();
       }
     } catch (e) {
       debugPrint('Supabase sync error: $e');
+    }
+  }
+
+  void _subscribeToMessages() {
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+    final channelName = 'messages:$currentUserId';
+    final previousChannel = _messagesChannel;
+    if (previousChannel != null) unawaited(previousChannel.unsubscribe());
+    _messagesChannel = _client
+        .channel(channelName)
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'chat_messages',
+          callback: (_) => unawaited(_syncThreadsFromSupabase()),
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'message_threads',
+          callback: (_) => unawaited(_syncThreadsFromSupabase()),
+        )
+        .subscribe();
+  }
+
+  Future<List<MessageThread>> _hydrateThreadMessages(
+    List<MessageThread> threads,
+  ) async {
+    if (threads.isEmpty) return threads;
+    try {
+      final response = await _client
+          .from('chat_messages')
+          .select()
+          .inFilter('thread_id', threads.map((thread) => thread.id).toList())
+          .order('created_at', ascending: true);
+      final byThread = <String, List<ChatMessage>>{};
+      for (final item in response as List<dynamic>) {
+        final row = item as Map<String, dynamic>;
+        final threadId = row['thread_id'] as String? ?? '';
+        if (threadId.isEmpty) continue;
+        byThread
+            .putIfAbsent(threadId, () => [])
+            .add(ChatMessage.fromJson(row, currentUserId: currentUserId));
+      }
+      return threads
+          .map((thread) {
+            final messages = byThread[thread.id];
+            return messages == null || messages.isEmpty
+                ? thread
+                : thread.copyWith(messages: messages);
+          })
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('Chat messages sync error: $e');
+      return threads;
     }
   }
 
@@ -1014,10 +1329,13 @@ class AppRepository extends ChangeNotifier {
       final response = await _client
           .from('message_threads')
           .select()
-          .or('buyer_id.eq.$currentUserId,seller_id.eq.$currentUserId')
+          .or(
+            'buyer_id.eq.$currentUserId,seller_id.eq.$currentUserId,'
+            'member_ids.cs.{$currentUserId}',
+          )
           .order('updated_at', ascending: false);
 
-      final fetched = (response as List<dynamic>)
+      var fetched = (response as List<dynamic>)
           .map(
             (item) => MessageThread.fromSupabase(
               item as Map<String, dynamic>,
@@ -1025,6 +1343,7 @@ class AppRepository extends ChangeNotifier {
             ),
           )
           .toList();
+      fetched = await _hydrateThreadMessages(fetched);
 
       await _syncThreadPresence(fetched);
 
@@ -1606,7 +1925,7 @@ class AppRepository extends ChangeNotifier {
         sellerHandle: _profile.handle,
       );
       final data = ownedProduct.toSupabaseJson(sellerId: user.id);
-      await _client.from('products').insert(data);
+      await _client.from('products').upsert(data, onConflict: 'id');
       if (ownedProduct.outfitImages.isEmpty) {
         _queueBackgroundRemoval(ownedProduct);
       }
@@ -1620,6 +1939,23 @@ class AppRepository extends ChangeNotifier {
       debugPrint('Publish to Supabase error: $e');
       return false;
     }
+  }
+
+  /// Caches a listing that was already atomically published by the dedicated
+  /// publication repository, without writing it to Supabase a second time.
+  Future<Product> adoptPublishedProduct(Product product) async {
+    final ownedProduct = product.copyWith(
+      ownerId: currentUserId,
+      sellerName: _profile.name,
+      sellerHandle: _profile.handle,
+      status: 'published',
+      isHidden: false,
+    );
+    _products.removeWhere((item) => item.id == ownedProduct.id);
+    _products.insert(0, ownedProduct);
+    await _saveProducts();
+    notifyListeners();
+    return ownedProduct;
   }
 
   void _queueBackgroundRemoval(Product product) {
@@ -1971,6 +2307,19 @@ class AppRepository extends ChangeNotifier {
         productImage: product.image,
         buyerId: buyerId,
         sellerId: sellerId,
+        members: [
+          ConversationMember(
+            id: buyerId,
+            name: _profile.name,
+            handle: _profile.handle,
+            avatarUrl: _currentAvatarUrl(),
+          ),
+          ConversationMember(
+            id: sellerId,
+            name: sellerName,
+            handle: product.sellerHandle,
+          ),
+        ],
         unreadCount: 0,
         messages: [
           ChatMessage(
@@ -1980,6 +2329,7 @@ class AppRepository extends ChangeNotifier {
             isMine: true,
             senderId: buyerId,
             senderName: _profile.name,
+            senderAvatar: _currentAvatarUrl(),
           ),
         ],
       ),
@@ -1987,7 +2337,10 @@ class AppRepository extends ChangeNotifier {
     _sortThreads();
     await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
     final createdThread = threadById(threadId) ?? _threads.first;
-    await _saveThreadOrShowError(createdThread);
+    await _saveThreadOrShowError(
+      createdThread,
+      newMessages: [createdThread.messages.last],
+    );
     unawaited(
       _notifyMessageRecipient(createdThread, createdThread.messages.last),
     );
@@ -1996,8 +2349,12 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<List<AppUserProfile>> searchUserProfiles(String query) async {
-    final normalized = _normalizeHandle(query);
-    final plainQuery = query.trim().replaceAll('@', '');
+    final safeQuery = query.trim().replaceAll(
+      RegExp(r'[^a-zA-Z0-9_а-яА-ЯёЁ .-]'),
+      '',
+    );
+    final normalized = _normalizeHandle(safeQuery);
+    final plainQuery = safeQuery.replaceAll('@', '');
     if (!_hasSupabase || plainQuery.length < 2) return const [];
 
     try {
@@ -2062,6 +2419,15 @@ class AppRepository extends ChangeNotifier {
       updatedAt: now,
       buyerId: senderId,
       sellerId: recipient.id,
+      members: [
+        _currentConversationMember(senderId),
+        ConversationMember(
+          id: recipient.id,
+          name: recipient.name,
+          handle: recipient.handle,
+          avatarUrl: recipient.avatarUrl,
+        ),
+      ],
       messages: const [],
     );
 
@@ -2072,6 +2438,135 @@ class AppRepository extends ChangeNotifier {
     await _saveThreadOrShowError(thread);
     notifyListeners();
     return thread;
+  }
+
+  Future<MessageThread?> createConversation(
+    List<AppUserProfile> recipients, {
+    String title = '',
+  }) async {
+    final user = _hasSupabase
+        ? await _ensureAuthSession(message: 'Войдите, чтобы создать беседу')
+        : null;
+    if (_hasSupabase && user == null) return null;
+    final senderId = user?.id ?? currentUserId;
+    final uniqueRecipients = <String, AppUserProfile>{
+      for (final recipient in recipients)
+        if (recipient.id.isNotEmpty && recipient.id != senderId)
+          recipient.id: recipient,
+    }.values.toList(growable: false);
+    if (uniqueRecipients.isEmpty) return null;
+    if (uniqueRecipients.length == 1) {
+      return startDirectChat(uniqueRecipients.single);
+    }
+
+    final now = DateTime.now();
+    final members = [
+      _currentConversationMember(senderId),
+      ...uniqueRecipients.map(
+        (recipient) => ConversationMember(
+          id: recipient.id,
+          name: recipient.name,
+          handle: recipient.handle,
+          avatarUrl: recipient.avatarUrl,
+        ),
+      ),
+    ];
+    final cleanTitle = title.trim();
+    final fallbackTitle = uniqueRecipients
+        .map((recipient) => recipient.name.trim())
+        .where((name) => name.isNotEmpty)
+        .take(3)
+        .join(', ');
+    final systemMessage = ChatMessage(
+      id: _uuid.v4(),
+      text: 'Беседа создана',
+      createdAt: now,
+      isMine: true,
+      senderId: senderId,
+      senderName: _profile.name,
+      senderAvatar: _currentAvatarUrl(),
+      type: 'system',
+    );
+    final thread = MessageThread(
+      id: 'group_${_uuid.v4()}',
+      sellerName: uniqueRecipients.first.name,
+      buyerName: _profile.name,
+      sellerHandle: uniqueRecipients.first.handle,
+      buyerHandle: _profile.handle,
+      sellerAvatar: uniqueRecipients.first.avatarUrl,
+      buyerAvatar: _currentAvatarUrl(),
+      productTitle: '',
+      lastMessage: systemMessage.text,
+      updatedAt: now,
+      buyerId: senderId,
+      sellerId: uniqueRecipients.first.id,
+      isGroup: true,
+      title: cleanTitle.isEmpty ? fallbackTitle : cleanTitle,
+      createdBy: senderId,
+      members: members,
+      messages: [systemMessage],
+    );
+    _upsertLocalThread(thread);
+    await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+    await _saveThreadOrShowError(thread, newMessages: [systemMessage]);
+    notifyListeners();
+    return thread;
+  }
+
+  Future<MessageThread?> shareProductToUser(
+    AppUserProfile recipient,
+    Product product,
+  ) async {
+    final thread = await startDirectChat(recipient);
+    if (thread == null) return null;
+    final sent = await shareProductToThread(thread.id, product);
+    return sent ? threadById(thread.id) : null;
+  }
+
+  Future<bool> shareProductToThread(String threadId, Product product) async {
+    final user = _hasSupabase
+        ? await _ensureAuthSession(message: 'Войдите, чтобы поделиться')
+        : null;
+    if (_hasSupabase && user == null) return false;
+    if (_hasSupabase) {
+      final remoteThread = await _fetchThreadFromSupabase(threadId);
+      if (remoteThread != null) _upsertLocalThread(remoteThread);
+    }
+    final index = _threads.indexWhere((thread) => thread.id == threadId);
+    if (index == -1) return false;
+    final thread = _threads[index];
+    final senderId = user?.id ?? currentUserId;
+    if (_hasSupabase && !thread.containsUser(senderId)) return false;
+    final now = DateTime.now();
+    final message = ChatMessage(
+      id: _uuid.v4(),
+      text: 'Объявление: ${product.title}',
+      createdAt: now,
+      isMine: true,
+      senderId: senderId,
+      senderName: _profile.name,
+      senderAvatar: _currentAvatarUrl(),
+      type: 'product',
+      sharedProduct: SharedProductPreview(
+        id: product.id,
+        title: product.title,
+        image: product.image,
+        price: product.price,
+        sellerHandle: product.sellerHandle,
+      ),
+    );
+    _threads[index] = thread.copyWith(
+      lastMessage: message.text,
+      updatedAt: now,
+      messages: [...thread.messages, message],
+    );
+    _sortThreads();
+    await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+    final updated = _threads.firstWhere((item) => item.id == threadId);
+    final saved = await _upsertThread(updated, newMessages: [message]);
+    if (saved) unawaited(_notifyMessageRecipient(updated, message));
+    notifyListeners();
+    return saved;
   }
 
   Future<void> sendMessage(String threadId, String text) async {
@@ -2098,9 +2593,7 @@ class AppRepository extends ChangeNotifier {
     final now = DateTime.now();
     final thread = _threads[index];
     final senderId = user?.id ?? currentUserId;
-    if (_hasSupabase &&
-        senderId != thread.buyerId &&
-        senderId != thread.sellerId) {
+    if (_hasSupabase && !thread.containsUser(senderId)) {
       return;
     }
 
@@ -2111,21 +2604,479 @@ class AppRepository extends ChangeNotifier {
       isMine: true,
       senderId: senderId,
       senderName: _profile.name,
+      senderAvatar: _currentAvatarUrl(),
     );
 
     _threads[index] = thread.copyWith(
       lastMessage: trimmed,
       updatedAt: now,
       messages: [...thread.messages, message],
+      draft: '',
     );
     _sortThreads();
     await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
     final updatedThread = _threads.firstWhere(
       (thread) => thread.id == threadId,
     );
-    await _saveThreadOrShowError(updatedThread);
+    await _saveThreadOrShowError(updatedThread, newMessages: [message]);
     unawaited(_notifyMessageRecipient(updatedThread, message));
     notifyListeners();
+  }
+
+  Future<bool> sendReply(
+    String threadId,
+    String text,
+    ChatMessage replyTo,
+  ) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty || replyTo.id.isEmpty) return false;
+
+    final actorId = await _resolveChatActor(
+      message: 'Войдите в профиль, чтобы отправить сообщение',
+    );
+    if (actorId == null) return false;
+    final thread = threadById(threadId);
+    if (thread == null || (_hasSupabase && !thread.containsUser(actorId))) {
+      return false;
+    }
+
+    ChatMessage? target;
+    for (final message in thread.messages) {
+      if (message.id == replyTo.id) {
+        target = message;
+        break;
+      }
+    }
+    if (target == null) return false;
+
+    final now = DateTime.now();
+    final message = ChatMessage(
+      id: _uuid.v4(),
+      text: trimmed,
+      createdAt: now,
+      isMine: true,
+      senderId: actorId,
+      senderName: _profile.name,
+      senderAvatar: _currentAvatarUrl(),
+      replyToId: target.id,
+      replyToText: target.previewText,
+      replyToSenderName: _replySenderName(thread, target),
+      isPending: _hasSupabase,
+    );
+    return _appendOutgoingMessage(thread, message);
+  }
+
+  Future<bool> sendChatImage(
+    String threadId,
+    XFile imageFile, {
+    String caption = '',
+    ChatMessage? replyTo,
+  }) async {
+    final actorId = await _resolveChatActor(
+      message: 'Войдите в профиль, чтобы отправить фотографию',
+    );
+    if (actorId == null) return false;
+
+    var thread = threadById(threadId);
+    if (thread == null || (_hasSupabase && !thread.containsUser(actorId))) {
+      return false;
+    }
+
+    ChatMessage? target;
+    if (replyTo != null) {
+      for (final message in thread.messages) {
+        if (message.id == replyTo.id) {
+          target = message;
+          break;
+        }
+      }
+      if (target == null) return false;
+    }
+
+    final imageUrl =
+        await uploadImage(imageFile, folder: 'chat/$threadId') ??
+        await _inlineImage(imageFile);
+    if (imageUrl == null || imageUrl.isEmpty) return false;
+
+    // The thread may have changed while the image was uploading.
+    thread = threadById(threadId);
+    if (thread == null) return false;
+    var imageSize = 0;
+    try {
+      imageSize = await imageFile.length();
+    } catch (e) {
+      debugPrint('Chat image size read error: $e');
+    }
+
+    final now = DateTime.now();
+    final message = ChatMessage(
+      id: _uuid.v4(),
+      text: caption.trim(),
+      createdAt: now,
+      isMine: true,
+      senderId: actorId,
+      senderName: _profile.name,
+      senderAvatar: _currentAvatarUrl(),
+      type: 'image',
+      attachment: ChatAttachment(
+        url: imageUrl,
+        name: imageFile.name,
+        mimeType: _mimeTypeForImage(imageFile.name, imageFile.path),
+        size: imageSize,
+      ),
+      replyToId: target?.id ?? '',
+      replyToText: target?.previewText ?? '',
+      replyToSenderName: target == null ? '' : _replySenderName(thread, target),
+      isPending: _hasSupabase,
+    );
+    return _appendOutgoingMessage(thread, message);
+  }
+
+  Future<bool> toggleMessageReaction(
+    String threadId,
+    String messageId,
+    String emoji,
+  ) async {
+    final cleanEmoji = emoji.trim();
+    if (messageId.isEmpty ||
+        cleanEmoji.isEmpty ||
+        cleanEmoji.runes.length > 16) {
+      return false;
+    }
+
+    final actorId = await _resolveChatActor();
+    if (actorId == null) return false;
+    final thread = threadById(threadId);
+    if (thread == null || (_hasSupabase && !thread.containsUser(actorId))) {
+      return false;
+    }
+    final messageIndex = thread.messages.indexWhere(
+      (message) => message.id == messageId,
+    );
+    if (messageIndex == -1 || thread.messages[messageIndex].isDeleted) {
+      return false;
+    }
+
+    final reactionActor = actorId.isEmpty ? 'local-user' : actorId;
+    final reactions = <String, List<String>>{
+      for (final entry in thread.messages[messageIndex].reactions.entries)
+        entry.key: List<String>.from(entry.value),
+    };
+    final users = reactions.putIfAbsent(cleanEmoji, () => <String>[]);
+    if (users.contains(reactionActor)) {
+      users.remove(reactionActor);
+      if (users.isEmpty) reactions.remove(cleanEmoji);
+    } else {
+      users.add(reactionActor);
+    }
+
+    await _replaceLocalMessage(
+      threadId,
+      thread.messages[messageIndex].copyWith(reactions: reactions),
+    );
+
+    if (_hasSupabase) {
+      try {
+        await _client.rpc(
+          'toggle_chat_message_reaction',
+          params: {
+            'p_thread_id': threadId,
+            'p_message_id': messageId,
+            'p_emoji': cleanEmoji,
+          },
+        );
+      } catch (e) {
+        debugPrint('Message reaction sync error: $e');
+      }
+    }
+    return true;
+  }
+
+  Future<bool> editMessage(
+    String threadId,
+    String messageId,
+    String text,
+  ) async {
+    final trimmed = text.trim();
+    if (messageId.isEmpty || trimmed.isEmpty) return false;
+
+    final actorId = await _resolveChatActor();
+    if (actorId == null) return false;
+    final thread = threadById(threadId);
+    if (thread == null) return false;
+    final messageIndex = thread.messages.indexWhere(
+      (message) => message.id == messageId,
+    );
+    if (messageIndex == -1) return false;
+    final original = thread.messages[messageIndex];
+    final canEdit = _hasSupabase
+        ? original.senderId == actorId
+        : original.isMine || original.senderId == actorId;
+    if (!canEdit || original.isDeleted || original.type == 'system') {
+      return false;
+    }
+
+    final editedAt = DateTime.now();
+    final edited = original.copyWith(text: trimmed, editedAt: editedAt);
+    await _replaceLocalMessage(threadId, edited, updateLastPreview: true);
+
+    if (_hasSupabase) {
+      try {
+        await _client
+            .from('chat_messages')
+            .update({
+              'text': trimmed,
+              'edited_at': editedAt.toUtc().toIso8601String(),
+            })
+            .eq('thread_id', threadId)
+            .eq('id', messageId)
+            .eq('sender_id', actorId);
+        await _syncLastMessagePreview(threadId);
+      } catch (e) {
+        debugPrint('Message edit sync error: $e');
+      }
+    }
+    return true;
+  }
+
+  Future<bool> deleteMessage(String threadId, String messageId) async {
+    if (messageId.isEmpty) return false;
+    final actorId = await _resolveChatActor();
+    if (actorId == null) return false;
+    final thread = threadById(threadId);
+    if (thread == null) return false;
+    final messageIndex = thread.messages.indexWhere(
+      (message) => message.id == messageId,
+    );
+    if (messageIndex == -1) return false;
+    final original = thread.messages[messageIndex];
+    final canDelete = _hasSupabase
+        ? original.senderId == actorId
+        : original.isMine || original.senderId == actorId;
+    if (!canDelete || original.isDeleted || original.type == 'system') {
+      return false;
+    }
+
+    final deletedAt = DateTime.now();
+    final deleted = original.copyWith(
+      text: '',
+      type: 'text',
+      sharedProduct: null,
+      attachment: null,
+      deletedAt: deletedAt,
+      reactions: const {},
+      isPending: false,
+      hasError: false,
+    );
+    await _replaceLocalMessage(threadId, deleted, updateLastPreview: true);
+
+    if (_hasSupabase) {
+      try {
+        await _client
+            .from('chat_messages')
+            .update({
+              'text': '',
+              'type': 'text',
+              'product': null,
+              'attachment': null,
+              'deleted_at': deletedAt.toUtc().toIso8601String(),
+              'reactions': const <String, List<String>>{},
+            })
+            .eq('thread_id', threadId)
+            .eq('id', messageId)
+            .eq('sender_id', actorId);
+        await _syncLastMessagePreview(threadId);
+      } catch (e) {
+        debugPrint('Message delete sync error: $e');
+      }
+    }
+    return true;
+  }
+
+  Future<bool> updateThreadPreferences(
+    String threadId, {
+    bool? isPinned,
+    bool? isMuted,
+    bool? isArchived,
+    String? title,
+  }) async {
+    final actorId = await _resolveChatActor();
+    if (actorId == null) return false;
+    final thread = threadById(threadId);
+    if (thread == null || (_hasSupabase && !thread.containsUser(actorId))) {
+      return false;
+    }
+
+    final updated = thread.copyWith(
+      isPinned: isPinned,
+      isMuted: isMuted,
+      isArchived: isArchived,
+      title: title?.trim(),
+    );
+    _upsertLocalThread(updated);
+    await _saveThreadsLocal();
+    notifyListeners();
+
+    if (_hasSupabase) {
+      final payload = <String, dynamic>{
+        'is_pinned': ?isPinned,
+        'is_muted': ?isMuted,
+        'is_archived': ?isArchived,
+        if (title != null) 'title': title.trim(),
+      };
+      if (payload.isNotEmpty) {
+        try {
+          await _client
+              .from('message_threads')
+              .update(payload)
+              .eq('id', threadId);
+        } catch (e) {
+          debugPrint('Thread preferences sync error: $e');
+        }
+      }
+    }
+    return true;
+  }
+
+  Future<void> saveThreadDraft(String threadId, String draft) async {
+    final index = _threads.indexWhere((thread) => thread.id == threadId);
+    if (index == -1) return;
+    final thread = _threads[index];
+    _threads[index] = thread.copyWith(draft: draft);
+    await _saveThreadsLocal();
+    notifyListeners();
+
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+    try {
+      await _client
+          .from('message_threads')
+          .update({'draft': draft})
+          .eq('id', threadId);
+    } catch (e) {
+      debugPrint('Thread draft sync error: $e');
+    }
+  }
+
+  Future<void> markThreadRead(String threadId) async {
+    final index = _threads.indexWhere((thread) => thread.id == threadId);
+    if (index == -1) return;
+    final actorId = _hasSupabase
+        ? (_client.auth.currentUser?.id ?? currentUserId)
+        : currentUserId;
+    final readActor = actorId.isEmpty ? 'local-user' : actorId;
+    final thread = _threads[index];
+    final now = DateTime.now();
+    final messages = thread.messages
+        .map((message) {
+          if (message.isMine || message.readBy.contains(readActor)) {
+            return message;
+          }
+          return message.copyWith(readBy: [...message.readBy, readActor]);
+        })
+        .toList(growable: false);
+    _threads[index] = thread.copyWith(
+      unreadCount: 0,
+      messages: messages,
+      lastReadAt: now,
+    );
+    await _saveThreadsLocal();
+    notifyListeners();
+
+    if (!_hasSupabase || actorId.isEmpty) return;
+    try {
+      await _client.rpc(
+        'mark_chat_thread_read',
+        params: {'p_thread_id': threadId},
+      );
+    } catch (e) {
+      debugPrint('Thread read state sync error: $e');
+    }
+  }
+
+  Future<String?> _resolveChatActor({String? message}) async {
+    if (!_hasSupabase) return currentUserId;
+    final user = await _ensureAuthSession(message: message);
+    return user?.id;
+  }
+
+  String _replySenderName(MessageThread thread, ChatMessage message) {
+    if (message.senderName.trim().isNotEmpty) return message.senderName.trim();
+    return message.isMine
+        ? _profile.name
+        : thread.otherPartyName(currentUserId);
+  }
+
+  Future<bool> _appendOutgoingMessage(
+    MessageThread thread,
+    ChatMessage message,
+  ) async {
+    final updated = thread.copyWith(
+      lastMessage: message.previewText,
+      updatedAt: message.createdAt,
+      messages: [...thread.messages, message],
+      draft: '',
+    );
+    _upsertLocalThread(updated);
+    await _saveThreadsLocal();
+    notifyListeners();
+
+    final saved = await _upsertThread(updated, newMessages: [message]);
+    if (_hasSupabase) {
+      await _replaceLocalMessage(
+        thread.id,
+        message.copyWith(isPending: false, hasError: !saved),
+      );
+    }
+    final latestThread = threadById(thread.id) ?? updated;
+    if (saved) unawaited(_notifyMessageRecipient(latestThread, message));
+    if (!saved) {
+      _authError = 'Не удалось доставить сообщение. Проверьте интернет.';
+      notifyListeners();
+    }
+    return saved;
+  }
+
+  Future<void> _replaceLocalMessage(
+    String threadId,
+    ChatMessage replacement, {
+    bool updateLastPreview = false,
+  }) async {
+    final threadIndex = _threads.indexWhere((thread) => thread.id == threadId);
+    if (threadIndex == -1) return;
+    final thread = _threads[threadIndex];
+    final messageIndex = thread.messages.indexWhere(
+      (message) => message.id == replacement.id,
+    );
+    if (messageIndex == -1) return;
+    final messages = List<ChatMessage>.from(thread.messages);
+    messages[messageIndex] = replacement;
+    final shouldUpdatePreview =
+        updateLastPreview && messageIndex == messages.length - 1;
+    _threads[threadIndex] = thread.copyWith(
+      messages: messages,
+      lastMessage: shouldUpdatePreview
+          ? replacement.previewText
+          : thread.lastMessage,
+    );
+    await _saveThreadsLocal();
+    notifyListeners();
+  }
+
+  Future<void> _syncLastMessagePreview(String threadId) async {
+    final thread = threadById(threadId);
+    if (thread == null || thread.messages.isEmpty) return;
+    try {
+      await _client
+          .from('message_threads')
+          .update({'last_message': thread.messages.last.previewText})
+          .eq('id', threadId);
+    } catch (e) {
+      debugPrint('Thread preview sync error: $e');
+    }
+  }
+
+  Future<void> _saveThreadsLocal() {
+    return _writeList(_threadsKey, _threads.map((item) => item.toJson()));
   }
 
   Future<void> _notifyMessageRecipient(
@@ -2164,29 +3115,51 @@ class AppRepository extends ChangeNotifier {
           .limit(1);
       final rows = response as List<dynamic>;
       if (rows.isEmpty) return null;
-      return MessageThread.fromSupabase(
+      final thread = MessageThread.fromSupabase(
         rows.first as Map<String, dynamic>,
         currentUserId: currentUserId,
       );
+      final hydrated = await _hydrateThreadMessages([thread]);
+      return hydrated.first;
     } catch (e) {
       debugPrint('Thread fetch error: $e');
       return null;
     }
   }
 
-  Future<void> _saveThreadOrShowError(MessageThread thread) async {
-    final didSave = await _upsertThread(thread);
+  Future<void> _saveThreadOrShowError(
+    MessageThread thread, {
+    List<ChatMessage> newMessages = const [],
+  }) async {
+    final didSave = await _upsertThread(thread, newMessages: newMessages);
     if (didSave) return;
     _authError = 'Не удалось доставить сообщение. Проверьте интернет.';
   }
 
-  Future<bool> _upsertThread(MessageThread thread) async {
+  Future<bool> _upsertThread(
+    MessageThread thread, {
+    List<ChatMessage> newMessages = const [],
+  }) async {
     if (!_hasSupabase) return true;
 
     try {
-      await _client
-          .from('message_threads')
-          .upsert(thread.toSupabaseJson(), onConflict: 'id');
+      final payload = thread.toSupabaseJson()..remove('messages');
+      await _client.from('message_threads').upsert(payload, onConflict: 'id');
+      if (newMessages.isNotEmpty) {
+        await _client
+            .from('chat_messages')
+            .upsert(
+              newMessages
+                  .map(
+                    (message) => {
+                      ...message.toSupabaseJson(),
+                      'thread_id': thread.id,
+                    },
+                  )
+                  .toList(),
+              onConflict: 'id',
+            );
+      }
       return true;
     } catch (e) {
       debugPrint('Thread upsert error: $e');
@@ -2208,9 +3181,20 @@ class AppRepository extends ChangeNotifier {
   }
 
   String _currentAvatarUrl() {
+    if (_profile.avatarUrl.trim().isNotEmpty) return _profile.avatarUrl.trim();
+    if (!_hasSupabase) return '';
     final metadata = _client.auth.currentUser?.userMetadata ?? const {};
     final value = metadata['avatar_url'] ?? metadata['picture'] ?? '';
     return value.toString();
+  }
+
+  ConversationMember _currentConversationMember(String userId) {
+    return ConversationMember(
+      id: userId,
+      name: _profile.name,
+      handle: _profile.handle,
+      avatarUrl: _currentAvatarUrl(),
+    );
   }
 
   Future<User?> _ensureAuthSession({String? message}) async {
@@ -2386,6 +3370,8 @@ class AppRepository extends ChangeNotifier {
     _syncTimer?.cancel();
     _authSubscription?.cancel();
     _pushTokenSubscription?.cancel();
+    final messagesChannel = _messagesChannel;
+    if (messagesChannel != null) unawaited(messagesChannel.unsubscribe());
     super.dispose();
   }
 }

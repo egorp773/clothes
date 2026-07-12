@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../models/app_profile.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
+import '../features/listing_publish/data/listing_catalogs.dart';
 import '../widgets/app_image.dart';
 
 class ProductDetailData {
@@ -53,6 +54,7 @@ class ProductScreen extends StatefulWidget {
     required this.onLike,
     required this.onAddToCart,
     required this.onContactSeller,
+    this.onShare,
     required this.onOpenSeller,
     required this.onOpenReviews,
     required this.relatedProducts,
@@ -64,6 +66,7 @@ class ProductScreen extends StatefulWidget {
     this.loadSellerProfile,
     this.loadReviews,
     this.onToggleRelatedLike,
+    this.isPreview = false,
   });
 
   final Product? sourceProduct;
@@ -71,11 +74,13 @@ class ProductScreen extends StatefulWidget {
   final VoidCallback onLike;
   final VoidCallback onAddToCart;
   final VoidCallback onContactSeller;
+  final VoidCallback? onShare;
   final VoidCallback onOpenSeller;
   final VoidCallback onOpenReviews;
   final Future<SellerProfile?> Function(Product product)? loadSellerProfile;
   final Future<List<SellerReview>> Function(String sellerId)? loadReviews;
   final Future<void> Function(String productId)? onToggleRelatedLike;
+  final bool isPreview;
   final List<Product> relatedProducts;
   final ValueChanged<Product> onRelatedProductTap;
   final DeliveryProfile deliveryProfile;
@@ -96,6 +101,8 @@ class _ProductScreenState extends State<ProductScreen>
   static const _topGapCard = 16.0;
   static const _topRadiusCard = 28.0;
   static const _bottomRadiusCard = 24.0;
+  static const _closeDragDistance = 18.0;
+  static const _closeDragVelocity = 120.0;
 
   late final AnimationController _openController;
   late final AnimationController _expandController;
@@ -159,6 +166,10 @@ class _ProductScreenState extends State<ProductScreen>
 
   void _onScroll() {
     final offset = _scrollController.offset;
+    if (!widget.isPreview && offset < -_closeDragDistance && !_isClosing) {
+      _closeWithAnimation(dismissOffset: MediaQuery.sizeOf(context).height);
+      return;
+    }
     if ((offset - _scrollOffset).abs() > 1) {
       setState(() => _scrollOffset = offset);
     }
@@ -349,10 +360,14 @@ class _ProductScreenState extends State<ProductScreen>
     final product = widget.product;
     final hairline = 1 / MediaQuery.of(context).devicePixelRatio;
     final tExpand = _expandController.value;
-    final topGap =
-        (MediaQuery.of(context).viewPadding.top + _topGapCard) * (1 - tExpand);
-    final topRadius = _topRadiusCard * (1 - tExpand);
-    final bottomRadius = _bottomRadiusCard * (1 - tExpand);
+    final topGap = widget.isPreview
+        ? 0.0
+        : (MediaQuery.of(context).viewPadding.top + _topGapCard) *
+              (1 - tExpand);
+    final topRadius = widget.isPreview ? 0.0 : _topRadiusCard * (1 - tExpand);
+    final bottomRadius = widget.isPreview
+        ? 0.0
+        : _bottomRadiusCard * (1 - tExpand);
     final spacing = _spacing;
     final t = (_scrollOffset / _scrollRange).clamp(0.0, 1.0);
     final screenHeight = MediaQuery.sizeOf(context).height;
@@ -362,10 +377,9 @@ class _ProductScreenState extends State<ProductScreen>
     final canPurchase = product.canPurchase;
     final sellerRating = _reviewCount == 0 ? 0.0 : _reviewRating;
     final sellerFollowers =
-        ((_sellerProfile?.followersCount ?? 0) + _followersDelta).clamp(
-          0,
-          1 << 31,
-        ).toInt();
+        ((_sellerProfile?.followersCount ?? 0) + _followersDelta)
+            .clamp(0, 1 << 31)
+            .toInt();
     final priceText = canPurchase ? product.price : 'Не продается';
     final messageButtonText = canPurchase
         ? 'Написать сообщение'
@@ -378,27 +392,33 @@ class _ProductScreenState extends State<ProductScreen>
         child: Transform.translate(
           offset: Offset(0, _effectiveDragOffset),
           child: GestureDetector(
-            onVerticalDragUpdate: (details) {
-              if (_isClosing) return;
-              if (details.delta.dy < 0 && _dragOffset <= 0) return;
-              setState(() {
-                _dragOffset = (_dragOffset + details.delta.dy).clamp(
-                  0.0,
-                  screenHeight * 0.75,
-                );
-              });
-            },
-            onVerticalDragEnd: (details) {
-              if (_isClosing) return;
-              final velocity = details.primaryVelocity ?? 0;
-              final dismissDown = _dragOffset > 56 || velocity > 320;
-              setState(() {
-                if (!dismissDown) _dragOffset = 0;
-              });
-              if (dismissDown) {
-                _closeWithAnimation(dismissOffset: screenHeight);
-              }
-            },
+            onVerticalDragUpdate: widget.isPreview
+                ? null
+                : (details) {
+                    if (_isClosing) return;
+                    if (details.delta.dy < 0 && _dragOffset <= 0) return;
+                    setState(() {
+                      _dragOffset = (_dragOffset + details.delta.dy).clamp(
+                        0.0,
+                        screenHeight * 0.75,
+                      );
+                    });
+                  },
+            onVerticalDragEnd: widget.isPreview
+                ? null
+                : (details) {
+                    if (_isClosing) return;
+                    final velocity = details.primaryVelocity ?? 0;
+                    final dismissDown =
+                        _dragOffset > _closeDragDistance ||
+                        velocity > _closeDragVelocity;
+                    setState(() {
+                      if (!dismissDown) _dragOffset = 0;
+                    });
+                    if (dismissDown) {
+                      _closeWithAnimation(dismissOffset: screenHeight);
+                    }
+                  },
             child: Padding(
               padding: EdgeInsets.only(top: topGap),
               child: ClipRRect(
@@ -515,7 +535,9 @@ class _ProductScreenState extends State<ProductScreen>
                                               right: 18,
                                               child: _InlineIcon(
                                                 icon: CupertinoIcons.paperplane,
-                                                onTap: widget.onContactSeller,
+                                                onTap:
+                                                    widget.onShare ??
+                                                    widget.onContactSeller,
                                               ),
                                             ),
                                           ],
@@ -542,6 +564,7 @@ class _ProductScreenState extends State<ProductScreen>
                                       children: [
                                         _ProductDatabaseDescription(
                                           product: product,
+                                          sourceProduct: widget.sourceProduct,
                                           hairline: hairline,
                                         ),
                                         SizedBox(height: spacing),
@@ -582,10 +605,13 @@ class _ProductScreenState extends State<ProductScreen>
                               ),
                               SliverToBoxAdapter(
                                 child: SizedBox(
-                                  height:
-                                      52 +
-                                      16 +
-                                      MediaQuery.of(context).padding.bottom,
+                                  height: widget.isPreview
+                                      ? 16
+                                      : 52 +
+                                            16 +
+                                            MediaQuery.of(
+                                              context,
+                                            ).padding.bottom,
                                 ),
                               ),
                             ],
@@ -593,68 +619,70 @@ class _ProductScreenState extends State<ProductScreen>
                         ),
                       ),
                     ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: SafeArea(
-                        top: false,
-                        child: Container(
-                          padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
-                          color: Colors.transparent,
-                          child: SizedBox(
-                            height: 52,
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: canPurchase
-                                  ? widget.onContactSeller
-                                  : _showUnavailablePurchaseSheet,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.black,
-                                foregroundColor: Colors.white,
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(2),
+                    if (!widget.isPreview)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: SafeArea(
+                          top: false,
+                          child: Container(
+                            padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
+                            color: Colors.transparent,
+                            child: SizedBox(
+                              height: 52,
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: canPurchase
+                                    ? widget.onContactSeller
+                                    : _showUnavailablePurchaseSheet,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.black,
+                                  foregroundColor: Colors.white,
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
                                 ),
-                              ),
-                              child: Text(
-                                messageButtonText.toUpperCase(),
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0,
+                                child: Text(
+                                  messageButtonText.toUpperCase(),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      top: 0,
-                      child: SafeArea(
-                        top: false,
-                        bottom: false,
-                        child: Padding(
-                          padding: EdgeInsets.fromLTRB(
-                            10,
-                            MediaQuery.of(context).viewPadding.top + 8,
-                            10,
-                            8,
-                          ),
-                          child: Row(
-                            children: [
-                              _TopIcon(
-                                icon: CupertinoIcons.back,
-                                onTap: _closeWithAnimation,
-                              ),
-                            ],
+                    if (!widget.isPreview)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        top: 0,
+                        child: SafeArea(
+                          top: false,
+                          bottom: false,
+                          child: Padding(
+                            padding: EdgeInsets.fromLTRB(
+                              10,
+                              MediaQuery.of(context).viewPadding.top + 8,
+                              10,
+                              8,
+                            ),
+                            child: Row(
+                              children: [
+                                _TopIcon(
+                                  icon: CupertinoIcons.back,
+                                  onTap: _closeWithAnimation,
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
                   ],
                 ),
               ),
@@ -878,39 +906,45 @@ class _SellerCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 10),
-                      InkWell(
-                        onTap: onReviewsTap,
-                        splashFactory: NoSplash.splashFactory,
-                        highlightColor: Colors.transparent,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              CupertinoIcons.star_fill,
-                              size: 14,
-                              color: Color(0xFFFFB31A),
-                            ),
-                            const SizedBox(width: 3),
-                            Text(
-                              rating.toStringAsFixed(1).replaceAll('.', ','),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                height: 1,
-                                fontWeight: FontWeight.w800,
-                                color: Colors.black,
+                      Flexible(
+                        child: InkWell(
+                          onTap: onReviewsTap,
+                          splashFactory: NoSplash.splashFactory,
+                          highlightColor: Colors.transparent,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                CupertinoIcons.star_fill,
+                                size: 14,
+                                color: Color(0xFFFFB31A),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '$reviews отзывов',
-                              style: TextStyle(
-                                fontSize: 12,
-                                height: 1,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.black.withValues(alpha: 0.56),
+                              const SizedBox(width: 3),
+                              Text(
+                                rating.toStringAsFixed(1).replaceAll('.', ','),
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  height: 1,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.black,
+                                ),
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  _reviewCountLabel(reviews),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    height: 1,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.black.withValues(alpha: 0.56),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -1099,40 +1133,180 @@ class _ProductLocationSection extends StatelessWidget {
   }
 }
 
-class _ProductDatabaseDescription extends StatelessWidget {
+class _ProductDatabaseDescription extends StatefulWidget {
   const _ProductDatabaseDescription({
     required this.product,
+    required this.sourceProduct,
     required this.hairline,
   });
 
   final ProductDetailData product;
+  final Product? sourceProduct;
   final double hairline;
 
   @override
+  State<_ProductDatabaseDescription> createState() =>
+      _ProductDatabaseDescriptionState();
+}
+
+class _ProductDatabaseDescriptionState
+    extends State<_ProductDatabaseDescription> {
+  bool _showMore = false;
+
+  @override
   Widget build(BuildContext context) {
+    final product = widget.product;
+    final source = widget.sourceProduct;
     final description = product.description.trim();
+    final hasMore =
+        source != null &&
+        <String>[
+          source.section,
+          source.subcategory,
+          source.itemType,
+          source.gender,
+          ...source.secondaryColors,
+          source.material,
+          source.pattern,
+          source.season,
+          source.style,
+          source.fit,
+          source.sleeveLength,
+          source.closure,
+        ].any((value) => value.trim().isNotEmpty);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _ProductInfoSection(
           title: 'Характеристики',
-          hairline: hairline,
+          hairline: widget.hairline,
           showTopBorder: false,
+          compact: true,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              _CharacteristicLine(label: 'Категория', value: product.category),
               _CharacteristicLine(label: 'Состояние', value: product.condition),
               _CharacteristicLine(label: 'Размер', value: product.size),
               _CharacteristicLine(label: 'Бренд', value: product.brand),
               _CharacteristicLine(label: 'Цвет', value: product.color),
+              _CharacteristicLine(label: 'Город', value: product.location),
+              if (_showMore && source != null) ...[
+                _CharacteristicLine(
+                  label: 'Раздел',
+                  value: ListingCatalogs.nameOf(
+                    source.section,
+                    fallback: source.section,
+                  ),
+                ),
+                _CharacteristicLine(
+                  label: 'Подкатегория',
+                  value: ListingCatalogs.nameOf(
+                    source.subcategory,
+                    fallback: source.subcategory,
+                  ),
+                ),
+                _CharacteristicLine(
+                  label: 'Тип вещи',
+                  value: ListingCatalogs.nameOf(
+                    source.itemType,
+                    fallback: source.itemType,
+                  ),
+                ),
+                _CharacteristicLine(
+                  label: 'Пол',
+                  value: ListingCatalogs.nameOf(
+                    source.gender,
+                    fallback: source.gender,
+                  ),
+                ),
+                _CharacteristicLine(
+                  label: 'Дополнительные цвета',
+                  value: source.secondaryColors
+                      .map(
+                        (value) =>
+                            ListingCatalogs.nameOf(value, fallback: value),
+                      )
+                      .join(', '),
+                ),
+                _CharacteristicLine(
+                  label: 'Материал',
+                  value: ListingCatalogs.nameOf(
+                    source.material,
+                    fallback: source.material,
+                  ),
+                ),
+                _CharacteristicLine(
+                  label: 'Рисунок или принт',
+                  value: ListingCatalogs.nameOf(
+                    source.pattern,
+                    fallback: source.pattern,
+                  ),
+                ),
+                _CharacteristicLine(
+                  label: 'Сезон',
+                  value: ListingCatalogs.nameOf(
+                    source.season,
+                    fallback: source.season,
+                  ),
+                ),
+                _CharacteristicLine(
+                  label: 'Стиль',
+                  value: ListingCatalogs.nameOf(
+                    source.style,
+                    fallback: source.style,
+                  ),
+                ),
+                _CharacteristicLine(
+                  label: 'Крой',
+                  value: ListingCatalogs.nameOf(
+                    source.fit,
+                    fallback: source.fit,
+                  ),
+                ),
+                _CharacteristicLine(
+                  label: 'Длина рукава',
+                  value: ListingCatalogs.nameOf(
+                    source.sleeveLength,
+                    fallback: source.sleeveLength,
+                  ),
+                ),
+                _CharacteristicLine(
+                  label: 'Застёжка',
+                  value: ListingCatalogs.nameOf(
+                    source.closure,
+                    fallback: source.closure,
+                  ),
+                ),
+              ],
+              if (hasMore)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => _showMore = !_showMore),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.black,
+                      padding: EdgeInsets.zero,
+                    ),
+                    iconAlignment: IconAlignment.end,
+                    icon: Icon(
+                      _showMore
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      size: 18,
+                    ),
+                    label: Text(_showMore ? 'Скрыть' : 'Подробнее'),
+                  ),
+                ),
             ],
           ),
         ),
         if (description.isNotEmpty)
           _ProductInfoSection(
             title: 'Описание',
-            hairline: hairline,
+            hairline: widget.hairline,
+            compact: true,
             child: Text(
               description,
               style: const TextStyle(
@@ -1209,14 +1383,14 @@ class _RelatedProductsSection extends StatelessWidget {
         const Text(
           'Похожие объявления',
           style: TextStyle(
-            fontSize: 24,
+            fontSize: 16,
             height: 1,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w700,
             letterSpacing: 0,
             color: Colors.black,
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 7),
         GridView.builder(
           padding: EdgeInsets.zero,
           physics: const NeverScrollableScrollPhysics(),
@@ -1315,7 +1489,9 @@ class _RelatedProductCardState extends State<_RelatedProductCard> {
                       width: 38,
                       height: 38,
                       child: Icon(
-                        _isLiked ? CupertinoIcons.heart_fill : CupertinoIcons.heart,
+                        _isLiked
+                            ? CupertinoIcons.heart_fill
+                            : CupertinoIcons.heart,
                         size: 25,
                         color: Colors.black,
                       ),
@@ -1367,40 +1543,52 @@ class _ProductInfoSection extends StatelessWidget {
     required this.child,
     required this.hairline,
     this.showTopBorder = true,
+    this.compact = false,
   });
 
   final String title;
   final Widget child;
   final double hairline;
   final bool showTopBorder;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return SizedBox(
       width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(0, 12, 0, 14),
-      decoration: BoxDecoration(
-        border: showTopBorder
-            ? Border(
-                top: BorderSide(color: Colors.black, width: hairline),
-              )
-            : null,
-      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 24,
-              height: 1,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0,
-              color: Colors.black,
+          if (showTopBorder)
+            Center(
+              child: Container(
+                width: 64,
+                height: hairline,
+                color: Colors.black,
+              ),
+            ),
+          Padding(
+            padding: compact
+                ? const EdgeInsets.fromLTRB(0, 8, 0, 10)
+                : const EdgeInsets.fromLTRB(0, 12, 0, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: compact ? 16 : 24,
+                    height: 1,
+                    fontWeight: compact ? FontWeight.w700 : FontWeight.w800,
+                    letterSpacing: 0,
+                    color: Colors.black,
+                  ),
+                ),
+                SizedBox(height: compact ? 7 : 10),
+                child,
+              ],
             ),
           ),
-          const SizedBox(height: 10),
-          child,
         ],
       ),
     );
@@ -1416,14 +1604,16 @@ class _CharacteristicLine extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final normalized = value.trim();
+    if (normalized.isEmpty) return const SizedBox.shrink();
+
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 6),
       child: RichText(
         text: TextSpan(
           style: const TextStyle(
             fontSize: 14,
-            height: 1,
-            fontWeight: FontWeight.w700,
+            height: 1.24,
+            fontWeight: FontWeight.w500,
             letterSpacing: 0,
             color: Color(0xFF77777C),
           ),
@@ -2106,4 +2296,22 @@ String _formatPrice(int value) {
     RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
     (match) => '${match[1]} ',
   );
+}
+
+String _reviewCountLabel(int count) {
+  final mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) {
+    return '$count отзывов';
+  }
+
+  switch (count % 10) {
+    case 1:
+      return '$count отзыв';
+    case 2:
+    case 3:
+    case 4:
+      return '$count отзыва';
+    default:
+      return '$count отзывов';
+  }
 }

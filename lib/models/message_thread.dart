@@ -1,3 +1,48 @@
+const Object _chatUnset = Object();
+
+class ChatAttachment {
+  const ChatAttachment({
+    required this.url,
+    this.name = '',
+    this.mimeType = '',
+    this.size = 0,
+    this.width,
+    this.height,
+  });
+
+  final String url;
+  final String name;
+  final String mimeType;
+  final int size;
+  final int? width;
+  final int? height;
+
+  bool get isImage =>
+      mimeType.startsWith('image/') ||
+      RegExp(r'\.(jpe?g|png|webp|gif)$', caseSensitive: false).hasMatch(url);
+
+  factory ChatAttachment.fromJson(Map<String, dynamic> json) {
+    return ChatAttachment(
+      url: json['url'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      mimeType:
+          json['mime_type'] as String? ?? json['mimeType'] as String? ?? '',
+      size: (json['size'] as num?)?.toInt() ?? 0,
+      width: (json['width'] as num?)?.toInt(),
+      height: (json['height'] as num?)?.toInt(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'url': url,
+    'name': name,
+    'mime_type': mimeType,
+    'size': size,
+    if (width != null) 'width': width,
+    if (height != null) 'height': height,
+  };
+}
+
 class ChatMessage {
   const ChatMessage({
     required this.id,
@@ -6,6 +51,19 @@ class ChatMessage {
     required this.isMine,
     this.senderId = '',
     this.senderName = '',
+    this.senderAvatar = '',
+    this.type = 'text',
+    this.sharedProduct,
+    this.attachment,
+    this.replyToId = '',
+    this.replyToText = '',
+    this.replyToSenderName = '',
+    this.editedAt,
+    this.deletedAt,
+    this.readBy = const [],
+    this.reactions = const {},
+    this.isPending = false,
+    this.hasError = false,
   });
 
   final String id;
@@ -14,6 +72,36 @@ class ChatMessage {
   final bool isMine;
   final String senderId;
   final String senderName;
+  final String senderAvatar;
+  final String type;
+  final SharedProductPreview? sharedProduct;
+  final ChatAttachment? attachment;
+  final String replyToId;
+  final String replyToText;
+  final String replyToSenderName;
+  final DateTime? editedAt;
+  final DateTime? deletedAt;
+  final List<String> readBy;
+  final Map<String, List<String>> reactions;
+  final bool isPending;
+  final bool hasError;
+
+  bool get isProductShare => type == 'product' && sharedProduct != null;
+  bool get isImage => type == 'image' && attachment?.isImage == true;
+  bool get isDeleted => deletedAt != null;
+  bool get isEdited => editedAt != null && !isDeleted;
+  bool get isReply => replyToId.isNotEmpty;
+  int get reactionCount =>
+      reactions.values.fold<int>(0, (total, users) => total + users.length);
+  bool isReadByAnotherUser() =>
+      readBy.any((userId) => userId.isNotEmpty && userId != senderId);
+
+  String get previewText {
+    if (isDeleted) return 'Сообщение удалено';
+    if (isImage) return text.trim().isEmpty ? 'Фотография' : text.trim();
+    if (isProductShare) return text.trim().isEmpty ? 'Объявление' : text.trim();
+    return text.trim();
+  }
 
   factory ChatMessage.fromJson(
     Map<String, dynamic> json, {
@@ -21,18 +109,131 @@ class ChatMessage {
   }) {
     final senderId =
         json['sender_id'] as String? ?? json['senderId'] as String? ?? '';
+    final rawProduct = json['product'];
+    final sharedProduct = rawProduct is Map
+        ? SharedProductPreview.fromJson(Map<String, dynamic>.from(rawProduct))
+        : null;
+    final rawAttachment = json['attachment'];
+    final attachment = rawAttachment is Map
+        ? ChatAttachment.fromJson(Map<String, dynamic>.from(rawAttachment))
+        : null;
+    final rawReply = json['reply_snapshot'] ?? json['replySnapshot'];
+    final reply = rawReply is Map
+        ? Map<String, dynamic>.from(rawReply)
+        : const <String, dynamic>{};
+    final rawReadBy = json['read_by'] ?? json['readBy'];
     return ChatMessage(
       id: json['id'] as String,
-      text: json['text'] as String,
-      createdAt: DateTime.parse(
-        json['created_at'] as String? ?? json['createdAt'] as String,
-      ),
+      text: json['text'] as String? ?? '',
+      createdAt:
+          DateTime.tryParse(
+            json['created_at'] as String? ?? json['createdAt'] as String? ?? '',
+          ) ??
+          DateTime.now(),
       isMine: currentUserId.isNotEmpty
           ? senderId == currentUserId
           : json['isMine'] as bool? ?? true,
       senderId: senderId,
       senderName:
           json['sender_name'] as String? ?? json['senderName'] as String? ?? '',
+      senderAvatar:
+          json['sender_avatar'] as String? ??
+          json['senderAvatar'] as String? ??
+          '',
+      type:
+          json['type'] as String? ??
+          (sharedProduct != null
+              ? 'product'
+              : attachment?.isImage == true
+              ? 'image'
+              : 'text'),
+      sharedProduct: sharedProduct,
+      attachment: attachment,
+      replyToId:
+          json['reply_to_id'] as String? ?? json['replyToId'] as String? ?? '',
+      replyToText:
+          reply['text'] as String? ?? json['replyToText'] as String? ?? '',
+      replyToSenderName:
+          reply['sender_name'] as String? ??
+          reply['senderName'] as String? ??
+          json['replyToSenderName'] as String? ??
+          '',
+      editedAt: _parseOptionalDate(json['edited_at'] ?? json['editedAt']),
+      deletedAt: _parseOptionalDate(json['deleted_at'] ?? json['deletedAt']),
+      readBy: rawReadBy is List
+          ? rawReadBy.whereType<String>().toList(growable: false)
+          : const [],
+      reactions: _parseReactions(json['reactions']),
+      isPending: json['isPending'] as bool? ?? false,
+      hasError: json['hasError'] as bool? ?? false,
+    );
+  }
+
+  static DateTime? _parseOptionalDate(dynamic value) {
+    if (value is! String || value.isEmpty) return null;
+    return DateTime.tryParse(value);
+  }
+
+  static Map<String, List<String>> _parseReactions(dynamic value) {
+    if (value is! Map) return const {};
+    final parsed = <String, List<String>>{};
+    for (final entry in value.entries) {
+      final users = entry.value;
+      if (users is! List) continue;
+      final ids = users.whereType<String>().toList(growable: false);
+      if (ids.isNotEmpty) parsed[entry.key.toString()] = ids;
+    }
+    return parsed;
+  }
+
+  ChatMessage copyWith({
+    String? text,
+    DateTime? createdAt,
+    bool? isMine,
+    String? senderId,
+    String? senderName,
+    String? senderAvatar,
+    String? type,
+    Object? sharedProduct = _chatUnset,
+    Object? attachment = _chatUnset,
+    String? replyToId,
+    String? replyToText,
+    String? replyToSenderName,
+    Object? editedAt = _chatUnset,
+    Object? deletedAt = _chatUnset,
+    List<String>? readBy,
+    Map<String, List<String>>? reactions,
+    bool? isPending,
+    bool? hasError,
+  }) {
+    return ChatMessage(
+      id: id,
+      text: text ?? this.text,
+      createdAt: createdAt ?? this.createdAt,
+      isMine: isMine ?? this.isMine,
+      senderId: senderId ?? this.senderId,
+      senderName: senderName ?? this.senderName,
+      senderAvatar: senderAvatar ?? this.senderAvatar,
+      type: type ?? this.type,
+      sharedProduct: identical(sharedProduct, _chatUnset)
+          ? this.sharedProduct
+          : sharedProduct as SharedProductPreview?,
+      attachment: identical(attachment, _chatUnset)
+          ? this.attachment
+          : attachment as ChatAttachment?,
+      replyToId: replyToId ?? this.replyToId,
+      replyToText: replyToText ?? this.replyToText,
+      replyToSenderName: replyToSenderName ?? this.replyToSenderName,
+      editedAt: identical(editedAt, _chatUnset)
+          ? this.editedAt
+          : editedAt as DateTime?,
+      deletedAt: identical(deletedAt, _chatUnset)
+          ? this.deletedAt
+          : deletedAt as DateTime?,
+      readBy: readBy ?? this.readBy,
+      reactions: reactions ?? this.reactions,
+      isPending: isPending ?? this.isPending,
+      hasError: hasError ?? this.hasError,
     );
   }
 
@@ -44,6 +245,22 @@ class ChatMessage {
       'isMine': isMine,
       'senderId': senderId,
       'senderName': senderName,
+      'senderAvatar': senderAvatar,
+      'type': type,
+      if (sharedProduct != null) 'product': sharedProduct!.toJson(),
+      if (attachment != null) 'attachment': attachment!.toJson(),
+      'replyToId': replyToId,
+      if (isReply)
+        'replySnapshot': {
+          'text': replyToText,
+          'sender_name': replyToSenderName,
+        },
+      if (editedAt != null) 'editedAt': editedAt!.toIso8601String(),
+      if (deletedAt != null) 'deletedAt': deletedAt!.toIso8601String(),
+      'readBy': readBy,
+      'reactions': reactions,
+      'isPending': isPending,
+      'hasError': hasError,
     };
   }
 
@@ -54,8 +271,87 @@ class ChatMessage {
       'created_at': createdAt.toIso8601String(),
       'sender_id': senderId,
       'sender_name': senderName,
+      'sender_avatar': senderAvatar,
+      'type': type,
+      if (sharedProduct != null) 'product': sharedProduct!.toJson(),
+      if (attachment != null) 'attachment': attachment!.toJson(),
+      if (isReply) 'reply_to_id': replyToId,
+      if (isReply)
+        'reply_snapshot': {
+          'text': replyToText,
+          'sender_name': replyToSenderName,
+        },
+      if (editedAt != null) 'edited_at': editedAt!.toIso8601String(),
+      if (deletedAt != null) 'deleted_at': deletedAt!.toIso8601String(),
+      'read_by': readBy,
+      'reactions': reactions,
     };
   }
+}
+
+class SharedProductPreview {
+  const SharedProductPreview({
+    required this.id,
+    required this.title,
+    required this.image,
+    required this.price,
+    this.sellerHandle = '',
+  });
+
+  final String id;
+  final String title;
+  final String image;
+  final String price;
+  final String sellerHandle;
+
+  factory SharedProductPreview.fromJson(Map<String, dynamic> json) {
+    return SharedProductPreview(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      image: json['image'] as String? ?? '',
+      price: json['price'] as String? ?? '',
+      sellerHandle: json['seller_handle'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'image': image,
+    'price': price,
+    'seller_handle': sellerHandle,
+  };
+}
+
+class ConversationMember {
+  const ConversationMember({
+    required this.id,
+    required this.name,
+    required this.handle,
+    this.avatarUrl = '',
+  });
+
+  final String id;
+  final String name;
+  final String handle;
+  final String avatarUrl;
+
+  factory ConversationMember.fromJson(Map<String, dynamic> json) {
+    return ConversationMember(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      handle: json['handle'] as String? ?? '',
+      avatarUrl:
+          json['avatar_url'] as String? ?? json['avatarUrl'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'handle': handle,
+    'avatar_url': avatarUrl,
+  };
 }
 
 class MessageThread {
@@ -76,6 +372,16 @@ class MessageThread {
     this.sellerAvatar = '',
     this.unreadCount = 0,
     this.messages = const [],
+    this.isGroup = false,
+    this.title = '',
+    this.groupAvatar = '',
+    this.createdBy = '',
+    this.members = const [],
+    this.isPinned = false,
+    this.isMuted = false,
+    this.isArchived = false,
+    this.draft = '',
+    this.lastReadAt,
   });
 
   final String id;
@@ -94,6 +400,16 @@ class MessageThread {
   final String sellerAvatar;
   final int unreadCount;
   final List<ChatMessage> messages;
+  final bool isGroup;
+  final String title;
+  final String groupAvatar;
+  final String createdBy;
+  final List<ConversationMember> members;
+  final bool isPinned;
+  final bool isMuted;
+  final bool isArchived;
+  final String draft;
+  final DateTime? lastReadAt;
 
   factory MessageThread.fromJson(Map<String, dynamic> json) {
     return MessageThread(
@@ -119,6 +435,16 @@ class MessageThread {
               )
               .toList() ??
           const [],
+      isGroup: json['isGroup'] as bool? ?? false,
+      title: json['title'] as String? ?? '',
+      groupAvatar: json['groupAvatar'] as String? ?? '',
+      createdBy: json['createdBy'] as String? ?? '',
+      members: _parseMembers(json['members']),
+      isPinned: json['isPinned'] as bool? ?? false,
+      isMuted: json['isMuted'] as bool? ?? false,
+      isArchived: json['isArchived'] as bool? ?? false,
+      draft: json['draft'] as String? ?? '',
+      lastReadAt: ChatMessage._parseOptionalDate(json['lastReadAt']),
     );
   }
 
@@ -154,7 +480,82 @@ class MessageThread {
               )
               .toList() ??
           const [],
+      isGroup: json['is_group'] as bool? ?? false,
+      title: json['title'] as String? ?? '',
+      groupAvatar: json['group_avatar'] as String? ?? '',
+      createdBy: json['created_by'] as String? ?? '',
+      members: _parseMembers(json['members']),
+      isPinned: json['is_pinned'] as bool? ?? false,
+      isMuted: json['is_muted'] as bool? ?? false,
+      isArchived: json['is_archived'] as bool? ?? false,
+      draft: json['draft'] as String? ?? '',
+      lastReadAt: ChatMessage._parseOptionalDate(json['last_read_at']),
     );
+  }
+
+  static List<ConversationMember> _parseMembers(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map(
+          (item) =>
+              ConversationMember.fromJson(Map<String, dynamic>.from(item)),
+        )
+        .where((member) => member.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  List<String> get memberIds {
+    final ids = <String>{
+      if (buyerId.isNotEmpty) buyerId,
+      if (sellerId.isNotEmpty) sellerId,
+      ...members.map((member) => member.id).where((id) => id.isNotEmpty),
+    };
+    return ids.toList(growable: false);
+  }
+
+  bool containsUser(String userId) {
+    if (userId.isEmpty) return false;
+    return memberIds.contains(userId);
+  }
+
+  String displayTitle(String currentUserId) {
+    if (!isGroup) return otherPartyName(currentUserId);
+    if (title.trim().isNotEmpty) return title.trim();
+    final names = members
+        .where((member) => member.id != currentUserId)
+        .map((member) => member.name.trim())
+        .where((name) => name.isNotEmpty)
+        .take(3)
+        .toList();
+    return names.isEmpty ? 'Беседа' : names.join(', ');
+  }
+
+  String displaySubtitle(String currentUserId) {
+    if (!isGroup) return otherPartyHandle(currentUserId);
+    final count = memberIds.length;
+    return '$count ${_memberWord(count)}';
+  }
+
+  String displayAvatar(String currentUserId) {
+    return isGroup ? groupAvatar : otherPartyAvatar(currentUserId);
+  }
+
+  ConversationMember? memberById(String userId) {
+    for (final member in members) {
+      if (member.id == userId) return member;
+    }
+    return null;
+  }
+
+  static String _memberWord(int count) {
+    final mod10 = count % 10;
+    final mod100 = count % 100;
+    if (mod10 == 1 && mod100 != 11) return 'участник';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return 'участника';
+    }
+    return 'участников';
   }
 
   String otherPartyName(String currentUserId) {
@@ -203,6 +604,16 @@ class MessageThread {
     String? sellerAvatar,
     int? unreadCount,
     List<ChatMessage>? messages,
+    bool? isGroup,
+    String? title,
+    String? groupAvatar,
+    String? createdBy,
+    List<ConversationMember>? members,
+    bool? isPinned,
+    bool? isMuted,
+    bool? isArchived,
+    String? draft,
+    Object? lastReadAt = _chatUnset,
   }) {
     return MessageThread(
       id: id,
@@ -221,6 +632,18 @@ class MessageThread {
       sellerAvatar: sellerAvatar ?? this.sellerAvatar,
       unreadCount: unreadCount ?? this.unreadCount,
       messages: messages ?? this.messages,
+      isGroup: isGroup ?? this.isGroup,
+      title: title ?? this.title,
+      groupAvatar: groupAvatar ?? this.groupAvatar,
+      createdBy: createdBy ?? this.createdBy,
+      members: members ?? this.members,
+      isPinned: isPinned ?? this.isPinned,
+      isMuted: isMuted ?? this.isMuted,
+      isArchived: isArchived ?? this.isArchived,
+      draft: draft ?? this.draft,
+      lastReadAt: identical(lastReadAt, _chatUnset)
+          ? this.lastReadAt
+          : lastReadAt as DateTime?,
     );
   }
 
@@ -242,6 +665,16 @@ class MessageThread {
       'sellerAvatar': sellerAvatar,
       'unreadCount': unreadCount,
       'messages': messages.map((message) => message.toJson()).toList(),
+      'isGroup': isGroup,
+      'title': title,
+      'groupAvatar': groupAvatar,
+      'createdBy': createdBy,
+      'members': members.map((member) => member.toJson()).toList(),
+      'isPinned': isPinned,
+      'isMuted': isMuted,
+      'isArchived': isArchived,
+      'draft': draft,
+      if (lastReadAt != null) 'lastReadAt': lastReadAt!.toIso8601String(),
     };
   }
 
@@ -263,6 +696,17 @@ class MessageThread {
       'updated_at': updatedAt.toIso8601String(),
       'unread_count': unreadCount,
       'messages': messages.map((message) => message.toSupabaseJson()).toList(),
+      'is_group': isGroup,
+      'title': title,
+      'group_avatar': groupAvatar,
+      'created_by': createdBy.isEmpty ? null : createdBy,
+      'member_ids': memberIds,
+      'members': members.map((member) => member.toJson()).toList(),
+      'is_pinned': isPinned,
+      'is_muted': isMuted,
+      'is_archived': isArchived,
+      'draft': draft,
+      if (lastReadAt != null) 'last_read_at': lastReadAt!.toIso8601String(),
     };
   }
 }

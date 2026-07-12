@@ -50,8 +50,15 @@ class ProfileNotificationsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sorted = List<ProfileNotification>.from(notifications)
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final sorted =
+        notifications
+            .where(
+              (notification) =>
+                  notification.title.trim().isNotEmpty ||
+                  notification.body.trim().isNotEmpty,
+            )
+            .toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return _PlainProfilePage(
       title: 'уведомления',
       child: sorted.isEmpty
@@ -66,8 +73,6 @@ class ProfileNotificationsScreen extends StatelessWidget {
                     notification: sorted[i],
                     onTap: () => onMarkRead(sorted[i].id),
                   ),
-                  if (i != sorted.length - 1)
-                    const Divider(height: 18, thickness: 1, color: _line),
                 ],
               ],
             ),
@@ -585,11 +590,20 @@ class _NotificationTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = notification.title.trim();
+    final body = notification.body.trim();
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: notification.isRead ? const Color(0xFFF7F7F8) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _line),
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -597,7 +611,7 @@ class _NotificationTile extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    notification.title,
+                    title.isEmpty ? body : title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: _featureBodyStyle.copyWith(height: 1.15),
@@ -612,11 +626,17 @@ class _NotificationTile extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              notification.body,
-              style: _featureBodyStyle.copyWith(fontSize: 13, height: 1.4),
-            ),
+            if (body.isNotEmpty && body != title) ...[
+              const SizedBox(height: 8),
+              Text(
+                body,
+                style: _featureBodyStyle.copyWith(
+                  fontSize: 13,
+                  height: 1.4,
+                  color: _muted,
+                ),
+              ),
+            ],
           ],
         ),
       ),

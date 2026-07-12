@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../core/app_typography.dart';
+import '../features/chat/chat_actions.dart';
+import '../features/visual_search/visual_search_screen.dart';
 import '../models/app_profile.dart';
 import '../models/message_thread.dart';
 import '../models/product.dart';
@@ -18,6 +21,7 @@ class CatalogScreen extends StatefulWidget {
   final List<Product> products;
   final Future<void> Function(String productId) onToggleLike;
   final Future<void> Function(String productId) onHideProduct;
+  final ValueChanged<Product> onShareProduct;
   final Future<MessageThread?> Function(Product product) onContactSeller;
   final Future<SellerProfile?> Function(Product product) onLoadSellerProfile;
   final Future<List<Product>> Function(String sellerId) onLoadSellerProducts;
@@ -43,6 +47,7 @@ class CatalogScreen extends StatefulWidget {
   final Listenable threadsListenable;
   final MessageThread? Function(String threadId) resolveThread;
   final DateTime? Function(String userId) lastSeenForUser;
+  final ChatActions? chatActions;
 
   const CatalogScreen({
     super.key,
@@ -51,6 +56,7 @@ class CatalogScreen extends StatefulWidget {
     required this.products,
     required this.onToggleLike,
     required this.onHideProduct,
+    required this.onShareProduct,
     required this.onContactSeller,
     required this.onLoadSellerProfile,
     required this.onLoadSellerProducts,
@@ -66,6 +72,7 @@ class CatalogScreen extends StatefulWidget {
     required this.threadsListenable,
     required this.resolveThread,
     required this.lastSeenForUser,
+    this.chatActions,
   });
 
   @override
@@ -79,6 +86,7 @@ class _CatalogScreenState extends State<CatalogScreen>
   final ScrollController _scrollController = ScrollController();
   bool _showFloatingSearch = false;
   double _lastScrollOffset = 0;
+  final ImagePicker _visualSearchPicker = ImagePicker();
 
   final List<String> _tabs = [
     'Новинки',
@@ -288,7 +296,7 @@ class _CatalogScreenState extends State<CatalogScreen>
         const SizedBox(width: 10),
         GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => _showSnackBar('Поиск по фото'),
+          onTap: _openVisualSearch,
           child: Container(
             width: 48,
             height: double.infinity,
@@ -455,6 +463,52 @@ class _CatalogScreenState extends State<CatalogScreen>
     await widget.onHideProduct(productId);
   }
 
+  Future<void> _openVisualSearch() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: Colors.white,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.camera_alt_outlined),
+                title: const Text('Сфотографировать'),
+                onTap: () => Navigator.pop(context, ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Выбрать из галереи'),
+                onTap: () => Navigator.pop(context, ImageSource.gallery),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+    final image = await _visualSearchPicker.pickImage(
+      source: source,
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageQuality: 88,
+    );
+    if (image == null || !mounted) return;
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => VisualSearchScreen(
+          initialImage: image,
+          onProductTap: _showProductDetails,
+          onToggleLike: widget.onToggleLike,
+          onShareProduct: widget.onShareProduct,
+        ),
+      ),
+    );
+  }
+
   void _openSellerProfile(Product product) {
     final initialProducts = widget.products
         .where((item) => item.ownerId == product.ownerId)
@@ -487,10 +541,14 @@ class _CatalogScreenState extends State<CatalogScreen>
                 builder: (context) => ChatScreen(
                   thread: thread,
                   onSendMessage: widget.onSendMessage,
+                  onOpenProduct: _openProductFromChat,
                   currentUserId: widget.currentUserId,
                   threadsListenable: widget.threadsListenable,
                   resolveThread: widget.resolveThread,
                   lastSeenForUser: widget.lastSeenForUser,
+                  actions: widget.chatActions,
+                  onOpenSellerProfile: () => _openSellerFromChat(thread),
+                  onBuyProduct: () => _buyFromChat(thread),
                 ),
               ),
             );
@@ -558,14 +616,19 @@ class _CatalogScreenState extends State<CatalogScreen>
                   builder: (context) => ChatScreen(
                     thread: thread,
                     onSendMessage: widget.onSendMessage,
+                    onOpenProduct: _openProductFromChat,
                     currentUserId: widget.currentUserId,
                     threadsListenable: widget.threadsListenable,
                     resolveThread: widget.resolveThread,
                     lastSeenForUser: widget.lastSeenForUser,
+                    actions: widget.chatActions,
+                    onOpenSellerProfile: () => _openSellerFromChat(thread),
+                    onBuyProduct: () => _buyFromChat(thread),
                   ),
                 ),
               );
             },
+            onShare: () => widget.onShareProduct(product),
           );
         },
       ),
@@ -756,35 +819,72 @@ class _CatalogScreenState extends State<CatalogScreen>
   }
 
   void _showShareSheet(Product product) {
-    _showAppSheet(
-      title: 'Поделиться',
-      child: Column(
-        children: [
-          _SheetOption(
-            label: 'Поделиться',
-            icon: Icons.ios_share_outlined,
-            onTap: () {
-              Navigator.pop(context);
-              _showSnackBar('Поделиться');
-            },
+    widget.onShareProduct(product);
+  }
+
+  void _openProductFromChat(String productId) {
+    for (final product in widget.products) {
+      if (product.id == productId) {
+        _showProductDetails(product);
+        return;
+      }
+    }
+    _showSnackBar('Объявление больше недоступно');
+  }
+
+  Product? _productForThread(MessageThread thread) {
+    for (final product in widget.products) {
+      if (thread.productId.isNotEmpty && product.id == thread.productId) {
+        return product;
+      }
+    }
+    final sellerId = thread.otherPartyId(widget.currentUserId);
+    for (final product in widget.products) {
+      if (sellerId.isNotEmpty && product.ownerId == sellerId) return product;
+    }
+    return null;
+  }
+
+  void _openSellerFromChat(MessageThread thread) {
+    final product = _productForThread(thread);
+    if (product == null) {
+      _showSnackBar('Профиль продавца не найден');
+      return;
+    }
+    _openSellerProfile(product);
+  }
+
+  void _buyFromChat(MessageThread thread) {
+    final product = _productForThread(thread);
+    if (product == null || product.isHidden) {
+      _showSnackBar('Товар больше недоступен');
+      return;
+    }
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => DeliveryCheckoutScreen(
+          product: ProductDetailData(
+            id: product.id,
+            title: product.title,
+            description: product.description,
+            price: product.price,
+            priceValue: product.priceValue,
+            image: product.image,
+            images: product.images,
+            category: product.category,
+            brand: product.brand,
+            color: product.color,
+            sellerName: product.sellerName,
+            sellerHandle: product.sellerHandle,
+            size: product.size,
+            condition: product.condition,
+            location: product.location,
+            isLiked: product.isLiked,
           ),
-          _SheetOption(
-            label: 'Отправить другу',
-            icon: Icons.send_outlined,
-            onTap: () {
-              Navigator.pop(context);
-              _showSnackBar('Отправить другу');
-            },
-          ),
-          _SheetOption(
-            label: 'Скопировать ссылку',
-            icon: Icons.link,
-            onTap: () {
-              Navigator.pop(context);
-              _showSnackBar('Ссылка скопирована');
-            },
-          ),
-        ],
+          deliveryProfile: widget.deliveryProfile,
+          onSaveProfile: widget.onSaveDeliveryProfile,
+          onSubmitOrder: () => widget.onCreateDeliveryOrder(product),
+        ),
       ),
     );
   }

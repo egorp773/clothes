@@ -6,6 +6,14 @@ class AppProfile {
     required this.rating,
     required this.salesCount,
     required this.followersCount,
+    this.firstName = '',
+    this.lastName = '',
+    this.middleName = '',
+    this.gender = 'male',
+    this.birthDate = '',
+    this.phone = '',
+    this.email = '',
+    this.avatarUrl = '',
   });
 
   final String name;
@@ -14,15 +22,41 @@ class AppProfile {
   final double rating;
   final int salesCount;
   final int followersCount;
+  final String firstName;
+  final String lastName;
+  final String middleName;
+  final String gender;
+  final String birthDate;
+  final String phone;
+  final String email;
+  final String avatarUrl;
 
   factory AppProfile.fromJson(Map<String, dynamic> json) {
+    final legacyName = json['name'] as String? ?? '';
+    final nameParts = legacyName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
     return AppProfile(
-      name: json['name'] as String,
-      handle: json['handle'] as String,
-      city: json['city'] as String,
-      rating: (json['rating'] as num).toDouble(),
+      name: legacyName,
+      handle: json['handle'] as String? ?? '@user',
+      city: json['city'] as String? ?? '',
+      rating: (json['rating'] as num?)?.toDouble() ?? 0,
       salesCount: json['salesCount'] as int? ?? 0,
       followersCount: json['followersCount'] as int? ?? 0,
+      firstName:
+          json['firstName'] as String? ??
+          (nameParts.isNotEmpty ? nameParts.first : ''),
+      lastName:
+          json['lastName'] as String? ??
+          (nameParts.length > 1 ? nameParts[1] : ''),
+      middleName: json['middleName'] as String? ?? '',
+      gender: json['gender'] as String? ?? 'male',
+      birthDate: json['birthDate'] as String? ?? '',
+      phone: json['phone'] as String? ?? '',
+      email: json['email'] as String? ?? '',
+      avatarUrl: json['avatarUrl'] as String? ?? '',
     );
   }
 
@@ -34,6 +68,14 @@ class AppProfile {
       'rating': rating,
       'salesCount': salesCount,
       'followersCount': followersCount,
+      'firstName': firstName,
+      'lastName': lastName,
+      'middleName': middleName,
+      'gender': gender,
+      'birthDate': birthDate,
+      'phone': phone,
+      'email': email,
+      'avatarUrl': avatarUrl,
     };
   }
 
@@ -44,6 +86,14 @@ class AppProfile {
     double? rating,
     int? salesCount,
     int? followersCount,
+    String? firstName,
+    String? lastName,
+    String? middleName,
+    String? gender,
+    String? birthDate,
+    String? phone,
+    String? email,
+    String? avatarUrl,
   }) {
     return AppProfile(
       name: name ?? this.name,
@@ -52,6 +102,14 @@ class AppProfile {
       rating: rating ?? this.rating,
       salesCount: salesCount ?? this.salesCount,
       followersCount: followersCount ?? this.followersCount,
+      firstName: firstName ?? this.firstName,
+      lastName: lastName ?? this.lastName,
+      middleName: middleName ?? this.middleName,
+      gender: gender ?? this.gender,
+      birthDate: birthDate ?? this.birthDate,
+      phone: phone ?? this.phone,
+      email: email ?? this.email,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
     );
   }
 }

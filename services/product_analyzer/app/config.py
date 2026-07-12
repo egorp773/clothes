@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+SERVICE_ROOT = Path(__file__).resolve().parents[1]
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=SERVICE_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    service_name: str = "clothes-product-analyzer"
+    log_level: str = "INFO"
+    host: str = "0.0.0.0"
+    port: int = 8090
+    request_timeout_seconds: int = 15
+    fast_pipeline_timeout_seconds: float = 12.0
+    fast_segmentation_timeout_seconds: float = 4.0
+    classification_timeout_seconds: float = 4.0
+    fallback_segmentation_timeout_seconds: float = 5.0
+    ocr_timeout_seconds: float = 6.0
+    qwen_timeout_seconds: float = 20.0
+    max_main_image_side: int = 1024
+    analysis_cache_size: int = 512
+    analysis_cache_ttl_seconds: int = 86400
+    background_workers: int = 2
+    inference_max_concurrency: int = 1
+    inference_queue_size: int = 4
+    inference_queue_timeout_seconds: float = 20.0
+    require_analysis_auth: bool = False
+    supabase_url: str | None = None
+    supabase_service_role_key: str | None = None
+    max_images: int = 8
+    max_image_bytes: int = 15 * 1024 * 1024
+    visual_search_timeout_seconds: float = 8.0
+    visual_search_stage_timeout_seconds: float = 4.5
+    visual_search_max_image_bytes: int = 10 * 1024 * 1024
+    visual_search_max_side: int = 1024
+    visual_search_candidate_count: int = 200
+    visual_search_result_count: int = 30
+    visual_search_cache_size: int = 256
+    visual_search_cache_ttl_seconds: int = 900
+    visual_search_rate_limit: int = 20
+    visual_search_rate_window_seconds: int = 60
+    visual_search_high_category_confidence: float = 0.15
+    visual_search_focused_min_results: int = 4
+    visual_search_min_similarity: float = 0.56
+    visual_search_fallback_min_similarity: float = 0.60
+    visual_search_max_similarity_gap: float = 0.12
+    visual_search_min_rerank_score: float = 0.48
+    visual_search_max_rerank_gap: float = 0.12
+    visual_search_alternate_similarity: float = 0.70
+    visual_search_max_product_images: int = 3
+    visual_search_download_timeout_seconds: float = 6.0
+
+    # Reranking weights sum to 1. Visual similarity intentionally dominates.
+    rerank_visual_weight: float = 0.66
+    rerank_item_type_weight: float = 0.09
+    rerank_category_weight: float = 0.06
+    rerank_color_weight: float = 0.05
+    rerank_brand_weight: float = 0.025
+    rerank_gender_weight: float = 0.025
+    rerank_condition_weight: float = 0.02
+    rerank_quality_weight: float = 0.025
+    rerank_freshness_weight: float = 0.025
+    rerank_popularity_weight: float = 0.02
+    cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+
+    model_root: Path = SERVICE_ROOT / "models"
+    grounded_sam_repo: Path = SERVICE_ROOT / "vendor" / "Grounded-SAM-2"
+    grounded_sam_commit: str = "b7a9c29f196edff0eb54dbe14588d7ae5e3dde28"
+    grounded_sam_prompt: str = (
+        "clothing. garment. shirt. t-shirt. hoodie. sweater. jacket. coat. "
+        "pants. jeans. skirt. dress. shoes. sneakers. bag. accessory."
+    )
+    grounding_dino_box_threshold: float = 0.28
+    grounding_dino_text_threshold: float = 0.22
+    enable_grounded_sam: bool = True
+    sam_checkpoint_name: str = "sam2.1_hiera_large.pt"
+    sam_config: str = "configs/sam2.1/sam2.1_hiera_l.yaml"
+    grounding_dino_checkpoint_name: str = "groundingdino_swint_ogc.pth"
+    grounding_dino_config: str = (
+        "grounding_dino/groundingdino/config/GroundingDINO_SwinT_OGC.py"
+    )
+    rembg_model_name: str = "u2netp"
+    rembg_alpha_threshold: int = 160
+    rembg_min_quality: float = 0.62
+    rembg_min_area_share: float = 0.015
+    rembg_max_area_share: float = 0.92
+    rembg_secondary_component_min_share: float = 0.06
+
+    fashion_model_id: str = "Marqo/marqo-fashionSigLIP"
+    fashion_model_revision: str = "c56244cc94f92419e8369fa71efdaf403b124ce8"
+    classification_top_k: int = 3
+
+    paddleocr_repo_commit: str = "211989f046cc1878460f9e65574690c00a127a1a"
+    paddleocr_language: str = "en"
+    paddleocr_version: str = "PP-OCRv6"
+    enable_paddleocr: bool = True
+    brand_match_threshold: float = 78.0
+
+    enable_qwen: bool = True
+    allow_qwen_cpu: bool = False
+    # 2B keeps the optional background worker from competing with the fast
+    # FashionSigLIP path on modest deployment GPUs.
+    qwen_model_id: str = "Qwen/Qwen3-VL-2B-Instruct"
+    qwen_model_revision: str = "89644892e4d85e24eaac8bacfd4f463576704203"
+    qwen_fallback_model_id: str = "Qwen/Qwen3-VL-2B-Instruct"
+    qwen_fallback_model_revision: str = "89644892e4d85e24eaac8bacfd4f463576704203"
+    qwen_load_in_4bit: bool = True
+    qwen_max_new_tokens: int = 450
+
+    eager_load_models: bool = True
+    warmup_on_start: bool = True
+    preload_slow_models: bool = False
+    require_core_models: bool = False
+
+    @property
+    def sam_checkpoint(self) -> Path:
+        return self.grounded_sam_repo / "checkpoints" / self.sam_checkpoint_name
+
+    @property
+    def grounding_dino_checkpoint(self) -> Path:
+        return (
+            self.grounded_sam_repo
+            / "gdino_checkpoints"
+            / self.grounding_dino_checkpoint_name
+        )
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()

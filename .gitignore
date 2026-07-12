@@ -34,6 +34,17 @@ migrate_working_dir/
 /build/
 /coverage/
 supabase/.temp/
+**/supabase/.temp/
+
+# Local ML service caches, official repositories and model checkpoints
+services/product_analyzer/.env
+services/product_analyzer/deployment/.env
+services/product_analyzer/.venv/
+services/product_analyzer/models/
+services/product_analyzer/vendor/
+services/product_analyzer/**/__pycache__/
+services/product_analyzer/.pytest_cache/
+.codex/
 
 # Symbolication related
 app.*.symbols

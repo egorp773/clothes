@@ -18,7 +18,7 @@ class ReviewsScreen extends StatefulWidget {
   });
 
   final SellerProfile seller;
-  final Product sourceProduct;
+  final Product? sourceProduct;
   final Future<List<SellerReview>> Function(String sellerId) loadReviews;
   final Future<void> Function({
     required String sellerId,
@@ -28,7 +28,7 @@ class ReviewsScreen extends StatefulWidget {
     required int rating,
     required String text,
     bool hasPhoto,
-  })
+  })?
   onCreateReview;
   final bool canCreateReview;
 
@@ -40,6 +40,12 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   List<SellerReview> _reviews = const [];
   ReviewSort _sort = ReviewSort.helpful;
   bool _onlyPhoto = false;
+  bool _isLoading = true;
+  bool _isReloading = false;
+  String? _loadError;
+
+  bool get _canWriteReview =>
+      widget.sourceProduct != null && widget.onCreateReview != null;
 
   @override
   void initState() {
@@ -48,9 +54,29 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   }
 
   Future<void> _load() async {
-    final reviews = await widget.loadReviews(widget.seller.id);
-    if (!mounted) return;
-    setState(() => _reviews = reviews);
+    if (mounted) {
+      setState(() {
+        _loadError = null;
+        _isReloading = !_isLoading;
+      });
+    }
+    try {
+      final reviews = await widget.loadReviews(widget.seller.id);
+      if (!mounted) return;
+      setState(() => _reviews = reviews);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = 'Не удалось загрузить отзывы';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isReloading = false;
+        });
+      }
+    }
   }
 
   List<SellerReview> get _visibleReviews {
@@ -76,7 +102,9 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   }
 
   double get _rating {
-    if (_reviews.isEmpty) return 0;
+    if (_reviews.isEmpty) {
+      return widget.seller.salesCount > 0 ? widget.seller.rating : 0;
+    }
     return _reviews.fold<int>(0, (sum, review) => sum + review.rating) /
         _reviews.length;
   }
@@ -151,6 +179,9 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   }
 
   Future<void> _createReview() async {
+    final sourceProduct = widget.sourceProduct;
+    final onCreateReview = widget.onCreateReview;
+    if (sourceProduct == null || onCreateReview == null) return;
     if (!widget.canCreateReview) {
       _showSignInRequired();
       return;
@@ -162,11 +193,11 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
       builder: (context) => const _ReviewEditor(),
     );
     if (draft == null) return;
-    await widget.onCreateReview(
+    await onCreateReview(
       sellerId: widget.seller.id,
-      productId: widget.sourceProduct.id,
-      productTitle: widget.sourceProduct.title,
-      productImage: widget.sourceProduct.image,
+      productId: sourceProduct.id,
+      productTitle: sourceProduct.title,
+      productImage: sourceProduct.image,
       rating: draft.rating,
       text: draft.text,
       hasPhoto: draft.hasPhoto,
@@ -186,6 +217,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
+    final listBottomPadding = _canWriteReview ? 86 + bottomInset : 24.0;
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -213,7 +245,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                                 ),
                                 const SizedBox(width: 4),
                                 const Text(
-                                  'отзывы',
+                                  'Отзывы',
                                   style: TextStyle(
                                     fontSize: 22,
                                     height: 1,
@@ -234,24 +266,29 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                           child: _ReviewsSummary(
                             rating: _rating,
                             reviews: _reviews,
+                            fallbackCount: widget.seller.salesCount,
                           ),
                         ),
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 18, 16, 14),
                           child: Row(
                             children: [
-                              _FilterChipButton(
-                                title: _sortTitle(_sort),
-                                selected: false,
-                                icon: CupertinoIcons.slider_horizontal_3,
-                                onTap: _showSortSheet,
+                              Flexible(
+                                child: _FilterChipButton(
+                                  title: _sortTitle(_sort),
+                                  selected: false,
+                                  icon: CupertinoIcons.slider_horizontal_3,
+                                  onTap: _showSortSheet,
+                                ),
                               ),
                               const SizedBox(width: 8),
-                              _FilterChipButton(
-                                title: 'только с фото',
-                                selected: _onlyPhoto,
-                                onTap: () =>
-                                    setState(() => _onlyPhoto = !_onlyPhoto),
+                              Flexible(
+                                child: _FilterChipButton(
+                                  title: 'только с фото',
+                                  selected: _onlyPhoto,
+                                  onTap: () =>
+                                      setState(() => _onlyPhoto = !_onlyPhoto),
+                                ),
                               ),
                             ],
                           ),
@@ -260,9 +297,23 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                     ),
                   ),
                   SliverPadding(
-                    padding: EdgeInsets.fromLTRB(16, 0, 16, 86 + bottomInset),
-                    sliver: _visibleReviews.isEmpty
-                        ? const SliverToBoxAdapter(child: _EmptyReviews())
+                    padding: EdgeInsets.fromLTRB(16, 0, 16, listBottomPadding),
+                    sliver: _isLoading
+                        ? const SliverToBoxAdapter(child: _ReviewsLoading())
+                        : _loadError != null
+                        ? SliverToBoxAdapter(
+                            child: _ReviewsLoadError(
+                              message: _loadError!,
+                              isReloading: _isReloading,
+                              onRetry: _load,
+                            ),
+                          )
+                        : _visibleReviews.isEmpty
+                        ? SliverToBoxAdapter(
+                            child: _EmptyReviews(
+                              filtered: _onlyPhoto && _reviews.isNotEmpty,
+                            ),
+                          )
                         : SliverList.builder(
                             itemCount: _visibleReviews.length * 2 - 1,
                             itemBuilder: (context, index) {
@@ -281,25 +332,34 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                 ],
               ),
             ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(16, 10, 16, 10 + bottomInset),
-              child: SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: _createReview,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    foregroundColor: Colors.white,
-                    shape: const RoundedRectangleBorder(),
-                  ),
-                  child: const Text(
-                    'ОСТАВИТЬ ОТЗЫВ',
-                    style: TextStyle(fontWeight: FontWeight.w800),
+            if (_canWriteReview)
+              DecoratedBox(
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  border: Border(top: BorderSide(color: Color(0xFFE8E8EA))),
+                ),
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(16, 10, 16, 10 + bottomInset),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: _createReview,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.black,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      child: const Text(
+                        'ОСТАВИТЬ ОТЗЫВ',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),
@@ -308,14 +368,19 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
 }
 
 class _ReviewsSummary extends StatelessWidget {
-  const _ReviewsSummary({required this.rating, required this.reviews});
+  const _ReviewsSummary({
+    required this.rating,
+    required this.reviews,
+    required this.fallbackCount,
+  });
 
   final double rating;
   final List<SellerReview> reviews;
+  final int fallbackCount;
 
   @override
   Widget build(BuildContext context) {
-    final count = reviews.length;
+    final count = reviews.isEmpty ? fallbackCount : reviews.length;
     final buckets = {
       for (var stars = 1; stars <= 5; stars++)
         stars: reviews.where((review) => review.rating == stars).length,
@@ -344,7 +409,7 @@ class _ReviewsSummary extends StatelessWidget {
               _StarsRow(rating: rating, size: 13),
               const SizedBox(height: 3),
               Text(
-                '$count отзыва',
+                _reviewCountLabel(count),
                 style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
@@ -364,7 +429,7 @@ class _ReviewsSummary extends StatelessWidget {
                 child: Row(
                   children: [
                     SizedBox(
-                      width: 64,
+                      width: 66,
                       child: _StarsRow(rating: stars.toDouble(), size: 13),
                     ),
                     const SizedBox(width: 8),
@@ -422,7 +487,9 @@ class _StarsRow extends StatelessWidget {
 }
 
 class _EmptyReviews extends StatelessWidget {
-  const _EmptyReviews();
+  const _EmptyReviews({required this.filtered});
+
+  final bool filtered;
 
   @override
   Widget build(BuildContext context) {
@@ -446,8 +513,8 @@ class _EmptyReviews extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            const Text(
-              'Пока нет отзывов',
+            Text(
+              filtered ? 'Нет отзывов с фото' : 'Пока нет отзывов',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 16,
@@ -459,7 +526,9 @@ class _EmptyReviews extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              'Будьте первым, кто оставит отзыв продавцу.',
+              filtered
+                  ? 'Попробуйте отключить фильтр, чтобы увидеть все отзывы.'
+                  : 'Здесь появятся отзывы покупателей после завершённых сделок.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 13,
@@ -470,6 +539,62 @@ class _EmptyReviews extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ReviewsLoading extends StatelessWidget {
+  const _ReviewsLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 54),
+      child: Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewsLoadError extends StatelessWidget {
+  const _ReviewsLoadError({
+    required this.message,
+    required this.isReloading,
+    required this.onRetry,
+  });
+
+  final String message;
+  final bool isReloading;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 34),
+      child: Column(
+        children: [
+          const Icon(
+            CupertinoIcons.exclamationmark_circle,
+            size: 30,
+            color: Color(0xFF77777C),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            message,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: isReloading ? null : onRetry,
+            child: Text(isReloading ? 'ЗАГРУЗКА…' : 'ПОВТОРИТЬ'),
+          ),
+        ],
       ),
     );
   }
@@ -501,13 +626,18 @@ class _FilterChipButton extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w800,
-                color: selected ? Colors.white : Colors.black,
+            Flexible(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: selected ? Colors.white : Colors.black,
+                ),
               ),
             ),
             if (icon != null) ...[
@@ -586,9 +716,13 @@ class _ReviewTile extends StatelessWidget {
               _StarsRow(rating: review.rating.toDouble(), size: 14),
               const SizedBox(width: 8),
               if (review.dealCompleted)
-                const Text(
-                  'Сделка состоялась',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                const Flexible(
+                  child: Text(
+                    'Сделка состоялась',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                  ),
                 ),
             ],
           ),
@@ -795,4 +929,22 @@ String _dateText(DateTime date) {
     'декабря',
   ];
   return '${date.day} ${months[date.month - 1]} ${date.year}';
+}
+
+String _reviewCountLabel(int count) {
+  final mod100 = count % 100;
+  if (mod100 >= 11 && mod100 <= 14) {
+    return '$count отзывов';
+  }
+
+  switch (count % 10) {
+    case 1:
+      return '$count отзыв';
+    case 2:
+    case 3:
+    case 4:
+      return '$count отзыва';
+    default:
+      return '$count отзывов';
+  }
 }
