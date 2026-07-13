@@ -99,11 +99,11 @@ class _CatalogScreenState extends State<CatalogScreen>
   List<PromoBanner> get _promoBanners {
     return [
       PromoBanner(
-        image: 'assets/mock/post_3.jpg',
-        title: 'НОВЫЙ ДРОП',
-        subtitle: 'Собери образ из вещей, которые уже ждут в каталоге',
-        buttonText: 'ПЕРЕЙТИ',
-        onTap: () => _showSnackBar('Переход по промо-баннеру'),
+        image: 'assets/products/try_photo.png',
+        title: '',
+        subtitle: '',
+        buttonText: 'ПОПРОБОВАТЬ',
+        onTap: _openVisualSearch,
       ),
       PromoBanner(
         image: 'assets/mock/outfit_hero.jpg',
@@ -162,7 +162,7 @@ class _CatalogScreenState extends State<CatalogScreen>
 
   void _handleScroll() {
     final offset = _scrollController.offset;
-    final searchHiddenOffset = _promoBannerHeight(context) + 16 + 44;
+    final searchHiddenOffset = _promoBannerHeight(context) + 16 + 42;
     final delta = offset - _lastScrollOffset;
     final isSearchHidden = offset > searchHiddenOffset;
 
@@ -242,7 +242,7 @@ class _CatalogScreenState extends State<CatalogScreen>
           widget.sidePadding,
           10,
         ),
-        child: SizedBox(height: 44, child: _buildSearchActions(scale)),
+        child: SizedBox(height: 42, child: _buildSearchActions(scale)),
       ),
     );
   }
@@ -255,62 +255,71 @@ class _CatalogScreenState extends State<CatalogScreen>
         right: widget.sidePadding,
         bottom: 18,
       ),
-      child: SizedBox(height: 44, child: _buildSearchActions(scale)),
+      child: SizedBox(height: 42, child: _buildSearchActions(scale)),
     );
   }
 
   Widget _buildSearchActions(double scale) {
-    return Row(
-      children: [
-        Expanded(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _showSnackBar('Поиск'),
-            child: Container(
-              height: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: const Color(0xFFE7E7EA)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.search, size: 22, color: Color(0xFF070707)),
-                  const SizedBox(width: 10),
-                  Text(
-                    'Поиск',
-                    style: TextStyle(
-                      fontFamily: AppTypography.fontFamily,
-                      fontSize: 14.5 * scale,
-                      fontWeight: AppTypography.medium,
-                      color: const Color(0xFF706E82),
+    return Material(
+      color: const Color(0xFFF2F2F3),
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: () => _showSnackBar('Поиск'),
+              child: Padding(
+                padding: const EdgeInsets.only(left: 14, right: 8),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.search_rounded,
+                      size: 21,
+                      color: Color(0xFF0B0B0C),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Найти вещь или бренд',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontFamily: AppTypography.fontFamily,
+                          fontSize: 13.5 * scale,
+                          fontWeight: AppTypography.medium,
+                          color: const Color(0xFF74747C),
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
-        const SizedBox(width: 10),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _openVisualSearch,
-          child: Container(
-            width: 48,
-            height: double.infinity,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border.all(color: const Color(0xFFE7E7EA)),
-            ),
-            child: const Icon(
-              Icons.photo_camera_outlined,
-              size: 23,
-              color: Color(0xFF070707),
+          Padding(
+            padding: const EdgeInsets.all(5),
+            child: Material(
+              color: const Color(0xFF0B0B0C),
+              borderRadius: BorderRadius.circular(10),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: _openVisualSearch,
+                child: const SizedBox(
+                  width: 32,
+                  height: 32,
+                  child: Icon(
+                    Icons.center_focus_strong_rounded,
+                    size: 20,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -552,6 +561,7 @@ class _CatalogScreenState extends State<CatalogScreen>
               condition: product.condition,
               location: product.location,
               isLiked: product.isLiked,
+              shippingAddress: product.shippingAddress,
             ),
             onLike: () => _toggleLike(product.id),
             onAddToCart: () => _showSnackBar('Добавлено в корзину'),
@@ -844,6 +854,7 @@ class _CatalogScreenState extends State<CatalogScreen>
             condition: product.condition,
             location: product.location,
             isLiked: product.isLiked,
+            shippingAddress: product.shippingAddress,
           ),
           deliveryProfile: widget.deliveryProfile,
           onSaveProfile: widget.onSaveDeliveryProfile,

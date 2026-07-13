@@ -474,6 +474,7 @@ class ListingPublishRepository {
     'shipping_address_id': draft.shippingAddressId.isEmpty
         ? null
         : draft.shippingAddressId,
+    'shipping_address': draft.shippingAddress.trim(),
     'delivery_methods': draft.deliveryMethods,
     'images': draft.uploadedImageUrls,
     'main_image': draft.mainPhoto?.remoteUrl ?? '',

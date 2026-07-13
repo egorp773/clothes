@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../models/app_profile.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
+import '../services/image_download_service.dart';
 import '../features/listing_publish/data/listing_catalogs.dart';
 import '../widgets/app_image.dart';
 
@@ -25,6 +26,7 @@ class ProductDetailData {
     required this.condition,
     required this.location,
     required this.isLiked,
+    this.shippingAddress = '',
     this.canPurchase = true,
   });
 
@@ -44,6 +46,7 @@ class ProductDetailData {
   final String condition;
   final String location;
   final bool isLiked;
+  final String shippingAddress;
   final bool canPurchase;
 }
 
@@ -101,20 +104,13 @@ class _ProductScreenState extends State<ProductScreen>
   static const _topGapCard = 16.0;
   static const _topRadiusCard = 28.0;
   static const _bottomRadiusCard = 24.0;
-  static const _closeDragDistance = 18.0;
-  static const _closeDragVelocity = 120.0;
 
   late final AnimationController _openController;
   late final AnimationController _expandController;
-  late final AnimationController _dismissController;
   late final Animation<Offset> _slide;
   final ScrollController _scrollController = ScrollController();
   double _scrollOffset = 0;
   bool _isClosing = false;
-  double _dragOffset = 0;
-  double _dismissStartOffset = 0;
-  double _dismissEndOffset = 0;
-  Animation<double>? _dismissAnimation;
   bool _isLiked = false;
   bool _isSellerSubscribed = false;
   SellerProfile? _sellerProfile;
@@ -132,13 +128,7 @@ class _ProductScreenState extends State<ProductScreen>
       duration: _expandDuration,
       vsync: this,
     );
-    _dismissController = AnimationController(
-      duration: const Duration(milliseconds: 220),
-      vsync: this,
-    );
     _expandController.addListener(_onExpandTick);
-    _dismissController.addListener(_onDismissTick);
-    _dismissController.addStatusListener(_onDismissStatus);
     _slide = Tween<Offset>(
       begin: const Offset(0, 1),
       end: Offset.zero,
@@ -155,21 +145,8 @@ class _ProductScreenState extends State<ProductScreen>
 
   void _onExpandTick() => setState(() {});
 
-  void _onDismissTick() => setState(() {});
-
-  void _onDismissStatus(AnimationStatus status) {
-    if (status == AnimationStatus.completed && _isClosing && mounted) {
-      _isClosing = false;
-      Navigator.of(context, rootNavigator: true).maybePop();
-    }
-  }
-
   void _onScroll() {
     final offset = _scrollController.offset;
-    if (!widget.isPreview && offset < -_closeDragDistance && !_isClosing) {
-      _closeWithAnimation(dismissOffset: MediaQuery.sizeOf(context).height);
-      return;
-    }
     if ((offset - _scrollOffset).abs() > 1) {
       setState(() => _scrollOffset = offset);
     }
@@ -182,28 +159,24 @@ class _ProductScreenState extends State<ProductScreen>
     }
   }
 
-  void _closeWithAnimation({double? dismissOffset}) {
+  void _closeWithAnimation() {
     if (_isClosing) return;
     _isClosing = true;
-    if (dismissOffset != null) {
-      _dismissStartOffset = _dragOffset;
-      _dismissEndOffset = dismissOffset;
-      _dismissAnimation =
-          Tween<double>(begin: _dismissStartOffset, end: _dismissEndOffset)
-              .chain(CurveTween(curve: Curves.easeOutCubic))
-              .animate(_dismissController);
-      _dismissController.forward(from: 0);
-      return;
-    }
     _openController.reverse();
   }
 
-  double get _effectiveDragOffset {
-    if (_dismissController.isAnimating) {
-      return _dismissAnimation?.value ?? _dragOffset;
-    }
-    return _dragOffset;
-  }
+  Future<void> _openImageViewer(int initialPage) =>
+      Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute<void>(
+          fullscreenDialog: true,
+          builder: (context) => _ProductImageViewer(
+            images: widget.product.images.isNotEmpty
+                ? widget.product.images
+                : [widget.product.image],
+            initialPage: initialPage,
+          ),
+        ),
+      );
 
   void _toggleWishlist() {
     setState(() => _isLiked = !_isLiked);
@@ -344,12 +317,9 @@ class _ProductScreenState extends State<ProductScreen>
   @override
   void dispose() {
     _expandController.removeListener(_onExpandTick);
-    _dismissController.removeListener(_onDismissTick);
-    _dismissController.removeStatusListener(_onDismissStatus);
     _openController.removeStatusListener(_onProductOpenStatus);
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
-    _dismissController.dispose();
     _expandController.dispose();
     _openController.dispose();
     super.dispose();
@@ -389,303 +359,268 @@ class _ProductScreenState extends State<ProductScreen>
       backgroundColor: Colors.transparent,
       body: SlideTransition(
         position: _slide,
-        child: Transform.translate(
-          offset: Offset(0, _effectiveDragOffset),
-          child: GestureDetector(
-            onVerticalDragUpdate: widget.isPreview
-                ? null
-                : (details) {
-                    if (_isClosing) return;
-                    if (details.delta.dy < 0 && _dragOffset <= 0) return;
-                    setState(() {
-                      _dragOffset = (_dragOffset + details.delta.dy).clamp(
-                        0.0,
-                        screenHeight * 0.75,
-                      );
-                    });
-                  },
-            onVerticalDragEnd: widget.isPreview
-                ? null
-                : (details) {
-                    if (_isClosing) return;
-                    final velocity = details.primaryVelocity ?? 0;
-                    final dismissDown =
-                        _dragOffset > _closeDragDistance ||
-                        velocity > _closeDragVelocity;
-                    setState(() {
-                      if (!dismissDown) _dragOffset = 0;
-                    });
-                    if (dismissDown) {
-                      _closeWithAnimation(dismissOffset: screenHeight);
-                    }
-                  },
-            child: Padding(
-              padding: EdgeInsets.only(top: topGap),
-              child: ClipRRect(
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(topRadius),
-                  topRight: Radius.circular(topRadius),
-                  bottomLeft: Radius.circular(bottomRadius),
-                  bottomRight: Radius.circular(bottomRadius),
-                ),
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Container(
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [Colors.transparent, Colors.white],
-                            stops: [0.0, 0.12],
-                          ),
+        child: Padding(
+          padding: EdgeInsets.only(top: topGap),
+          child: ClipRRect(
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(topRadius),
+              topRight: Radius.circular(topRadius),
+              bottomLeft: Radius.circular(bottomRadius),
+              bottomRight: Radius.circular(bottomRadius),
+            ),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.transparent, Colors.white],
+                        stops: [0.0, 0.12],
+                      ),
+                    ),
+                    child: SafeArea(
+                      top: false,
+                      bottom: false,
+                      child: CustomScrollView(
+                        controller: _scrollController,
+                        physics: const BouncingScrollPhysics(
+                          parent: AlwaysScrollableScrollPhysics(),
                         ),
-                        child: SafeArea(
-                          top: false,
-                          bottom: false,
-                          child: CustomScrollView(
-                            controller: _scrollController,
-                            physics: const BouncingScrollPhysics(
-                              parent: AlwaysScrollableScrollPhysics(),
+                        slivers: [
+                          SliverToBoxAdapter(
+                            child: ClipRRect(
+                              borderRadius: const BorderRadius.vertical(
+                                top: Radius.circular(28),
+                              ),
+                              child: _HeroImageGallery(
+                                gallery: product.images.isNotEmpty
+                                    ? product.images
+                                    : [product.image],
+                                onOpen: _openImageViewer,
+                              ),
                             ),
-                            slivers: [
-                              SliverToBoxAdapter(
-                                child: ClipRRect(
-                                  borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(28),
-                                  ),
-                                  child: _HeroImageGallery(
-                                    gallery: product.images.isNotEmpty
-                                        ? product.images
-                                        : [product.image],
+                          ),
+                          SliverToBoxAdapter(
+                            child: Container(
+                              padding: EdgeInsets.fromLTRB(
+                                18,
+                                spacing,
+                                18,
+                                spacing,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                border: Border(
+                                  top: BorderSide(
+                                    color: Colors.black.withValues(alpha: 0.12),
+                                    width: hairline,
                                   ),
                                 ),
                               ),
-                              SliverToBoxAdapter(
-                                child: Container(
-                                  padding: EdgeInsets.fromLTRB(
-                                    18,
-                                    spacing,
-                                    18,
-                                    spacing,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    border: Border(
-                                      top: BorderSide(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.12,
-                                        ),
-                                        width: hairline,
-                                      ),
-                                    ),
-                                  ),
-                                  child: Stack(
-                                    alignment: Alignment.center,
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 54,
-                                        ),
-                                        child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            Text(
-                                              product.title,
-                                              textAlign: TextAlign.center,
-                                              style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w500,
-                                                letterSpacing: 0.15,
-                                                height: 1.2,
-                                              ),
-                                            ),
-                                            SizedBox(height: titlePriceSpacing),
-                                            Text(
-                                              priceText,
-                                              style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight: FontWeight.w700,
-                                                letterSpacing: 0.15,
-                                                height: 1.0,
-                                                fontFeatures: [
-                                                  FontFeature.tabularFigures(),
-                                                  FontFeature.liningFigures(),
-                                                ],
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      Positioned.fill(
-                                        child: Stack(
-                                          alignment: Alignment.center,
-                                          children: [
-                                            Positioned(
-                                              left: 18,
-                                              child: _InlineIcon(
-                                                icon: _isLiked
-                                                    ? CupertinoIcons.heart_fill
-                                                    : CupertinoIcons.heart,
-                                                onTap: _toggleWishlist,
-                                                isWishlist: true,
-                                              ),
-                                            ),
-                                            Positioned(
-                                              right: 18,
-                                              child: _InlineIcon(
-                                                icon: CupertinoIcons.paperplane,
-                                                onTap:
-                                                    widget.onShare ??
-                                                    widget.onContactSeller,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              SliverToBoxAdapter(
-                                child: Container(
-                                  color: Colors.white,
-                                  child: Padding(
-                                    padding: EdgeInsets.fromLTRB(
-                                      18,
-                                      (spacing * 0.5).clamp(12.0, 28.0) +
-                                          sellerTopExtra,
-                                      18,
-                                      spacing,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 54,
                                     ),
                                     child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.center,
+                                      mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        _ProductDatabaseDescription(
-                                          product: product,
-                                          sourceProduct: widget.sourceProduct,
-                                          hairline: hairline,
+                                        Text(
+                                          product.title,
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w500,
+                                            letterSpacing: 0.15,
+                                            height: 1.2,
+                                          ),
                                         ),
-                                        SizedBox(height: spacing),
-                                        _BuyDeliveryBlock(
-                                          onTap: _openDeliveryCheckout,
-                                        ),
-                                        SizedBox(height: spacing),
-                                        _SellerCard(
-                                          hairline: hairline,
-                                          name: product.sellerName,
-                                          handle: product.sellerHandle,
-                                          rating: sellerRating.toDouble(),
-                                          reviews: _reviewCount,
-                                          followers: sellerFollowers,
-                                          isSubscribed: _isSellerSubscribed,
-                                          onSubscribe:
-                                              _toggleSellerSubscription,
-                                          onTap: widget.onOpenSeller,
-                                          onReviewsTap: widget.onOpenReviews,
-                                        ),
-                                        SizedBox(height: spacing),
-                                        _RelatedProductsSection(
-                                          products: widget.relatedProducts,
-                                          onProductTap:
-                                              widget.onRelatedProductTap,
-                                          onToggleLike:
-                                              widget.onToggleRelatedLike,
-                                        ),
-                                        SizedBox(height: spacing),
-                                        const SafeArea(
-                                          top: false,
-                                          child: SizedBox(height: 2),
+                                        SizedBox(height: titlePriceSpacing),
+                                        Text(
+                                          priceText,
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: 0.15,
+                                            height: 1.0,
+                                            fontFeatures: [
+                                              FontFeature.tabularFigures(),
+                                              FontFeature.liningFigures(),
+                                            ],
+                                          ),
                                         ),
                                       ],
                                     ),
                                   ),
+                                  Positioned.fill(
+                                    child: Stack(
+                                      alignment: Alignment.center,
+                                      children: [
+                                        Positioned(
+                                          left: 18,
+                                          child: _InlineIcon(
+                                            icon: _isLiked
+                                                ? CupertinoIcons.heart_fill
+                                                : CupertinoIcons.heart,
+                                            onTap: _toggleWishlist,
+                                            isWishlist: true,
+                                          ),
+                                        ),
+                                        Positioned(
+                                          right: 18,
+                                          child: _InlineIcon(
+                                            icon: CupertinoIcons.paperplane,
+                                            onTap:
+                                                widget.onShare ??
+                                                widget.onContactSeller,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          SliverToBoxAdapter(
+                            child: Container(
+                              color: Colors.white,
+                              child: Padding(
+                                padding: EdgeInsets.fromLTRB(
+                                  18,
+                                  (spacing * 0.5).clamp(12.0, 28.0) +
+                                      sellerTopExtra,
+                                  18,
+                                  spacing,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    _ProductDatabaseDescription(
+                                      product: product,
+                                      sourceProduct: widget.sourceProduct,
+                                      hairline: hairline,
+                                    ),
+                                    _DeliveryAddress(
+                                      address: product.shippingAddress,
+                                      fallbackCity: product.location,
+                                    ),
+                                    SizedBox(height: spacing),
+                                    _BuyDeliveryBlock(
+                                      onTap: _openDeliveryCheckout,
+                                    ),
+                                    SizedBox(height: spacing),
+                                    _SellerCard(
+                                      hairline: hairline,
+                                      name: product.sellerName,
+                                      handle: product.sellerHandle,
+                                      rating: sellerRating.toDouble(),
+                                      reviews: _reviewCount,
+                                      followers: sellerFollowers,
+                                      isSubscribed: _isSellerSubscribed,
+                                      onSubscribe: _toggleSellerSubscription,
+                                      onTap: widget.onOpenSeller,
+                                      onReviewsTap: widget.onOpenReviews,
+                                    ),
+                                    SizedBox(height: spacing),
+                                    _RelatedProductsSection(
+                                      products: widget.relatedProducts,
+                                      onProductTap: widget.onRelatedProductTap,
+                                      onToggleLike: widget.onToggleRelatedLike,
+                                    ),
+                                    SizedBox(height: spacing),
+                                    const SafeArea(
+                                      top: false,
+                                      child: SizedBox(height: 2),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              SliverToBoxAdapter(
-                                child: SizedBox(
-                                  height: widget.isPreview
-                                      ? 16
-                                      : 52 +
-                                            16 +
-                                            MediaQuery.of(
-                                              context,
-                                            ).padding.bottom,
-                                ),
+                            ),
+                          ),
+                          SliverToBoxAdapter(
+                            child: SizedBox(
+                              height: widget.isPreview
+                                  ? 16
+                                  : 52 +
+                                        16 +
+                                        MediaQuery.of(context).padding.bottom,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (!widget.isPreview)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    child: SafeArea(
+                      top: false,
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
+                        color: Colors.transparent,
+                        child: SizedBox(
+                          height: 52,
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: canPurchase
+                                ? widget.onContactSeller
+                                : _showUnavailablePurchaseSheet,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.black,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(2),
                               ),
-                            ],
+                            ),
+                            child: Text(
+                              messageButtonText.toUpperCase(),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0,
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                    if (!widget.isPreview)
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: SafeArea(
-                          top: false,
-                          child: Container(
-                            padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
-                            color: Colors.transparent,
-                            child: SizedBox(
-                              height: 52,
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                onPressed: canPurchase
-                                    ? widget.onContactSeller
-                                    : _showUnavailablePurchaseSheet,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.black,
-                                  foregroundColor: Colors.white,
-                                  elevation: 0,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(2),
-                                  ),
-                                ),
-                                child: Text(
-                                  messageButtonText.toUpperCase(),
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w800,
-                                    letterSpacing: 0,
-                                  ),
-                                ),
-                              ),
+                  ),
+                if (!widget.isPreview)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 0,
+                    child: SafeArea(
+                      top: false,
+                      bottom: false,
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          10,
+                          MediaQuery.of(context).viewPadding.top + 8,
+                          10,
+                          8,
+                        ),
+                        child: Row(
+                          children: [
+                            _TopIcon(
+                              icon: CupertinoIcons.back,
+                              onTap: _closeWithAnimation,
                             ),
-                          ),
+                          ],
                         ),
                       ),
-                    if (!widget.isPreview)
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        top: 0,
-                        child: SafeArea(
-                          top: false,
-                          bottom: false,
-                          child: Padding(
-                            padding: EdgeInsets.fromLTRB(
-                              10,
-                              MediaQuery.of(context).viewPadding.top + 8,
-                              10,
-                              8,
-                            ),
-                            child: Row(
-                              children: [
-                                _TopIcon(
-                                  icon: CupertinoIcons.back,
-                                  onTap: _closeWithAnimation,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),
@@ -695,9 +630,10 @@ class _ProductScreenState extends State<ProductScreen>
 }
 
 class _HeroImageGallery extends StatefulWidget {
-  const _HeroImageGallery({required this.gallery});
+  const _HeroImageGallery({required this.gallery, required this.onOpen});
 
   final List<String> gallery;
+  final ValueChanged<int> onOpen;
 
   @override
   State<_HeroImageGallery> createState() => _HeroImageGalleryState();
@@ -732,13 +668,17 @@ class _HeroImageGalleryState extends State<_HeroImageGallery> {
             onPageChanged: (index) => setState(() => _currentPage = index),
             itemCount: _gallery.length,
             itemBuilder: (context, index) {
-              return Container(
-                color: const Color(0xFFD9D9DB),
-                child: AppImage(
-                  key: ValueKey(_gallery[index]),
-                  imageUrl: _gallery[index],
-                  fit: BoxFit.fill,
-                  alignment: Alignment.center,
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => widget.onOpen(index),
+                child: Container(
+                  color: const Color(0xFFD9D9DB),
+                  child: AppImage(
+                    key: ValueKey(_gallery[index]),
+                    imageUrl: _gallery[index],
+                    fit: BoxFit.fill,
+                    alignment: Alignment.center,
+                  ),
                 ),
               );
             },
@@ -770,6 +710,119 @@ class _HeroImageGalleryState extends State<_HeroImageGallery> {
       ),
     );
   }
+}
+
+class _ProductImageViewer extends StatefulWidget {
+  const _ProductImageViewer({required this.images, required this.initialPage});
+
+  final List<String> images;
+  final int initialPage;
+
+  @override
+  State<_ProductImageViewer> createState() => _ProductImageViewerState();
+}
+
+class _ProductImageViewerState extends State<_ProductImageViewer> {
+  late final PageController _controller = PageController(
+    initialPage: widget.initialPage,
+  );
+  late int _currentPage = widget.initialPage;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _download() async {
+    try {
+      await ImageDownloadService.save(
+        widget.images[_currentPage],
+        name: 'clothes_product_${DateTime.now().millisecondsSinceEpoch}',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Фото сохранено в галерею')));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось сохранить фото')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    body: Stack(
+      children: [
+        PageView.builder(
+          controller: _controller,
+          itemCount: widget.images.length,
+          onPageChanged: (index) => setState(() => _currentPage = index),
+          itemBuilder: (context, index) => InteractiveViewer(
+            minScale: 1,
+            maxScale: 4,
+            child: Center(
+              child: AppImage(
+                imageUrl: widget.images[index],
+                fit: BoxFit.contain,
+                alignment: Alignment.center,
+              ),
+            ),
+          ),
+        ),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(CupertinoIcons.back, color: Colors.white),
+                  ),
+                  Expanded(
+                    child: Center(
+                      child: widget.images.length > 1
+                          ? DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.55),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 11,
+                                  vertical: 6,
+                                ),
+                                child: Text(
+                                  '${_currentPage + 1} / ${widget.images.length}',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Скачать фото',
+                    onPressed: _download,
+                    icon: const Icon(
+                      CupertinoIcons.arrow_down_to_line,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _TopIcon extends StatelessWidget {
@@ -1078,6 +1131,46 @@ class _BuyDeliveryBlock extends StatelessWidget {
   }
 }
 
+class _DeliveryAddress extends StatelessWidget {
+  const _DeliveryAddress({required this.address, required this.fallbackCity});
+
+  final String address;
+  final String fallbackCity;
+
+  @override
+  Widget build(BuildContext context) {
+    final city = fallbackCity.trim();
+    final savedAddress = address.trim();
+    final value = savedAddress.isEmpty
+        ? city
+        : city.isEmpty ||
+              savedAddress.toLowerCase().startsWith('${city.toLowerCase()},')
+        ? savedAddress
+        : '$city, $savedAddress';
+    if (value.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
+      child: Row(
+        children: [
+          const Icon(CupertinoIcons.location_solid, size: 15),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              'Адрес: $value',
+              style: const TextStyle(
+                fontSize: 15,
+                height: 1.2,
+                fontWeight: FontWeight.w500,
+                color: Colors.black,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ignore: unused_element
 class _ProductLocationSection extends StatelessWidget {
   const _ProductLocationSection({
@@ -1306,11 +1399,12 @@ class _ProductDatabaseDescriptionState
           _ProductInfoSection(
             title: 'Описание',
             hairline: widget.hairline,
+            showTopBorder: false,
             compact: true,
             child: Text(
               description,
               style: const TextStyle(
-                fontSize: 14,
+                fontSize: 15,
                 height: 1.24,
                 fontWeight: FontWeight.w500,
                 letterSpacing: 0,
@@ -1577,7 +1671,7 @@ class _ProductInfoSection extends StatelessWidget {
                 Text(
                   title,
                   style: TextStyle(
-                    fontSize: compact ? 16 : 24,
+                    fontSize: compact ? 17 : 24,
                     height: 1,
                     fontWeight: compact ? FontWeight.w700 : FontWeight.w800,
                     letterSpacing: 0,
@@ -1611,7 +1705,7 @@ class _CharacteristicLine extends StatelessWidget {
       child: RichText(
         text: TextSpan(
           style: const TextStyle(
-            fontSize: 14,
+            fontSize: 15,
             height: 1.24,
             fontWeight: FontWeight.w500,
             letterSpacing: 0,

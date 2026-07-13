@@ -673,6 +673,7 @@ alter table public.products
   add column if not exists style text,
   add column if not exists city text,
   add column if not exists shipping_address_id uuid references public.listing_addresses(id) on delete set null,
+  add column if not exists shipping_address text not null default '',
   add column if not exists delivery_methods text[],
   add column if not exists image text,
   add column if not exists main_image text,
@@ -681,6 +682,16 @@ alter table public.products
   add column if not exists analysis_completed_at timestamptz,
   add column if not exists draft_step text,
   add column if not exists last_autosaved_at timestamptz;
+
+update public.products p
+set shipping_address = concat_ws(
+  ', ',
+  nullif(btrim(a.city), ''),
+  nullif(btrim(a.address), '')
+)
+from public.listing_addresses a
+where p.shipping_address_id = a.id
+  and btrim(coalesce(p.shipping_address, '')) = '';
 
 -- Existing rows predate drafts and are therefore treated as already published.
 update public.products

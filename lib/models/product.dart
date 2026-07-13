@@ -46,6 +46,7 @@ class Product {
   final String closure;
   final String city;
   final String shippingAddressId;
+  final String shippingAddress;
   final List<String> deliveryMethods;
   final String mainImage;
   final DateTime? publishedAt;
@@ -92,6 +93,7 @@ class Product {
     this.closure = '',
     this.city = '',
     this.shippingAddressId = '',
+    this.shippingAddress = '',
     this.deliveryMethods = const [],
     this.mainImage = '',
     this.publishedAt,
@@ -145,6 +147,7 @@ class Product {
       closure: json['closure'] as String? ?? '',
       city: json['city'] as String? ?? json['location'] as String? ?? '',
       shippingAddressId: json['shippingAddressId'] as String? ?? '',
+      shippingAddress: json['shippingAddress'] as String? ?? '',
       deliveryMethods: _strings(json['deliveryMethods']),
       mainImage: json['mainImage'] as String? ?? json['image'] as String? ?? '',
       publishedAt: DateTime.tryParse(json['publishedAt'] as String? ?? ''),
@@ -220,6 +223,7 @@ class Product {
       closure: json['closure'] as String? ?? '',
       city: city,
       shippingAddressId: json['shipping_address_id'] as String? ?? '',
+      shippingAddress: json['shipping_address'] as String? ?? '',
       deliveryMethods: _strings(json['delivery_methods']),
       mainImage: image,
       publishedAt: DateTime.tryParse(json['published_at'] as String? ?? ''),
@@ -268,6 +272,7 @@ class Product {
     'closure': closure,
     'city': city,
     'shippingAddressId': shippingAddressId,
+    'shippingAddress': shippingAddress,
     'deliveryMethods': deliveryMethods,
     'mainImage': mainImage,
     'publishedAt': publishedAt?.toIso8601String(),
@@ -314,6 +319,7 @@ class Product {
       'shipping_address_id': shippingAddressId.isEmpty
           ? null
           : shippingAddressId,
+      'shipping_address': shippingAddress,
       'delivery_methods': deliveryMethods,
       'main_image': mainImage.isEmpty ? image : mainImage,
       'published_at': publishedAt?.toIso8601String(),
@@ -364,6 +370,7 @@ class Product {
     String? closure,
     String? city,
     String? shippingAddressId,
+    String? shippingAddress,
     List<String>? deliveryMethods,
     String? mainImage,
     DateTime? publishedAt,
@@ -409,6 +416,7 @@ class Product {
     closure: closure ?? this.closure,
     city: city ?? this.city,
     shippingAddressId: shippingAddressId ?? this.shippingAddressId,
+    shippingAddress: shippingAddress ?? this.shippingAddress,
     deliveryMethods: deliveryMethods ?? this.deliveryMethods,
     mainImage: mainImage ?? this.mainImage,
     publishedAt: publishedAt ?? this.publishedAt,

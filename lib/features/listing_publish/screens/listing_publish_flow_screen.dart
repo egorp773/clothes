@@ -153,7 +153,7 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
                 widget.sidePadding,
                 4,
                 widget.sidePadding,
-                12,
+                step == ListingPublishStep.photos ? 0 : 12,
               ),
             ),
             Expanded(
@@ -336,41 +336,51 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
   Widget _buildSuccess() => ColoredBox(
     color: Colors.white,
     child: SafeArea(
-      child: Padding(
-        padding: EdgeInsets.symmetric(horizontal: widget.sidePadding),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 76,
-              height: 76,
-              decoration: const BoxDecoration(
-                color: Color(0xFF070707),
-                shape: BoxShape.circle,
+      child: Center(
+        child: SingleChildScrollView(
+          padding: EdgeInsets.symmetric(horizontal: widget.sidePadding),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                width: 76,
+                height: 76,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF070707),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_rounded,
+                  size: 40,
+                  color: Colors.white,
+                ),
               ),
-              child: const Icon(
-                Icons.check_rounded,
-                size: 40,
-                color: Colors.white,
+              const SizedBox(height: 22),
+              const SizedBox(
+                width: double.infinity,
+                child: Text(
+                  'Объявление опубликовано',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
+                ),
               ),
-            ),
-            const SizedBox(height: 22),
-            const Text(
-              'Объявление опубликовано',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'Открываем карточку вещи',
-              style: TextStyle(fontSize: 13, color: Color(0xFF8F8F94)),
-            ),
-            const SizedBox(height: 20),
-            const CircularProgressIndicator(
-              strokeWidth: 2,
-              color: Colors.black,
-            ),
-          ],
+              const SizedBox(height: 8),
+              const SizedBox(
+                width: double.infinity,
+                child: Text(
+                  'Открываем карточку вещи',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: Color(0xFF8F8F94)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.black,
+              ),
+            ],
+          ),
         ),
       ),
     ),

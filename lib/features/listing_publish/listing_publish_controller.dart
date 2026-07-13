@@ -257,11 +257,16 @@ class ListingPublishController extends ChangeNotifier {
     if (oldIndex < newIndex) newIndex -= 1;
     final photo = draft.photos.removeAt(oldIndex);
     draft.photos.insert(newIndex, photo);
+    draft.mainPhotoId = draft.photos.firstOrNull?.id ?? '';
     _markChanged();
   }
 
   void setMainPhoto(String photoId) {
     if (draft.mainPhotoId == photoId) return;
+    final index = draft.photos.indexWhere((photo) => photo.id == photoId);
+    if (index == -1) return;
+    final photo = draft.photos.removeAt(index);
+    draft.photos.insert(0, photo);
     draft.mainPhotoId = photoId;
     _markChanged();
     _requestAnalysisRestart();
@@ -773,6 +778,7 @@ class ListingPublishController extends ChangeNotifier {
       sleeveLength: draft.sleeveLength,
       closure: draft.closure,
       shippingAddressId: draft.shippingAddressId,
+      shippingAddress: draft.shippingAddress,
       deliveryMethods: List.unmodifiable(draft.deliveryMethods),
       mainImage: image,
       publishedAt: DateTime.now().toUtc(),

@@ -32,6 +32,7 @@ class ListingPreviewStep extends StatelessWidget {
         condition: product.condition,
         location: product.location,
         isLiked: product.isLiked,
+        shippingAddress: product.shippingAddress,
       ),
       onLike: () {},
       onAddToCart: () {},

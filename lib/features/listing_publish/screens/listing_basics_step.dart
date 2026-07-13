@@ -110,126 +110,131 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: () => FocusScope.of(context).unfocus(),
-      child: SingleChildScrollView(
-        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-        padding: EdgeInsets.fromLTRB(
-          18,
-          8,
-          18,
-          30 + MediaQuery.viewInsetsOf(context).bottom,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Основная информация',
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 16,
-                fontWeight: AppTypography.semiBold,
-                color: _textColor,
-                height: 1.2,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Заполните только главное — остальные характеристики можно проверить на следующем шаге.',
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 12,
-                fontWeight: AppTypography.medium,
-                color: _secondaryTextColor,
-                height: 1.35,
-                letterSpacing: 0,
-              ),
-            ),
-            const SizedBox(height: 24),
-            _FieldLabel(label: 'Название', isRequired: true),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _titleController,
-              textCapitalization: TextCapitalization.sentences,
-              textInputAction: TextInputAction.next,
-              inputFormatters: [LengthLimitingTextInputFormatter(80)],
-              onChanged: widget.controller.setTitle,
-              style: _inputStyle,
-              decoration: _inputDecoration(
-                hintText: 'Например, худи Nike',
-                suffixText: '${_titleController.text.length}/80',
-              ),
-            ),
-            const SizedBox(height: 22),
-            _FieldLabel(label: 'Цена', isRequired: true),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _priceController,
-              keyboardType: TextInputType.number,
-              textInputAction: TextInputAction.next,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              onChanged: widget.controller.setPrice,
-              style: _inputStyle,
-              decoration: _inputDecoration(
-                hintText: 'Введите цену',
-                suffixText: '₽',
-                errorText: priceIsInvalid ? 'Цена должна быть больше 0' : null,
-              ),
-            ),
-            const SizedBox(height: 20),
-            ListingSelectionRow(
-              label: 'Размер',
-              isRequired: true,
-              value: draft.size.isEmpty ? null : _sizeDisplayName(draft.size),
-              placeholder: 'Выберите размер',
-              onTap: _showSizePicker,
-            ),
-            ListingSelectionRow(
-              label: 'Состояние',
-              isRequired: true,
-              value: draft.condition.isEmpty
-                  ? null
-                  : ListingCatalogs.nameOf(draft.condition),
-              placeholder: 'Выберите состояние',
-              onTap: _showConditionPicker,
-            ),
-            const SizedBox(height: 28),
-            const Text(
-              'Дополнительно',
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 15,
-                fontWeight: AppTypography.semiBold,
-                color: _textColor,
-              ),
-            ),
-            const SizedBox(height: 18),
-            _FieldLabel(label: 'Описание', optional: true),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _descriptionController,
-              minLines: 4,
-              maxLines: 7,
-              keyboardType: TextInputType.multiline,
-              textCapitalization: TextCapitalization.sentences,
-              inputFormatters: [LengthLimitingTextInputFormatter(2000)],
-              onChanged: widget.controller.setDescription,
-              style: _inputStyle.copyWith(height: 1.35),
-              decoration: _inputDecoration(
-                hintText: 'Расскажите о вещи, посадке и особенностях',
-                alignLabelWithHint: true,
-                suffixText: '${_descriptionController.text.length}/2000',
-              ),
-            ),
-            if (widget.controller.isAnalyzing) ...[
-              const SizedBox(height: 18),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: ListingAnalysisStatusBadge.processing(
-                  label: 'Анализируем фото — предложим данные автоматически',
+      child: Transform.translate(
+        offset: const Offset(0, -115),
+        child: SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: EdgeInsets.fromLTRB(
+            18,
+            8,
+            18,
+            30 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Основная информация',
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 16,
+                  fontWeight: AppTypography.semiBold,
+                  color: _textColor,
+                  height: 1.2,
+                  letterSpacing: 0,
                 ),
               ),
+              const SizedBox(height: 6),
+              const Text(
+                'Заполните только главное — остальные характеристики можно проверить на следующем шаге.',
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 12,
+                  fontWeight: AppTypography.medium,
+                  color: _secondaryTextColor,
+                  height: 1.35,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 24),
+              _FieldLabel(label: 'Название', isRequired: true),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _titleController,
+                textCapitalization: TextCapitalization.sentences,
+                textInputAction: TextInputAction.next,
+                inputFormatters: [LengthLimitingTextInputFormatter(80)],
+                onChanged: widget.controller.setTitle,
+                style: _inputStyle,
+                decoration: _inputDecoration(
+                  hintText: 'Например, худи Nike',
+                  suffixText: '${_titleController.text.length}/80',
+                ),
+              ),
+              const SizedBox(height: 22),
+              _FieldLabel(label: 'Цена', isRequired: true),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _priceController,
+                keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.next,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                onChanged: widget.controller.setPrice,
+                style: _inputStyle,
+                decoration: _inputDecoration(
+                  hintText: 'Введите цену',
+                  suffixText: '₽',
+                  errorText: priceIsInvalid
+                      ? 'Цена должна быть больше 0'
+                      : null,
+                ),
+              ),
+              const SizedBox(height: 20),
+              ListingSelectionRow(
+                label: 'Размер',
+                isRequired: true,
+                value: draft.size.isEmpty ? null : _sizeDisplayName(draft.size),
+                placeholder: 'Выберите размер',
+                onTap: _showSizePicker,
+              ),
+              ListingSelectionRow(
+                label: 'Состояние',
+                isRequired: true,
+                value: draft.condition.isEmpty
+                    ? null
+                    : ListingCatalogs.nameOf(draft.condition),
+                placeholder: 'Выберите состояние',
+                onTap: _showConditionPicker,
+              ),
+              const SizedBox(height: 28),
+              const Text(
+                'Дополнительно',
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 15,
+                  fontWeight: AppTypography.semiBold,
+                  color: _textColor,
+                ),
+              ),
+              const SizedBox(height: 18),
+              _FieldLabel(label: 'Описание', optional: true),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _descriptionController,
+                minLines: 4,
+                maxLines: 7,
+                keyboardType: TextInputType.multiline,
+                textCapitalization: TextCapitalization.sentences,
+                inputFormatters: [LengthLimitingTextInputFormatter(2000)],
+                onChanged: widget.controller.setDescription,
+                style: _inputStyle.copyWith(height: 1.35),
+                decoration: _inputDecoration(
+                  hintText: 'Расскажите о вещи, посадке и особенностях',
+                  alignLabelWithHint: true,
+                  suffixText: '${_descriptionController.text.length}/2000',
+                ),
+              ),
+              if (widget.controller.isAnalyzing) ...[
+                const SizedBox(height: 18),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: ListingAnalysisStatusBadge.processing(
+                    label: 'Анализируем фото — предложим данные автоматически',
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

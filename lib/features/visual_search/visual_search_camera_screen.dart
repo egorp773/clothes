@@ -631,7 +631,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
 
   Widget _buildTopControls() => Positioned(
     left: 14,
-    top: 0,
+    top: 10,
     child: SafeArea(
       child: _RoundControl(
         tooltip: 'Назад',

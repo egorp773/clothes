@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../models/app_profile.dart';
 import '../../models/message_thread.dart';
@@ -188,6 +189,30 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
     );
   }
 
+  Future<void> _shareExternally() async {
+    final product = widget.product;
+    final link = 'https://clothes.app/products/${product.id}';
+    final renderBox = context.findRenderObject() as RenderBox?;
+    try {
+      await Share.share(
+        '${product.title}\n${product.price}\n$link',
+        subject: product.title,
+        sharePositionOrigin: renderBox == null
+            ? null
+            : renderBox.localToGlobal(Offset.zero) & renderBox.size,
+      );
+    } catch (_) {
+      await Clipboard.setData(ClipboardData(text: link));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Системное меню недоступно. Ссылка скопирована'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final keyboard = MediaQuery.viewInsetsOf(context).bottom;
@@ -277,14 +302,14 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
                         Row(
                           children: [
                             _ShareAction(
-                              icon: Icons.link_rounded,
-                              label: 'Копировать',
-                              onTap: _copyLink,
+                              icon: Icons.ios_share_rounded,
+                              label: 'Поделиться',
+                              onTap: _shareExternally,
                             ),
                             const SizedBox(width: 18),
                             _ShareAction(
-                              icon: Icons.more_horiz_rounded,
-                              label: 'Ещё',
+                              icon: Icons.link_rounded,
+                              label: 'Копировать',
                               onTap: _copyLink,
                             ),
                           ],

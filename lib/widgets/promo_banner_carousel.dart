@@ -127,34 +127,38 @@ class PromoBannerCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   PromoDots(activeIndex: activeIndex, totalCount: totalCount),
-                  const SizedBox(height: 18),
-                  Text(
-                    banner.title.toUpperCase(),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontFamily: AppTypography.fontFamily,
-                      fontSize: 36,
-                      fontWeight: AppTypography.bold,
-                      color: Colors.white,
-                      height: 1.0,
-                      letterSpacing: 0,
+                  if (banner.title.trim().isNotEmpty) ...[
+                    const SizedBox(height: 18),
+                    Text(
+                      banner.title.toUpperCase(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 36,
+                        fontWeight: AppTypography.bold,
+                        color: Colors.white,
+                        height: 1.0,
+                        letterSpacing: 0,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    banner.subtitle,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontFamily: AppTypography.fontFamily,
-                      fontSize: 16,
-                      fontWeight: AppTypography.medium,
-                      color: Colors.white,
-                      height: 1.25,
-                      letterSpacing: 0,
+                  ],
+                  if (banner.subtitle.trim().isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      banner.subtitle,
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 16,
+                        fontWeight: AppTypography.medium,
+                        color: Colors.white,
+                        height: 1.25,
+                        letterSpacing: 0,
+                      ),
                     ),
-                  ),
+                  ],
                   const SizedBox(height: 20),
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,

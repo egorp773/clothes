@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../models/created_outfit.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
+import '../services/image_download_service.dart';
 import '../widgets/app_image.dart';
 import 'product_screen.dart';
 
@@ -313,6 +314,7 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
               size: source?.size ?? 'M',
               condition: source?.condition ?? 'Отличное',
               location: source?.location ?? '',
+              shippingAddress: source?.shippingAddress ?? '',
               isLiked: source?.isLiked ?? product.isLiked,
               canPurchase: canPurchase,
             ),
@@ -754,6 +756,17 @@ class _OutfitDetailScreenState extends State<_OutfitDetailScreen> {
     setState(() => _showCollapsedHeader = next);
   }
 
+  void _openPhotos(int initialPage) {
+    if (widget.photos.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (context) =>
+            _OutfitImageViewer(images: widget.photos, initialPage: initialPage),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -795,6 +808,7 @@ class _OutfitDetailScreenState extends State<_OutfitDetailScreen> {
                   isLiked: _isLiked,
                   onLikeTap: _toggleLike,
                   onAuthorTap: widget.onAuthorTap,
+                  onOpenPhoto: _openPhotos,
                 ),
                 _OutfitProductsList(
                   products: _products,
@@ -805,6 +819,7 @@ class _OutfitDetailScreenState extends State<_OutfitDetailScreen> {
                   authorName: _authorName,
                   outfits: widget.moreOutfits,
                   onOutfitTap: widget.onOutfitTap,
+                  onAuthorTap: widget.onAuthorTap,
                 ),
               ],
             ),
@@ -840,6 +855,119 @@ class _OutfitDetailScreenState extends State<_OutfitDetailScreen> {
     }
     return buffer.toString();
   }
+}
+
+class _OutfitImageViewer extends StatefulWidget {
+  const _OutfitImageViewer({required this.images, required this.initialPage});
+
+  final List<String> images;
+  final int initialPage;
+
+  @override
+  State<_OutfitImageViewer> createState() => _OutfitImageViewerState();
+}
+
+class _OutfitImageViewerState extends State<_OutfitImageViewer> {
+  late final PageController _controller = PageController(
+    initialPage: widget.initialPage,
+  );
+  late int _currentPage = widget.initialPage;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _download() async {
+    try {
+      await ImageDownloadService.save(
+        widget.images[_currentPage],
+        name: 'clothes_outfit_${DateTime.now().millisecondsSinceEpoch}',
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Фото сохранено в галерею')));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Не удалось сохранить фото')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Colors.black,
+    body: Stack(
+      children: [
+        PageView.builder(
+          controller: _controller,
+          itemCount: widget.images.length,
+          onPageChanged: (index) => setState(() => _currentPage = index),
+          itemBuilder: (context, index) => InteractiveViewer(
+            minScale: 1,
+            maxScale: 4,
+            child: Center(
+              child: AppImage(
+                imageUrl: widget.images[index],
+                fit: BoxFit.contain,
+                alignment: Alignment.center,
+              ),
+            ),
+          ),
+        ),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: Row(
+                children: [
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  ),
+                  Expanded(
+                    child: Center(
+                      child: widget.images.length > 1
+                          ? DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.55),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 11,
+                                  vertical: 6,
+                                ),
+                                child: Text(
+                                  '${_currentPage + 1} / ${widget.images.length}',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Скачать фото',
+                    onPressed: _download,
+                    icon: const Icon(
+                      Icons.download_rounded,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _DetailTopBar extends StatelessWidget {
@@ -920,6 +1048,7 @@ class _OutfitHeroSection extends StatelessWidget {
     required this.isLiked,
     required this.onLikeTap,
     required this.onAuthorTap,
+    required this.onOpenPhoto,
   });
 
   final double height;
@@ -933,6 +1062,7 @@ class _OutfitHeroSection extends StatelessWidget {
   final bool isLiked;
   final Future<void> Function() onLikeTap;
   final VoidCallback onAuthorTap;
+  final ValueChanged<int> onOpenPhoto;
 
   @override
   Widget build(BuildContext context) {
@@ -940,27 +1070,31 @@ class _OutfitHeroSection extends StatelessWidget {
       height: height,
       child: Stack(
         children: [
-          SizedBox(
-            width: double.infinity,
-            height: imageHeight,
-            child: layoutItems.isNotEmpty
-                ? _OutfitLayoutCanvas(
-                    backgroundColor: Color(
-                      previewBackgroundColor ??
-                          _outfitMediaBackground.toARGB32(),
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: photos.isEmpty ? null : () => onOpenPhoto(0),
+            child: SizedBox(
+              width: double.infinity,
+              height: imageHeight,
+              child: layoutItems.isNotEmpty
+                  ? _OutfitLayoutCanvas(
+                      backgroundColor: Color(
+                        previewBackgroundColor ??
+                            _outfitMediaBackground.toARGB32(),
+                      ),
+                      items: layoutItems,
+                    )
+                  : AppImage(
+                      imageUrl: photos.isNotEmpty
+                          ? photos.first
+                          : 'assets/mock/outfit_hero.jpg',
+                      width: double.infinity,
+                      height: imageHeight,
+                      fit: BoxFit.cover,
+                      alignment: Alignment.topCenter,
+                      placeholderColor: _outfitMediaBackground,
                     ),
-                    items: layoutItems,
-                  )
-                : AppImage(
-                    imageUrl: photos.isNotEmpty
-                        ? photos.first
-                        : 'assets/mock/outfit_hero.jpg',
-                    width: double.infinity,
-                    height: imageHeight,
-                    fit: BoxFit.cover,
-                    alignment: Alignment.topCenter,
-                    placeholderColor: _outfitMediaBackground,
-                  ),
+            ),
           ),
           Positioned(
             left: 22,
@@ -1302,11 +1436,13 @@ class _MoreOutfitsSection extends StatelessWidget {
     required this.authorName,
     required this.outfits,
     required this.onOutfitTap,
+    required this.onAuthorTap,
   });
 
   final String authorName;
   final List<CreatedOutfit> outfits;
   final void Function(CreatedOutfit) onOutfitTap;
+  final VoidCallback onAuthorTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1321,26 +1457,31 @@ class _MoreOutfitsSection extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: RichText(
-              text: TextSpan(
-                style: const TextStyle(
-                  fontFamily: 'Montserrat',
-                  fontSize: 17,
-                  fontWeight: FontWeight.w500,
-                  color: Color(0xFF8A8A8A),
+            child: Wrap(
+              children: [
+                const Text(
+                  'Больше образов от ',
+                  style: TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 17,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF8A8A8A),
+                  ),
                 ),
-                children: [
-                  const TextSpan(text: 'Больше образов от '),
-                  TextSpan(
-                    text: authorName,
+                InkWell(
+                  onTap: onAuthorTap,
+                  child: Text(
+                    authorName,
                     style: const TextStyle(
                       fontFamily: 'Montserrat',
+                      fontSize: 17,
+                      fontWeight: FontWeight.w500,
                       color: Color(0xFF6F6F6F),
                       decoration: TextDecoration.underline,
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
@@ -2088,7 +2229,10 @@ class _OutfitProduct {
   String get detailDescription {
     final clean = description.trim();
     if (clean.isNotEmpty) return clean;
-    final label = [brand, name].where((part) => part.trim().isNotEmpty).join(' ');
+    final label = [
+      brand,
+      name,
+    ].where((part) => part.trim().isNotEmpty).join(' ');
     if (label.trim().isEmpty) return 'Item from this outfit.';
     return '$label. Item from this outfit.';
   }

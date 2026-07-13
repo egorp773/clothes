@@ -334,6 +334,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
               condition: product.condition,
               location: product.location,
               isLiked: product.isLiked,
+              shippingAddress: product.shippingAddress,
               canPurchase: !product.isHidden,
             ),
             onLike: () => _repository.toggleProductLike(product.id),
@@ -438,6 +439,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             condition: product.condition,
             location: product.location,
             isLiked: product.isLiked,
+            shippingAddress: product.shippingAddress,
             canPurchase: true,
           ),
           deliveryProfile: _repository.deliveryProfile,
@@ -608,10 +610,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   void _shareProduct(Product product) {
-    if (!_repository.isSignedIn) {
-      _openLoginScreen(onSignedIn: () => _shareProduct(product));
-      return;
-    }
     unawaited(
       showProductShareSheet(
         context,
