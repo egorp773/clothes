@@ -87,4 +87,50 @@ void main() {
     );
     expect(result.products, isEmpty);
   });
+
+  test('parses normalized visual search object regions', () async {
+    final service = VisualSearchService(
+      baseUrl: 'https://analyzer.example',
+      client: MockClient((request) async {
+        expect(request.url.path, '/v1/visual-search/regions');
+        return http.Response(
+          jsonEncode({
+            'width': 800,
+            'height': 1200,
+            'regions': [
+              {
+                'id': 'region-1',
+                'label': 'jacket',
+                'confidence': 0.91,
+                'bbox': [0.1, 0.2, 0.7, 0.8],
+              },
+              {
+                'id': 'region-2',
+                'label': null,
+                'confidence': 0.82,
+                'bbox': [0.72, 0.4, 0.96, 0.9],
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+      accessTokenProvider: () => null,
+    );
+
+    final result = await service.detectRegions(
+      XFile.fromData(
+        Uint8List.fromList(const [1, 2, 3]),
+        mimeType: 'image/jpeg',
+        name: 'query.jpg',
+      ),
+    );
+
+    expect(result.imageSize.width, 800);
+    expect(result.regions, hasLength(2));
+    expect(result.regions.first.label, 'jacket');
+    expect(result.regions.first.bounds.left, 0.1);
+    expect(result.regions.last.bounds.bottom, 0.9);
+  });
 }

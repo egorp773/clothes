@@ -22,6 +22,14 @@ class ModelManager:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.fast_segmentation = RembgAdapter(settings)
+        self.clothing_regions = RembgAdapter(
+            settings,
+            model_name=settings.clothing_region_model_name,
+        )
+        self.background_removal = RembgAdapter(
+            settings,
+            model_name=settings.background_removal_model_name,
+        )
         self.segmentation = GroundedSamAdapter(settings)
         self.classification = FashionSiglipAdapter(settings)
         self.ocr = PaddleOcrAdapter(settings)
@@ -35,6 +43,8 @@ class ModelManager:
     def adapters(self) -> dict[str, object]:
         return {
             "fast_segmentation": self.fast_segmentation,
+            "clothing_regions": self.clothing_regions,
+            "background_removal": self.background_removal,
             "segmentation": self.segmentation,
             "classification": self.classification,
             "ocr": self.ocr,
@@ -48,7 +58,9 @@ class ModelManager:
         ]
         if self.settings.preload_slow_models:
             enabled.extend((self.segmentation, self.ocr, self.vlm))
-        enabled = [adapter for adapter in enabled if getattr(adapter, "available", False)]
+        enabled = [
+            adapter for adapter in enabled if getattr(adapter, "available", False)
+        ]
         with ThreadPoolExecutor(max_workers=min(3, len(enabled) or 1)) as pool:
             futures = {pool.submit(adapter.load): adapter for adapter in enabled}
             for future in as_completed(futures):

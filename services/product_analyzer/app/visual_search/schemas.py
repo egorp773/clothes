@@ -51,6 +51,19 @@ class VisualSearchResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class VisualSearchRegion(BaseModel):
+    id: str
+    label: str | None = None
+    confidence: float = Field(ge=0, le=1)
+    bbox: tuple[float, float, float, float]
+
+
+class VisualSearchRegionsResponse(BaseModel):
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    regions: list[VisualSearchRegion] = Field(default_factory=list)
+
+
 class ProductEmbeddingResponse(BaseModel):
     product_id: str
     model_version: str

@@ -9,7 +9,16 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, ImageOps
 
@@ -27,6 +36,8 @@ from app.visual_search.auth import (
 from app.visual_search.schemas import (
     ProductEmbeddingResponse,
     VisualSearchFilters,
+    VisualSearchRegion,
+    VisualSearchRegionsResponse,
     VisualSearchResponse,
 )
 from app.visual_search.service import VisualSearchService
@@ -47,6 +58,14 @@ visual_search = VisualSearchService(settings, models, visual_store)
 jwt_verifier = SupabaseJwtVerifier(settings)
 visual_rate_limiter = SlidingWindowRateLimiter(
     settings.visual_search_rate_limit,
+    settings.visual_search_rate_window_seconds,
+)
+visual_region_rate_limiter = SlidingWindowRateLimiter(
+    settings.visual_search_rate_limit,
+    settings.visual_search_rate_window_seconds,
+)
+background_rate_limiter = SlidingWindowRateLimiter(
+    max(4, settings.visual_search_rate_limit // 2),
     settings.visual_search_rate_window_seconds,
 )
 inference_gate = InferenceGate(
@@ -145,18 +164,25 @@ async def warmup(
     return {"ok": True, "components": models.health()}
 
 
-async def _authenticated_user(authorization: str | None):
+async def _authenticated_user(
+    authorization: str | None,
+    rate_limiter: SlidingWindowRateLimiter = visual_rate_limiter,
+):
     try:
         user = await asyncio.to_thread(jwt_verifier.verify, authorization)
     except AuthenticationError as error:
         status = 503 if "not configured" in str(error) else 401
         raise HTTPException(status, str(error)) from error
-    if not visual_rate_limiter.allow(user.id):
+    if not rate_limiter.allow(user.id):
         raise HTTPException(429, "Visual search rate limit exceeded")
     return user
 
 
-async def _authorize_visual_search(authorization: str | None, request: Request) -> None:
+async def _authorize_visual_search(
+    authorization: str | None,
+    request: Request,
+    rate_limiter: SlidingWindowRateLimiter = visual_rate_limiter,
+) -> None:
     """Authorize a search when a session exists, but keep public discovery usable.
 
     Visual search only reads already-published catalog data, so login is not a
@@ -165,10 +191,13 @@ async def _authorize_visual_search(authorization: str | None, request: Request) 
     a stale session is never silently treated as anonymous.
     """
     if authorization:
-        await _authenticated_user(authorization)
+        await _authenticated_user(authorization, rate_limiter)
         return
-    client_host = request.client.host if request.client else "unknown"
-    if not visual_rate_limiter.allow(f"anonymous:{client_host}"):
+    forwarded_for = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+    client_host = forwarded_for or (
+        request.client.host if request.client else "unknown"
+    )
+    if not rate_limiter.allow(f"anonymous:{client_host}"):
         raise HTTPException(429, "Visual search rate limit exceeded")
 
 
@@ -179,6 +208,172 @@ def _decode_visual_filters(raw: str | None) -> VisualSearchFilters:
         return VisualSearchFilters.model_validate(json.loads(raw))
     except Exception as error:
         raise HTTPException(422, "Invalid visual search filters") from error
+
+
+def _decode_rgb_image(payload: bytes) -> Image.Image:
+    source = Image.open(io.BytesIO(payload))
+    if source.width * source.height > settings.max_decoded_image_pixels:
+        raise ValueError("Image dimensions are too large")
+    image = ImageOps.exif_transpose(source).convert("RGB")
+    image.load()
+    return image
+
+
+def _remove_background_png(image: Image.Image) -> bytes:
+    models.clothing_regions.unload()
+    try:
+        cutout = models.background_removal.remove_background(image)
+        output = io.BytesIO()
+        cutout.save(output, format="PNG", optimize=True)
+        return output.getvalue()
+    finally:
+        models.background_removal.unload()
+
+
+def _propose_visual_search_regions(image: Image.Image):
+    foregrounds = models.fast_segmentation.propose_regions(image)
+    frame_area = float(image.width * image.height)
+    needs_clothing_parse = len(foregrounds) <= 1 and any(
+        ((item.bbox[2] - item.bbox[0]) * (item.bbox[3] - item.bbox[1])) / frame_area
+        >= 0.12
+        for item in foregrounds
+    )
+    if not needs_clothing_parse:
+        return foregrounds
+    models.background_removal.unload()
+    try:
+        clothing = models.clothing_regions.propose_clothing_regions(image)
+    finally:
+        models.clothing_regions.unload()
+    if not clothing:
+        return foregrounds
+
+    combined = list(clothing)
+    clothing_centers = [
+        ((item.bbox[0] + item.bbox[2]) / 2, (item.bbox[1] + item.bbox[3]) / 2)
+        for item in clothing
+    ]
+    for foreground in foregrounds:
+        left, top, right, bottom = foreground.bbox
+        contains_clothing = any(
+            left <= center_x <= right and top <= center_y <= bottom
+            for center_x, center_y in clothing_centers
+        )
+        if not contains_clothing:
+            combined.append(foreground)
+    return combined[:6] if len(combined) > 1 else (foregrounds or combined)
+
+
+@app.post("/v1/remove-background")
+async def remove_image_background(
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+) -> Response:
+    await _authenticated_user(authorization, background_rate_limiter)
+    allowed_mime = {"image/jpeg", "image/png", "image/webp"}
+    if file.content_type not in allowed_mime:
+        raise HTTPException(415, f"Unsupported content type: {file.content_type}")
+    payload = await file.read(settings.background_removal_max_image_bytes + 1)
+    if len(payload) > settings.background_removal_max_image_bytes:
+        raise HTTPException(413, "Background removal image is too large")
+    try:
+        image = _decode_rgb_image(payload)
+        image.thumbnail(
+            (
+                settings.background_removal_max_side,
+                settings.background_removal_max_side,
+            ),
+            Image.Resampling.LANCZOS,
+        )
+    except Exception as error:
+        raise HTTPException(400, "Invalid background removal image") from error
+    try:
+        output = await inference_gate.run(
+            lambda: _remove_background_png(image),
+            timeout=settings.background_removal_timeout_seconds,
+        )
+    except InferenceQueueFull as error:
+        raise HTTPException(503, str(error)) from error
+    except InferenceQueueTimeout as error:
+        raise HTTPException(429, str(error)) from error
+    except asyncio.TimeoutError as error:
+        raise HTTPException(504, "Background removal timed out") from error
+    except Exception as error:
+        LOGGER.exception("Background removal failed")
+        raise HTTPException(
+            503, "Background removal is temporarily unavailable"
+        ) from error
+    return Response(
+        content=output,
+        media_type="image/png",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Background-Model": settings.background_removal_model_name,
+        },
+    )
+
+
+@app.post(
+    "/v1/visual-search/regions",
+    response_model=VisualSearchRegionsResponse,
+)
+async def detect_visual_search_regions(
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+    request: Request = None,
+) -> VisualSearchRegionsResponse:
+    await _authorize_visual_search(
+        authorization,
+        request,
+        visual_region_rate_limiter,
+    )
+    allowed_mime = {"image/jpeg", "image/png", "image/webp"}
+    if file.content_type not in allowed_mime:
+        raise HTTPException(415, f"Unsupported content type: {file.content_type}")
+    payload = await file.read(settings.visual_search_max_image_bytes + 1)
+    if len(payload) > settings.visual_search_max_image_bytes:
+        raise HTTPException(413, "Visual search image is too large")
+    try:
+        image = _decode_rgb_image(payload)
+        image.thumbnail(
+            (settings.visual_search_max_side, settings.visual_search_max_side),
+            Image.Resampling.LANCZOS,
+        )
+    except Exception as error:
+        raise HTTPException(400, "Invalid visual search image") from error
+    try:
+        proposals = await inference_gate.run(
+            lambda: _propose_visual_search_regions(image),
+            timeout=settings.fast_segmentation_timeout_seconds * 2 + 2,
+        )
+    except InferenceQueueFull as error:
+        raise HTTPException(503, str(error)) from error
+    except InferenceQueueTimeout as error:
+        raise HTTPException(429, str(error)) from error
+    except asyncio.TimeoutError as error:
+        raise HTTPException(504, "Object detection timed out") from error
+    except Exception as error:
+        LOGGER.exception("Visual search region detection failed")
+        raise HTTPException(
+            503, "Object detection is temporarily unavailable"
+        ) from error
+
+    width, height = image.size
+    regions = [
+        VisualSearchRegion(
+            id=f"region-{index + 1}",
+            label=proposal.label,
+            confidence=proposal.confidence,
+            bbox=(
+                proposal.bbox[0] / width,
+                proposal.bbox[1] / height,
+                proposal.bbox[2] / width,
+                proposal.bbox[3] / height,
+            ),
+        )
+        for index, proposal in enumerate(proposals)
+    ]
+    return VisualSearchRegionsResponse(width=width, height=height, regions=regions)
 
 
 @app.post("/v1/visual-search", response_model=VisualSearchResponse)
@@ -199,21 +394,18 @@ async def search_visually(
         raise HTTPException(413, "Visual search image is too large")
     image_hash = hashlib.sha256(payload).hexdigest()
     try:
-        image = ImageOps.exif_transpose(Image.open(io.BytesIO(payload))).convert("RGB")
-        image.load()
+        image = _decode_rgb_image(payload)
     except Exception as error:
         raise HTTPException(400, "Invalid visual search image") from error
     try:
-        async with inference_gate.acquire():
-            return await asyncio.wait_for(
-                asyncio.to_thread(
-                    visual_search.search,
-                    image,
-                    image_hash,
-                    _decode_visual_filters(filters),
-                ),
-                timeout=settings.visual_search_timeout_seconds,
-            )
+        return await inference_gate.run(
+            lambda: visual_search.search(
+                image,
+                image_hash,
+                _decode_visual_filters(filters),
+            ),
+            timeout=settings.visual_search_timeout_seconds,
+        )
     except InferenceQueueFull as error:
         raise HTTPException(503, str(error)) from error
     except InferenceQueueTimeout as error:
@@ -244,10 +436,14 @@ async def create_product_embeddings(
     if product.get("status") != "published" or bool(product.get("is_hidden")):
         raise HTTPException(409, "Only active published products can be indexed")
     try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(visual_search.index_product, product_id),
+        return await inference_gate.run(
+            lambda: visual_search.index_product(product_id),
             timeout=max(settings.visual_search_timeout_seconds * 3, 20),
         )
+    except InferenceQueueFull as error:
+        raise HTTPException(503, str(error)) from error
+    except InferenceQueueTimeout as error:
+        raise HTTPException(429, str(error)) from error
     except asyncio.TimeoutError as error:
         raise HTTPException(504, "Product embedding generation timed out") from error
     except ValueError as error:
@@ -266,7 +462,9 @@ async def get_analysis(
     # Auth is optional only for local/test deployments.
     if settings.require_analysis_auth:
         await _authenticated_user(authorization)
-    result = pipeline.get_cached(image_hash) or await asyncio.to_thread(analysis_store.get_result, image_hash)
+    result = pipeline.get_cached(image_hash) or await asyncio.to_thread(
+        analysis_store.get_result, image_hash
+    )
     if result is None:
         raise HTTPException(404, "Analysis result is not cached or has expired")
     return result
@@ -295,7 +493,9 @@ async def enrich(
         if len(payload) > settings.max_image_bytes:
             continue
         try:
-            image = ImageOps.exif_transpose(Image.open(io.BytesIO(payload))).convert("RGB")
+            image = ImageOps.exif_transpose(Image.open(io.BytesIO(payload))).convert(
+                "RGB"
+            )
             image.load()
             images.append(image)
         except Exception:
@@ -358,17 +558,15 @@ async def analyze(
         raise HTTPException(400, f"Invalid image: {upload.filename}") from error
     decode_ms = round((time.perf_counter() - decode_started) * 1000)
     try:
-        async with inference_gate.acquire():
-            result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    pipeline.analyze,
-                    image,
-                    image_hash,
-                    download_ms=download_ms,
-                    decode_ms=decode_ms,
-                ),
-                timeout=settings.request_timeout_seconds,
-            )
+        result = await inference_gate.run(
+            lambda: pipeline.analyze(
+                image,
+                image_hash,
+                download_ms=download_ms,
+                decode_ms=decode_ms,
+            ),
+            timeout=settings.request_timeout_seconds,
+        )
         result.analysis_id = job_id
         if durable_job:
             await asyncio.to_thread(analysis_store.save_basic, job_id, result)
@@ -382,4 +580,6 @@ async def analyze(
         raise HTTPException(504, "Product analysis timed out") from error
     except Exception as error:
         LOGGER.exception("Product analysis failed")
-        raise HTTPException(503, "Product analysis is temporarily unavailable") from error
+        raise HTTPException(
+            503, "Product analysis is temporarily unavailable"
+        ) from error

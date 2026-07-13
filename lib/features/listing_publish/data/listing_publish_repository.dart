@@ -405,8 +405,17 @@ class ListingPublishRepository {
     draft.status = ListingStatus.published;
     draft.updatedAt = DateTime.now().toUtc();
     await removeLocalDraft(draft.id);
-    unawaited(_indexPublishedProduct(draft.id));
+    unawaited(_preparePublishedProduct(draft.id));
     debugPrint('Listing published: ${draft.id}');
+  }
+
+  Future<void> _preparePublishedProduct(String productId) async {
+    try {
+      await _indexPublishedProduct(productId);
+    } catch (error, stackTrace) {
+      debugPrint('Product indexing error: $error\n$stackTrace');
+    }
+    await _queueBackgroundRemoval(productId);
   }
 
   Future<void> _indexPublishedProduct(String productId) async {
@@ -415,6 +424,19 @@ class ListingPublishRepository {
       await service.indexProduct(productId);
     } finally {
       service.close();
+    }
+  }
+
+  Future<void> _queueBackgroundRemoval(String productId) async {
+    final client = _client;
+    if (client == null) return;
+    try {
+      await client.functions.invoke(
+        'process-product-image',
+        body: {'product_id': productId},
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Background removal queue error: $error\n$stackTrace');
     }
   }
 

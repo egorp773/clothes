@@ -21,36 +21,59 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const withoutBgKey = Deno.env.get("WITHOUTBG_API_KEY");
+  const analyzerUrl = Deno.env.get("PRODUCT_ANALYZER_URL");
+  const authorization = req.headers.get("Authorization");
 
-  if (!supabaseUrl || !serviceRoleKey || !withoutBgKey) {
-    return json({ error: "Missing Supabase or withoutbg env vars" }, 500);
+  if (!supabaseUrl || !serviceRoleKey || !analyzerUrl || !authorization) {
+    return json({ error: "Missing Supabase, analyzer, or authorization env" }, 500);
   }
 
   let productId = "";
-  let imageUrl = "";
 
   try {
     const body = await req.json();
     productId = String(body.product_id ?? "");
-    imageUrl = String(body.image_url ?? "");
   } catch {
     return json({ error: "Invalid JSON body" }, 400);
   }
 
-  if (!productId || !imageUrl) {
-    return json({ error: "product_id and image_url are required" }, 400);
+  if (!productId) {
+    return json({ error: "product_id is required" }, 400);
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false },
   });
+  const token = authorization.replace(/^Bearer\s+/i, "");
+  const { data: authData, error: authError } = await supabase.auth.getUser(token);
+  if (authError || !authData.user) {
+    return json({ error: "Invalid authorization" }, 401);
+  }
+  const { data: product, error: productError } = await supabase
+    .from("products")
+    .select("seller_id,main_image,original_image,image")
+    .eq("id", productId)
+    .maybeSingle();
+  if (productError || !product) {
+    return json({ error: "Product not found" }, 404);
+  }
+  if (product.seller_id !== authData.user.id) {
+    return json({ error: "Only the product owner can process its image" }, 403);
+  }
+  const imageUrl = [product.original_image, product.main_image, product.image]
+    .map((value) => String(value ?? "").trim())
+    .find((value) => value.length > 0) ?? "";
+  if (!imageUrl.startsWith(`${supabaseUrl}/storage/v1/object/`)) {
+    return json({ error: "Product image must be in project storage" }, 422);
+  }
 
   const work = processProductImage({
     supabase,
-    withoutBgKey,
+    analyzerUrl,
+    authorization,
     productId,
     imageUrl,
+    ownerId: authData.user.id,
   });
 
   const edgeRuntime = (globalThis as EdgeRuntimeGlobal).EdgeRuntime;
@@ -65,41 +88,54 @@ Deno.serve(async (req) => {
 
 async function processProductImage({
   supabase,
-  withoutBgKey,
+  analyzerUrl,
+  authorization,
   productId,
   imageUrl,
+  ownerId,
 }: {
   supabase: SupabaseClient;
-  withoutBgKey: string;
+  analyzerUrl: string;
+  authorization: string;
   productId: string;
   imageUrl: string;
+  ownerId: string;
 }) {
   await supabase
     .from("products")
     .update({ background_status: "processing", background_error: null })
-    .eq("id", productId);
+    .eq("id", productId)
+    .eq("seller_id", ownerId);
 
   try {
     const original = await fetch(imageUrl);
     if (!original.ok) {
       throw new Error(`Image fetch failed: ${original.status}`);
     }
+    const advertisedSize = Number(original.headers.get("content-length") ?? 0);
+    if (advertisedSize > 15 * 1024 * 1024) {
+      throw new Error("Image is larger than 15 MB");
+    }
+    const originalBlob = await original.blob();
+    if (originalBlob.size > 15 * 1024 * 1024) {
+      throw new Error("Image is larger than 15 MB");
+    }
 
     const form = new FormData();
-    form.append("file", await original.blob(), `${productId}.jpg`);
+    form.append("file", originalBlob, `${productId}.jpg`);
 
     const removed = await fetch(
-      "https://api.withoutbg.com/v1.0/image-without-background",
+      `${analyzerUrl.replace(/\/$/, "")}/v1/remove-background`,
       {
         method: "POST",
-        headers: { "X-API-Key": withoutBgKey },
+        headers: { Authorization: authorization },
         body: form,
       },
     );
 
     if (!removed.ok) {
       throw new Error(
-        `withoutbg failed: ${removed.status} ${await removed.text()}`,
+        `background removal failed: ${removed.status}`,
       );
     }
 
@@ -129,7 +165,8 @@ async function processProductImage({
         background_status: "completed",
         background_error: null,
       })
-      .eq("id", productId);
+      .eq("id", productId)
+      .eq("seller_id", ownerId);
 
     if (updated.error) {
       throw updated.error;
@@ -139,7 +176,8 @@ async function processProductImage({
     await supabase
       .from("products")
       .update({ background_status: "failed", background_error: message })
-      .eq("id", productId);
+      .eq("id", productId)
+      .eq("seller_id", ownerId);
   }
 }
 

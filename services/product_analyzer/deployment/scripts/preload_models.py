@@ -4,12 +4,21 @@ import logging
 
 from app.config import get_settings
 from app.model_manager import ModelManager
+from rembg.sessions import sessions
 
 
 logging.basicConfig(level=logging.INFO)
 settings = get_settings()
 models = ModelManager(settings)
 try:
+    for model_name in (
+        settings.clothing_region_model_name,
+        settings.background_removal_model_name,
+    ):
+        session = sessions.get(model_name)
+        if session is None:
+            raise RuntimeError(f"Unknown rembg model: {model_name}")
+        session.download_models()
     models.load_enabled()
     health = models.health()
     missing = [

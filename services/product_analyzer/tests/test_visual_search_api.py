@@ -5,7 +5,8 @@ import io
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.main import app, jwt_verifier, visual_search, visual_store
+from app.main import app, jwt_verifier, models, visual_search, visual_store
+from app.segmentation.rembg_adapter import ForegroundProposal
 from app.visual_search.schemas import (
     AuthenticatedUser,
     VisualSearchResponse,
@@ -71,6 +72,54 @@ def test_visual_search_is_available_without_login(monkeypatch):
         files={"file": ("query.jpg", _jpeg(), "image/jpeg")},
     )
     assert response.status_code == 200
+
+
+def test_visual_search_regions_returns_normalized_boxes(monkeypatch):
+    monkeypatch.setattr(
+        models.fast_segmentation,
+        "propose_regions",
+        lambda _: [
+            ForegroundProposal((8, 4, 32, 28), 0.91),
+            ForegroundProposal((36, 10, 60, 52), 0.84),
+        ],
+    )
+    monkeypatch.setattr(
+        models.clothing_regions,
+        "propose_clothing_regions",
+        lambda _: [],
+    )
+    response = TestClient(app).post(
+        "/v1/visual-search/regions",
+        files={"file": ("query.jpg", _jpeg(), "image/jpeg")},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["width"] == 64
+    assert payload["height"] == 64
+    assert len(payload["regions"]) == 2
+    assert payload["regions"][0]["bbox"] == [0.125, 0.0625, 0.5, 0.4375]
+
+
+def test_background_removal_returns_local_png(monkeypatch):
+    monkeypatch.setattr(
+        jwt_verifier,
+        "verify",
+        lambda _: AuthenticatedUser(id="user"),
+    )
+    monkeypatch.setattr(
+        models.background_removal,
+        "remove_background",
+        lambda image: image.convert("RGBA"),
+    )
+    response = TestClient(app).post(
+        "/v1/remove-background",
+        headers={"Authorization": "Bearer test"},
+        files={"file": ("query.jpg", _jpeg(), "image/jpeg")},
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.headers["x-background-model"] == "isnet-general-use"
+    assert Image.open(io.BytesIO(response.content)).mode == "RGBA"
 
 
 def test_product_indexing_is_owner_only(monkeypatch):

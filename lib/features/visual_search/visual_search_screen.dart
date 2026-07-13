@@ -17,7 +17,7 @@ class VisualSearchScreen extends StatefulWidget {
     required this.onToggleLike,
     this.onShareProduct,
     this.service,
-    this.imagePicker,
+    this.initialResult,
   });
 
   final XFile initialImage;
@@ -25,7 +25,7 @@ class VisualSearchScreen extends StatefulWidget {
   final Future<void> Function(String productId) onToggleLike;
   final ValueChanged<Product>? onShareProduct;
   final VisualSearchService? service;
-  final ImagePicker? imagePicker;
+  final VisualSearchResult? initialResult;
 
   @override
   State<VisualSearchScreen> createState() => _VisualSearchScreenState();
@@ -33,7 +33,6 @@ class VisualSearchScreen extends StatefulWidget {
 
 class _VisualSearchScreenState extends State<VisualSearchScreen> {
   late final VisualSearchService _service;
-  late final ImagePicker _picker;
   XFile? _image;
   Uint8List? _previewBytes;
   VisualSearchResult? _result;
@@ -45,7 +44,6 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
   void initState() {
     super.initState();
     _service = widget.service ?? VisualSearchService();
-    _picker = widget.imagePicker ?? ImagePicker();
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadInitialImage());
   }
 
@@ -55,34 +53,15 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
     setState(() {
       _image = widget.initialImage;
       _previewBytes = bytes;
+      _result = widget.initialResult;
     });
-    await _search();
+    if (widget.initialResult == null) await _search();
   }
 
   @override
   void dispose() {
     if (widget.service == null) _service.close();
     super.dispose();
-  }
-
-  Future<void> _pick(ImageSource source) async {
-    Navigator.of(context).pop();
-    final picked = await _picker.pickImage(
-      source: source,
-      maxWidth: 1600,
-      maxHeight: 1600,
-      imageQuality: 88,
-    );
-    if (picked == null) return;
-    final bytes = await picked.readAsBytes();
-    if (!mounted) return;
-    setState(() {
-      _image = picked;
-      _previewBytes = bytes;
-      _result = null;
-      _error = null;
-    });
-    await _search();
   }
 
   Future<void> _search() async {
@@ -110,33 +89,7 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
     }
   }
 
-  void _showSourcePicker() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.white,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 4, 18, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.camera_alt_outlined),
-                title: const Text('Сфотографировать'),
-                onTap: () => _pick(ImageSource.camera),
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Выбрать из галереи'),
-                onTap: () => _pick(ImageSource.gallery),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  void _backToCamera() => Navigator.maybePop(context);
 
   Future<void> _showFilters() async {
     final minController = TextEditingController(
@@ -347,8 +300,8 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
                           ),
                         ),
                       TextButton(
-                        onPressed: _searching ? null : _showSourcePicker,
-                        child: const Text('Заменить фото'),
+                        onPressed: _searching ? null : _backToCamera,
+                        child: const Text('Новое фото'),
                       ),
                     ],
                   ),
@@ -384,8 +337,8 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
               icon: Icons.search_off_rounded,
               title: 'Похожих товаров пока не найдено',
               subtitle: 'Попробуйте другой ракурс или сбросьте фильтры.',
-              action: 'Выбрать другое фото',
-              onTap: _showSourcePicker,
+              action: 'Сделать новое фото',
+              onTap: _backToCamera,
             ),
           )
         else

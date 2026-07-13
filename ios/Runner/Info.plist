@@ -43,7 +43,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Камера нужна, чтобы фотографировать вещи для объявления.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Доступ к фотографиям нужен, чтобы добавлять снимки вещей в объявление.</string>
+	<string>Доступ к фотографиям нужен для встроенной галереи и поиска похожих вещей.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

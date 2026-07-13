@@ -1963,10 +1963,7 @@ class AppRepository extends ChangeNotifier {
 
     unawaited(
       _client.functions
-          .invoke(
-            'process-product-image',
-            body: {'product_id': product.id, 'image_url': product.image},
-          )
+          .invoke('process-product-image', body: {'product_id': product.id})
           .then((_) => _syncFromSupabase())
           .catchError((e) {
             debugPrint('Background queue error: $e');
@@ -2011,7 +2008,7 @@ class AppRepository extends ChangeNotifier {
 
       final accessory = fallback.copyWith(
         image: imageUrl,
-        ownerId: isDefault ? '' : user!.id,
+        ownerId: user!.id,
         isLocal: false,
       );
 
@@ -2038,7 +2035,7 @@ class AppRepository extends ChangeNotifier {
       _client.functions
           .invoke(
             'process-accessory-image',
-            body: {'accessory_id': accessory.id, 'image_url': accessory.image},
+            body: {'accessory_id': accessory.id},
           )
           .then((_) => _syncAccessoriesFromSupabase())
           .catchError((e) {

@@ -6,14 +6,13 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
-const withoutBgApiKey = String.fromEnvironment(
-  'WITHOUTBG_API_KEY',
-  defaultValue: '',
-);
+import '../core/app_config.dart';
 
 const _uuid = Uuid();
 
@@ -29,7 +28,7 @@ class BackgroundRemovalResult {
 }
 
 class BackgroundProcessingService extends ChangeNotifier {
-  BackgroundProcessingService({this.maxConcurrent = 2});
+  BackgroundProcessingService({this.maxConcurrent = 1});
 
   final int maxConcurrent;
   final Map<String, _BackgroundProcessingTask> _tasks = {};
@@ -142,7 +141,10 @@ Future<BackgroundRemovalResult> removeBackgroundFromBytes(
   Uint8List bytes, {
   String fileName = 'outfit-item.png',
 }) async {
-  final resultBytes = await _removeBackgroundWithApi(bytes, fileName: fileName);
+  final resultBytes = await _removeBackgroundWithService(
+    bytes,
+    fileName: fileName,
+  );
 
   return BackgroundRemovalResult(
     file: XFile.fromData(
@@ -175,30 +177,69 @@ Future<Uint8List> bytesFromImageSource(String source) async {
   throw Exception('Unsupported image source');
 }
 
-Future<Uint8List> _removeBackgroundWithApi(
+Future<Uint8List> _removeBackgroundWithService(
   Uint8List bytes, {
   required String fileName,
 }) async {
-  if (withoutBgApiKey.trim().isEmpty) {
-    throw StateError('withoutbg api key is empty');
+  final token = Supabase.instance.client.auth.currentSession?.accessToken;
+  if (token == null || token.isEmpty) {
+    throw StateError('Для удаления фона нужно войти в аккаунт');
   }
 
   final request = http.MultipartRequest(
     'POST',
-    Uri.parse('https://api.withoutbg.com/v1.0/image-without-background'),
+    Uri.parse(
+      '${AppConfig.productAnalyzerUrl.replaceAll(RegExp(r'/$'), '')}/v1/remove-background',
+    ),
   );
-  request.headers['X-API-Key'] = withoutBgApiKey;
-  request.files.add(
-    http.MultipartFile.fromBytes('file', bytes, filename: fileName),
-  );
+  request
+    ..headers['Authorization'] = 'Bearer $token'
+    ..files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: fileName,
+        contentType: _imageMediaType(bytes),
+      ),
+    );
 
-  final streamed = await request.send().timeout(const Duration(seconds: 60));
+  final streamed = await request.send().timeout(const Duration(seconds: 90));
   final response = await http.Response.fromStream(streamed);
   if (response.statusCode != 200) {
-    throw Exception('withoutbg ${response.statusCode}: ${response.body}');
+    throw Exception(
+      'Удаление фона временно недоступно (${response.statusCode})',
+    );
   }
 
   return compute(_normalizeCutoutBytes, response.bodyBytes);
+}
+
+MediaType _imageMediaType(Uint8List bytes) {
+  if (bytes.length >= 3 &&
+      bytes[0] == 0xff &&
+      bytes[1] == 0xd8 &&
+      bytes[2] == 0xff) {
+    return MediaType('image', 'jpeg');
+  }
+  if (bytes.length >= 8 &&
+      bytes[0] == 0x89 &&
+      bytes[1] == 0x50 &&
+      bytes[2] == 0x4e &&
+      bytes[3] == 0x47) {
+    return MediaType('image', 'png');
+  }
+  if (bytes.length >= 12 &&
+      bytes[0] == 0x52 &&
+      bytes[1] == 0x49 &&
+      bytes[2] == 0x46 &&
+      bytes[3] == 0x46 &&
+      bytes[8] == 0x57 &&
+      bytes[9] == 0x45 &&
+      bytes[10] == 0x42 &&
+      bytes[11] == 0x50) {
+    return MediaType('image', 'webp');
+  }
+  return MediaType('application', 'octet-stream');
 }
 
 Uint8List _normalizeCutoutBytes(Uint8List bytes) {

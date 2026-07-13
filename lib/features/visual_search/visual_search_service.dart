@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' show Rect, Size;
 
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
@@ -70,6 +71,30 @@ class VisualSearchException implements Exception {
   String toString() => message;
 }
 
+class VisualSearchRegion {
+  const VisualSearchRegion({
+    required this.id,
+    required this.bounds,
+    required this.confidence,
+    this.label,
+  });
+
+  final String id;
+  final Rect bounds;
+  final double confidence;
+  final String? label;
+}
+
+class VisualSearchRegionsResult {
+  const VisualSearchRegionsResult({
+    required this.imageSize,
+    required this.regions,
+  });
+
+  final Size imageSize;
+  final List<VisualSearchRegion> regions;
+}
+
 class VisualSearchService {
   VisualSearchService({
     String? baseUrl,
@@ -80,13 +105,86 @@ class VisualSearchService {
          '',
        ),
        _client = client ?? http.Client(),
+       _ownsClient = client == null,
        _accessTokenProvider =
            accessTokenProvider ??
            (() => Supabase.instance.client.auth.currentSession?.accessToken);
 
   final String baseUrl;
-  final http.Client _client;
+  http.Client _client;
+  final bool _ownsClient;
   final String? Function() _accessTokenProvider;
+
+  Future<VisualSearchRegionsResult> detectRegions(XFile image) async {
+    final token = _accessTokenProvider();
+    final bytes = await image.readAsBytes();
+    final request =
+        http.MultipartRequest(
+            'POST',
+            Uri.parse('$baseUrl/v1/visual-search/regions'),
+          )
+          ..files.add(
+            http.MultipartFile.fromBytes(
+              'file',
+              bytes,
+              filename: image.name,
+              contentType: MediaType.parse(_mimeType(image)),
+            ),
+          );
+    if (token != null && token.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $token';
+    }
+    late http.StreamedResponse streamed;
+    try {
+      streamed = await _client
+          .send(request)
+          .timeout(const Duration(seconds: 40));
+    } catch (_) {
+      throw const VisualSearchException(
+        'Не удалось определить вещи на фото. Попробуйте ещё раз.',
+      );
+    }
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw const VisualSearchException(
+        'Не удалось определить вещи на фото. Попробуйте ещё раз.',
+      );
+    }
+    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    if (decoded is! Map) {
+      throw const VisualSearchException('Сервис вернул некорректный ответ');
+    }
+    final payload = Map<String, dynamic>.from(decoded);
+    final width = (payload['width'] as num?)?.toDouble() ?? 1;
+    final height = (payload['height'] as num?)?.toDouble() ?? 1;
+    final regions = <VisualSearchRegion>[];
+    final rows = payload['regions'];
+    if (rows is List) {
+      for (final raw in rows.whereType<Map>()) {
+        final row = Map<String, dynamic>.from(raw);
+        final bbox = row['bbox'];
+        if (bbox is! List || bbox.length != 4) continue;
+        final values = bbox.map((value) => (value as num).toDouble()).toList();
+        regions.add(
+          VisualSearchRegion(
+            id: row['id']?.toString() ?? 'region-${regions.length + 1}',
+            label: row['label']?.toString(),
+            confidence: (row['confidence'] as num?)?.toDouble() ?? 0,
+            bounds: Rect.fromLTRB(
+              values[0].clamp(0, 1),
+              values[1].clamp(0, 1),
+              values[2].clamp(0, 1),
+              values[3].clamp(0, 1),
+            ),
+          ),
+        );
+      }
+    }
+    return VisualSearchRegionsResult(
+      imageSize: Size(width, height),
+      regions: regions,
+    );
+  }
 
   Future<VisualSearchResult> search(
     XFile image, {
@@ -112,7 +210,7 @@ class VisualSearchService {
     try {
       streamed = await _client
           .send(request)
-          .timeout(const Duration(seconds: 12));
+          .timeout(const Duration(seconds: 45));
     } catch (_) {
       throw const VisualSearchException(
         'Поиск по фото временно недоступен. Попробуйте позже.',
@@ -171,15 +269,25 @@ class VisualSearchService {
   Future<void> indexProduct(String productId) async {
     final token = _accessTokenProvider();
     if (token == null || token.isEmpty) return;
-    try {
-      await _client
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final response = await _client
           .post(
             Uri.parse('$baseUrl/v1/products/$productId/embeddings'),
             headers: {'Authorization': 'Bearer $token'},
           )
-          .timeout(const Duration(seconds: 30));
-    } catch (_) {
-      // Search indexing is best-effort and never blocks publication.
+          .timeout(const Duration(seconds: 120));
+      if (response.statusCode >= 200 && response.statusCode < 300) return;
+      final retryable =
+          response.statusCode == 429 ||
+          response.statusCode == 503 ||
+          response.statusCode == 504;
+      if (attempt == 0 && retryable) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        continue;
+      }
+      throw VisualSearchException(
+        'Индексация товара временно недоступна (${response.statusCode})',
+      );
     }
   }
 
@@ -194,6 +302,12 @@ class VisualSearchService {
     if (name.endsWith('.png')) return 'image/png';
     if (name.endsWith('.webp')) return 'image/webp';
     return 'image/jpeg';
+  }
+
+  void cancelActiveSearch() {
+    if (!_ownsClient) return;
+    _client.close();
+    _client = http.Client();
   }
 
   void close() => _client.close();

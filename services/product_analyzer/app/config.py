@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str | None = None
     max_images: int = 8
     max_image_bytes: int = 15 * 1024 * 1024
+    max_decoded_image_pixels: int = 40_000_000
     visual_search_timeout_seconds: float = 8.0
     visual_search_stage_timeout_seconds: float = 4.5
     visual_search_max_image_bytes: int = 10 * 1024 * 1024
@@ -95,6 +96,11 @@ class Settings(BaseSettings):
     rembg_min_area_share: float = 0.015
     rembg_max_area_share: float = 0.92
     rembg_secondary_component_min_share: float = 0.06
+    clothing_region_model_name: str = "u2net_cloth_seg"
+    background_removal_model_name: str = "isnet-general-use"
+    background_removal_max_image_bytes: int = 15 * 1024 * 1024
+    background_removal_max_side: int = 1600
+    background_removal_timeout_seconds: float = 60.0
 
     fashion_model_id: str = "Marqo/marqo-fashionSigLIP"
     fashion_model_revision: str = "c56244cc94f92419e8369fa71efdaf403b124ce8"

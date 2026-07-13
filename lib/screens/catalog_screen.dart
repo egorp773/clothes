@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../core/app_typography.dart';
 import '../features/chat/chat_actions.dart';
-import '../features/visual_search/visual_search_screen.dart';
+import '../features/visual_search/visual_search_camera_screen.dart';
 import '../models/app_profile.dart';
 import '../models/message_thread.dart';
 import '../models/product.dart';
@@ -86,7 +85,6 @@ class _CatalogScreenState extends State<CatalogScreen>
   final ScrollController _scrollController = ScrollController();
   bool _showFloatingSearch = false;
   double _lastScrollOffset = 0;
-  final ImagePicker _visualSearchPicker = ImagePicker();
 
   final List<String> _tabs = [
     'Новинки',
@@ -464,43 +462,9 @@ class _CatalogScreenState extends State<CatalogScreen>
   }
 
   Future<void> _openVisualSearch() async {
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      backgroundColor: Colors.white,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.camera_alt_outlined),
-                title: const Text('Сфотографировать'),
-                onTap: () => Navigator.pop(context, ImageSource.camera),
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Выбрать из галереи'),
-                onTap: () => Navigator.pop(context, ImageSource.gallery),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (source == null || !mounted) return;
-    final image = await _visualSearchPicker.pickImage(
-      source: source,
-      maxWidth: 1600,
-      maxHeight: 1600,
-      imageQuality: 88,
-    );
-    if (image == null || !mounted) return;
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
-        builder: (context) => VisualSearchScreen(
-          initialImage: image,
+        builder: (context) => VisualSearchCameraScreen(
           onProductTap: _showProductDetails,
           onToggleLike: widget.onToggleLike,
           onShareProduct: widget.onShareProduct,

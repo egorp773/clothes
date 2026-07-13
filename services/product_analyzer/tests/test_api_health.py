@@ -11,7 +11,15 @@ def test_health_does_not_load_models():
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] in {"ok", "degraded"}
-    assert set(payload["components"]) == {"fast_segmentation", "segmentation", "classification", "ocr", "vlm"}
+    assert set(payload["components"]) == {
+        "fast_segmentation",
+        "clothing_regions",
+        "background_removal",
+        "segmentation",
+        "classification",
+        "ocr",
+        "vlm",
+    }
 
 
 def test_analysis_degrades_to_partial_result_without_weights():
