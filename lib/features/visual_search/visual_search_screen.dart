@@ -18,6 +18,7 @@ class VisualSearchScreen extends StatefulWidget {
     this.onShareProduct,
     this.service,
     this.initialResult,
+    this.initialPreviewBytes,
   });
 
   final XFile initialImage;
@@ -26,6 +27,7 @@ class VisualSearchScreen extends StatefulWidget {
   final ValueChanged<Product>? onShareProduct;
   final VisualSearchService? service;
   final VisualSearchResult? initialResult;
+  final Uint8List? initialPreviewBytes;
 
   @override
   State<VisualSearchScreen> createState() => _VisualSearchScreenState();
@@ -48,14 +50,15 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
   }
 
   Future<void> _loadInitialImage() async {
-    final bytes = await widget.initialImage.readAsBytes();
+    final bytes =
+        widget.initialPreviewBytes ?? await widget.initialImage.readAsBytes();
     if (!mounted) return;
     setState(() {
       _image = widget.initialImage;
       _previewBytes = bytes;
       _result = widget.initialResult;
     });
-    if (widget.initialResult == null) await _search();
+    if (widget.initialResult == null) await _search(imageBytes: bytes);
   }
 
   @override
@@ -64,7 +67,7 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
     super.dispose();
   }
 
-  Future<void> _search() async {
+  Future<void> _search({Uint8List? imageBytes}) async {
     final image = _image;
     if (image == null || _searching) return;
     setState(() {
@@ -72,7 +75,11 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
       _error = null;
     });
     try {
-      final result = await _service.search(image, filters: _filters);
+      final result = await _service.search(
+        image,
+        filters: _filters,
+        imageBytes: imageBytes ?? _previewBytes,
+      );
       if (!mounted) return;
       setState(() => _result = result);
     } on VisualSearchException catch (error) {
@@ -246,7 +253,7 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
         if (_image != null)
           IconButton(
             tooltip: 'Фильтры',
-            onPressed: _showFilters,
+            onPressed: _searching ? null : _showFilters,
             icon: Badge(
               isLabelVisible: !_filters.isEmpty,
               child: const Icon(Icons.tune_rounded),
@@ -284,7 +291,7 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
                       Text(
                         _searching
                             ? 'Ищем похожие вещи…'
-                            : '${products.length} похожих товаров',
+                            : _productsCountLabel(products.length),
                         style: const TextStyle(
                           fontFamily: AppTypography.fontFamily,
                           fontSize: 15,
@@ -367,6 +374,15 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
           ),
       ],
     );
+  }
+
+  String _productsCountLabel(int count) {
+    final mod100 = count % 100;
+    final mod10 = count % 10;
+    if (mod100 >= 11 && mod100 <= 14) return '$count похожих товаров';
+    if (mod10 == 1) return '$count похожий товар';
+    if (mod10 >= 2 && mod10 <= 4) return '$count похожих товара';
+    return '$count похожих товаров';
   }
 }
 

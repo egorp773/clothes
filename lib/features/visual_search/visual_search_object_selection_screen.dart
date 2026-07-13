@@ -137,65 +137,79 @@ class _VisualSearchObjectSelectionScreenState
               ),
             )
           else
-            ...widget.regions.indexed.map((entry) {
-              final index = entry.$1;
-              final region = entry.$2;
-              final selected = index == _selectedIndex;
-              return Positioned.fromRect(
-                rect: _mapRect(region.bounds, imageRect),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => setState(() => _selectedIndex = index),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 170),
-                    decoration: BoxDecoration(
-                      color: selected
-                          ? Colors.white.withValues(alpha: 0.08)
-                          : Colors.transparent,
-                      border: Border.all(
-                        color: Colors.white.withValues(
-                          alpha: selected ? 0.95 : 0.52,
+            Positioned.fromRect(
+              rect: imageRect,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (details) =>
+                    _selectRegionAt(details.localPosition, imageRect.size),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ...widget.regions.indexed.map((entry) {
+                      final index = entry.$1;
+                      final region = entry.$2;
+                      final selected = index == _selectedIndex;
+                      return Positioned.fromRect(
+                        rect: _mapRect(
+                          region.bounds,
+                          Offset.zero & imageRect.size,
                         ),
-                        width: selected ? 2 : 1,
-                      ),
-                      borderRadius: BorderRadius.circular(14),
-                      boxShadow: selected
-                          ? const [
-                              BoxShadow(
-                                color: Color(0x4D9EEBFF),
-                                blurRadius: 16,
+                        child: IgnorePointer(
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 170),
+                            decoration: BoxDecoration(
+                              color: selected
+                                  ? Colors.white.withValues(alpha: 0.08)
+                                  : Colors.transparent,
+                              border: Border.all(
+                                color: Colors.white.withValues(
+                                  alpha: selected ? 0.95 : 0.52,
+                                ),
+                                width: selected ? 2 : 1,
                               ),
-                            ]
-                          : null,
-                    ),
-                    child: Align(
-                      alignment: Alignment.topLeft,
-                      child: Container(
-                        margin: const EdgeInsets.all(7),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xB31A1A1C),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          _regionTitle(region, index),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: selected
+                                  ? const [
+                                      BoxShadow(
+                                        color: Color(0x4D9EEBFF),
+                                        blurRadius: 16,
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                            child: Align(
+                              alignment: Alignment.topLeft,
+                              child: Container(
+                                margin: const EdgeInsets.all(7),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xB31A1A1C),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  _regionTitle(region, index),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                  ),
+                      );
+                    }),
+                  ],
                 ),
-              );
-            }),
+              ),
+            ),
         ],
       );
     },
@@ -315,11 +329,7 @@ class _VisualSearchObjectSelectionScreenState
                 const SizedBox(width: 8),
                 Expanded(
                   child: TextButton(
-                    onPressed: () => setState(() {
-                      _manual = !_manual;
-                      _manualAdjusted = false;
-                      _selectedIndex = null;
-                    }),
+                    onPressed: _toggleManualSelection,
                     child: Text(
                       _manual ? 'К найденным вещам' : 'Выбрать вручную',
                       maxLines: 1,
@@ -341,6 +351,48 @@ class _VisualSearchObjectSelectionScreenState
       ((point.dx - imageRect.left) / imageRect.width).clamp(0, 1),
       ((point.dy - imageRect.top) / imageRect.height).clamp(0, 1),
     );
+  }
+
+  void _selectRegionAt(Offset point, Size imageSize) {
+    if (imageSize.width <= 0 || imageSize.height <= 0) return;
+    final normalized = Offset(
+      (point.dx / imageSize.width).clamp(0, 1),
+      (point.dy / imageSize.height).clamp(0, 1),
+    );
+    int? bestIndex;
+    var bestArea = double.infinity;
+    var bestConfidence = -double.infinity;
+    for (final entry in widget.regions.indexed) {
+      final region = entry.$2;
+      if (!region.bounds.contains(normalized)) continue;
+      final area = region.bounds.width * region.bounds.height;
+      if (area < bestArea ||
+          (area == bestArea && region.confidence > bestConfidence)) {
+        bestIndex = entry.$1;
+        bestArea = area;
+        bestConfidence = region.confidence;
+      }
+    }
+    if (bestIndex != null && bestIndex != _selectedIndex) {
+      setState(() => _selectedIndex = bestIndex);
+    }
+  }
+
+  void _toggleManualSelection() {
+    setState(() {
+      if (_manual) {
+        _manual = false;
+        return;
+      }
+      _manual = true;
+      final selectedIndex = _selectedIndex;
+      if (selectedIndex == null) {
+        _manualAdjusted = false;
+        return;
+      }
+      _manualBounds = widget.regions[selectedIndex].bounds;
+      _manualAdjusted = true;
+    });
   }
 
   Rect _mapRect(Rect normalized, Rect imageRect) => Rect.fromLTRB(
@@ -437,8 +489,12 @@ class _ManualSelectionPainter extends CustomPainter {
       oldDelegate.selectionRect != selectionRect;
 }
 
-Future<XFile> cropVisualSearchImage(XFile source, Rect bounds) async {
-  final bytes = await source.readAsBytes();
+Future<XFile> cropVisualSearchImage(
+  XFile source,
+  Rect bounds, {
+  Uint8List? imageBytes,
+}) async {
+  final bytes = imageBytes ?? await source.readAsBytes();
   final cropped = await compute(_cropJpeg, {
     'bytes': bytes,
     'left': bounds.left,
@@ -455,7 +511,7 @@ Future<XFile> cropVisualSearchImage(XFile source, Rect bounds) async {
 
 Future<XFile> normalizeVisualSearchImage(
   XFile source, {
-  int maxSide = 1600,
+  int maxSide = 1024,
 }) async {
   final bytes = await source.readAsBytes();
   final normalized = await compute(_normalizeJpeg, {
@@ -512,5 +568,5 @@ Uint8List _normalizeJpeg(Map<String, Object> input) {
       interpolation: image_lib.Interpolation.cubic,
     );
   }
-  return Uint8List.fromList(image_lib.encodeJpg(image, quality: 90));
+  return Uint8List.fromList(image_lib.encodeJpg(image, quality: 88));
 }

@@ -309,9 +309,9 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
     setState(() => _capturing = true);
     try {
       final bytes = await asset.thumbnailDataWithSize(
-        const ThumbnailSize(1600, 1600),
+        const ThumbnailSize(1024, 1024),
         format: ThumbnailFormat.jpeg,
-        quality: 92,
+        quality: 88,
       );
       if (bytes == null || bytes.isEmpty) {
         throw StateError('Photo data is unavailable');
@@ -348,7 +348,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
 
     VisualSearchRegionsResult detected;
     try {
-      detected = await _service.detectRegions(image);
+      detected = await _service.detectRegions(image, imageBytes: previewBytes);
     } catch (_) {
       if (!mounted || operationGeneration != _searchGeneration) return;
       setState(() => _detectingObjects = false);
@@ -356,9 +356,27 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       return;
     }
     if (!mounted || operationGeneration != _searchGeneration) return;
-    if (detected.regions.length <= 1) {
+    if (!shouldOfferVisualSearchSelection(detected.regions)) {
+      var searchImage = image;
+      var searchPreviewBytes = previewBytes;
+      final singleRegion = detected.regions.firstOrNull;
+      if (singleRegion != null &&
+          shouldAutoCropVisualSearchRegion(singleRegion)) {
+        try {
+          searchImage = await cropVisualSearchImage(
+            image,
+            _expandVisualSearchCrop(singleRegion.bounds),
+            imageBytes: previewBytes,
+          );
+          searchPreviewBytes = await searchImage.readAsBytes();
+        } catch (_) {
+          searchImage = image;
+          searchPreviewBytes = previewBytes;
+        }
+      }
+      if (!mounted || operationGeneration != _searchGeneration) return;
       setState(() => _detectingObjects = false);
-      await _runSearch(image, preview: previewBytes);
+      await _runSearch(searchImage, preview: searchPreviewBytes);
       return;
     }
 
@@ -379,9 +397,15 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
     }
 
     var searchImage = image;
+    var searchPreviewBytes = previewBytes;
     if (!choice.useWholePhoto && choice.cropBounds != null) {
       try {
-        searchImage = await cropVisualSearchImage(image, choice.cropBounds!);
+        searchImage = await cropVisualSearchImage(
+          image,
+          choice.cropBounds!,
+          imageBytes: previewBytes,
+        );
+        searchPreviewBytes = await searchImage.readAsBytes();
       } catch (_) {
         if (!mounted || operationGeneration != _searchGeneration) return;
         _showError('Не удалось выделить выбранную вещь');
@@ -391,7 +415,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
     }
     if (!mounted || operationGeneration != _searchGeneration) return;
     setState(() => _detectingObjects = false);
-    await _runSearch(searchImage, preview: previewBytes);
+    await _runSearch(searchImage, preview: searchPreviewBytes);
   }
 
   Future<void> _finishDetection(int generation) async {
@@ -423,13 +447,14 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       await _cameraController?.pausePreview();
     } catch (_) {}
     try {
-      final result = await _service.search(image);
+      final result = await _service.search(image, imageBytes: previewBytes);
       if (!mounted || searchGeneration != _searchGeneration) return;
       await Navigator.of(context, rootNavigator: true).push(
         MaterialPageRoute<void>(
           builder: (context) => VisualSearchScreen(
             initialImage: image,
             initialResult: result,
+            initialPreviewBytes: previewBytes,
             service: _service,
             onProductTap: widget.onProductTap,
             onToggleLike: widget.onToggleLike,
@@ -942,6 +967,48 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
         ],
       ),
     ),
+  );
+}
+
+bool shouldAutoCropVisualSearchRegion(VisualSearchRegion region) {
+  final bounds = region.bounds.intersect(const Rect.fromLTWH(0, 0, 1, 1));
+  if (!bounds.left.isFinite ||
+      !bounds.top.isFinite ||
+      !bounds.right.isFinite ||
+      !bounds.bottom.isFinite) {
+    return false;
+  }
+  final area = bounds.width * bounds.height;
+  // Generic foreground segmentation can mistake a bottom sheet, product rail,
+  // or other screenshot chrome for one highly confident foreground.  A nearly
+  // full-width box anchored to the bottom is not safe to crop automatically;
+  // keeping the whole image lets FashionSigLIP use the actual outfit instead.
+  return region.confidence >= 0.7 &&
+      bounds.width >= 0.1 &&
+      bounds.height >= 0.1 &&
+      area >= 0.04 &&
+      area <= 0.78 &&
+      !_looksLikeBottomUi(region);
+}
+
+bool shouldOfferVisualSearchSelection(List<VisualSearchRegion> regions) {
+  if (regions.length > 1) return true;
+  return regions.length == 1 && _looksLikeBottomUi(regions.single);
+}
+
+bool _looksLikeBottomUi(VisualSearchRegion region) {
+  final bounds = region.bounds.intersect(const Rect.fromLTWH(0, 0, 1, 1));
+  return bounds.width >= 0.9 && bounds.bottom >= 0.98 && bounds.top >= 0.35;
+}
+
+Rect _expandVisualSearchCrop(Rect bounds) {
+  final horizontalPadding = bounds.width * 0.04;
+  final verticalPadding = bounds.height * 0.04;
+  return Rect.fromLTRB(
+    (bounds.left - horizontalPadding).clamp(0, 1),
+    (bounds.top - verticalPadding).clamp(0, 1),
+    (bounds.right + horizontalPadding).clamp(0, 1),
+    (bounds.bottom + verticalPadding).clamp(0, 1),
   );
 }
 

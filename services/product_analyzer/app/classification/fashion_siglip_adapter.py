@@ -132,6 +132,17 @@ class FashionSiglipAdapter:
     def classify(self, image: Image.Image, top_k: int | None = None) -> list[FashionCandidate]:
         return self.embed_and_classify(image, top_k=top_k).candidates
 
+    def classify_many(
+        self,
+        images: list[Image.Image],
+        top_k: int | None = None,
+    ) -> list[list[FashionCandidate]]:
+        """Classify several garment crops in one image-tower forward pass."""
+        return [
+            result.candidates
+            for result in self.embed_and_classify_many(images, top_k=top_k)
+        ]
+
     @property
     def embedding_dimension(self) -> int:
         self.load()
@@ -146,32 +157,61 @@ class FashionSiglipAdapter:
         top_k: int | None = None,
     ) -> FashionEmbeddingResult:
         """Run the image tower once and return its normalized embedding."""
+        return self.embed_and_classify_many([image], top_k=top_k)[0]
+
+    def embed_and_classify_many(
+        self,
+        images: list[Image.Image],
+        top_k: int | None = None,
+    ) -> list[FashionEmbeddingResult]:
+        """Return embeddings and category candidates for a small image batch.
+
+        FashionSigLIP preprocessing accepts a batch natively.  Using it here is
+        substantially cheaper than acquiring the model lock and running the
+        image tower once for every garment in a multi-item photo.
+        """
+        if not images:
+            return []
         self.load()
         with self._lock:
             import torch
 
-            processed = self._processor(images=[image.convert("RGB")], return_tensors="pt")
+            processed = self._processor(
+                images=[image.convert("RGB") for image in images],
+                return_tensors="pt",
+            )
             pixel_values = processed["pixel_values"].to(self._device)
             with torch.inference_mode():
                 image_features = self._model.get_image_features(pixel_values, normalize=True)
-                prompt_scores = (image_features @ self._prompt_embeddings.T).squeeze(0)
+                prompt_scores = image_features @ self._prompt_embeddings.T
                 category_scores = torch.stack(
-                    [prompt_scores[start:end].mean() for start, end in self._prompt_slices]
+                    [
+                        prompt_scores[:, start:end].mean(dim=1)
+                        for start, end in self._prompt_slices
+                    ],
+                    dim=1,
                 )
-                probabilities = torch.softmax(category_scores * 30.0, dim=0)
+                probabilities = torch.softmax(category_scores * 30.0, dim=1)
             requested = self.settings.classification_top_k if top_k is None else top_k
             limit = min(max(requested, 0), len(CATEGORIES))
             if limit:
-                values, indices = torch.topk(probabilities, k=limit)
-                candidates = [
-                FashionCandidate(CATEGORIES[int(index)], float(value))
-                for value, index in zip(values.cpu(), indices.cpu())
+                values, indices = torch.topk(probabilities, k=limit, dim=1)
+                candidate_batches = [
+                    [
+                        FashionCandidate(CATEGORIES[int(index)], float(value))
+                        for value, index in zip(row_values, row_indices)
+                    ]
+                    for row_values, row_indices in zip(values.cpu(), indices.cpu())
                 ]
             else:
-                candidates = []
-            embedding = image_features.squeeze(0).detach().float().cpu().numpy()
-            embedding /= max(float(np.linalg.norm(embedding)), 1e-12)
-            return FashionEmbeddingResult(embedding=embedding, candidates=candidates)
+                candidate_batches = [[] for _ in images]
+            embeddings = image_features.detach().float().cpu().numpy()
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            embeddings /= np.maximum(norms, 1e-12)
+            return [
+                FashionEmbeddingResult(embedding=embedding, candidates=candidates)
+                for embedding, candidates in zip(embeddings, candidate_batches)
+            ]
 
     def warmup(self) -> None:
         self.load()

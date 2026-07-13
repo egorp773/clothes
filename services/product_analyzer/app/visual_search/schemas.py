@@ -62,6 +62,8 @@ class VisualSearchRegionsResponse(BaseModel):
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     regions: list[VisualSearchRegion] = Field(default_factory=list)
+    timings_ms: dict[str, int] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ProductEmbeddingResponse(BaseModel):

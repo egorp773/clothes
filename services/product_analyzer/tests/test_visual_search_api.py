@@ -88,6 +88,11 @@ def test_visual_search_regions_returns_normalized_boxes(monkeypatch):
         "propose_clothing_regions",
         lambda _: [],
     )
+    monkeypatch.setattr(
+        models.classification,
+        "classify_many",
+        lambda images, top_k: [[] for _ in images],
+    )
     response = TestClient(app).post(
         "/v1/visual-search/regions",
         files={"file": ("query.jpg", _jpeg(), "image/jpeg")},
@@ -98,9 +103,16 @@ def test_visual_search_regions_returns_normalized_boxes(monkeypatch):
     assert payload["height"] == 64
     assert len(payload["regions"]) == 2
     assert payload["regions"][0]["bbox"] == [0.125, 0.0625, 0.5, 0.4375]
+    assert "total" in payload["timings_ms"]
 
 
-def test_background_removal_returns_local_png(monkeypatch):
+def test_background_removal_releases_region_model_and_returns_local_png(monkeypatch):
+    region_unloads = 0
+
+    def track_region_model_unload():
+        nonlocal region_unloads
+        region_unloads += 1
+
     monkeypatch.setattr(
         jwt_verifier,
         "verify",
@@ -111,6 +123,11 @@ def test_background_removal_returns_local_png(monkeypatch):
         "remove_background",
         lambda image: image.convert("RGBA"),
     )
+    monkeypatch.setattr(
+        models.clothing_regions,
+        "unload",
+        track_region_model_unload,
+    )
     response = TestClient(app).post(
         "/v1/remove-background",
         headers={"Authorization": "Bearer test"},
@@ -120,6 +137,7 @@ def test_background_removal_returns_local_png(monkeypatch):
     assert response.headers["content-type"] == "image/png"
     assert response.headers["x-background-model"] == "isnet-general-use"
     assert Image.open(io.BytesIO(response.content)).mode == "RGBA"
+    assert region_unloads == 1
 
 
 def test_product_indexing_is_owner_only(monkeypatch):

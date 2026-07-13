@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError, as_completed
 
+from PIL import Image
+
 from app.classification.fashion_siglip_adapter import FashionSiglipAdapter
 from app.config import Settings
 from app.ocr.paddleocr_adapter import PaddleOcrAdapter
@@ -36,7 +38,14 @@ class ModelManager:
         self.vlm = QwenAdapter(settings)
         self._executor = ThreadPoolExecutor(
             max_workers=max(2, settings.background_workers + 2),
-            thread_name_prefix="analyzer",
+            thread_name_prefix="analyzer-inference",
+        )
+        # Enrichment functions coordinate several child inference futures and
+        # may wait for OCR/Qwen.  Running those coordinators in the inference
+        # pool can occupy every worker and delay the synchronous category path.
+        self._background_executor = ThreadPoolExecutor(
+            max_workers=max(1, settings.background_workers),
+            thread_name_prefix="analyzer-background",
         )
 
     @property
@@ -56,6 +65,11 @@ class ModelManager:
             self.fast_segmentation,
             self.classification,
         ]
+        if (
+            self.settings.visual_search_enable_clothing_parser
+            and self.settings.visual_search_preload_region_model
+        ):
+            enabled.append(self.clothing_regions)
         if self.settings.preload_slow_models:
             enabled.extend((self.segmentation, self.ocr, self.vlm))
         enabled = [
@@ -78,9 +92,26 @@ class ModelManager:
                 adapter.warmup()
             except Exception:
                 LOGGER.exception("Warm-up failed for %s", adapter.model_name)
+        if (
+            self.settings.visual_search_enable_clothing_parser
+            and self.settings.visual_search_preload_region_model
+            and self.clothing_regions.available
+        ):
+            try:
+                self.clothing_regions.propose_clothing_regions(
+                    Image.new("RGB", (256, 384), "white")
+                )
+            except Exception:
+                LOGGER.exception(
+                    "Warm-up failed for %s",
+                    self.clothing_regions.model_name,
+                )
 
     def submit(self, operation, /, *args, **kwargs) -> Future:
         return self._executor.submit(operation, *args, **kwargs)
+
+    def submit_background(self, operation, /, *args, **kwargs) -> Future:
+        return self._background_executor.submit(operation, *args, **kwargs)
 
     @staticmethod
     def await_result(future: Future, timeout_seconds: float, stage: str):
@@ -93,6 +124,7 @@ class ModelManager:
             raise StageTimeoutError(f"{stage} exceeded {timeout_seconds}s") from error
 
     def close(self) -> None:
+        self._background_executor.shutdown(wait=False, cancel_futures=True)
         self._executor.shutdown(wait=False, cancel_futures=True)
 
     def health(self) -> dict[str, dict[str, object]]:

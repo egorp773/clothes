@@ -11,7 +11,7 @@ void main() {
   test('parses real visual search response into catalog products', () async {
     final client = MockClient((request) async {
       expect(request.url.path, '/v1/visual-search');
-      expect(request.headers['Authorization'], 'Bearer token');
+      expect(request.headers.containsKey('Authorization'), isFalse);
       return http.Response(
         jsonEncode({
           'category': 'clothing',
@@ -87,6 +87,38 @@ void main() {
     );
     expect(result.products, isEmpty);
   });
+
+  test(
+    'reuses supplied image bytes instead of reading the source again',
+    () async {
+      final service = VisualSearchService(
+        baseUrl: 'https://analyzer.example',
+        client: MockClient((request) async {
+          expect(request.headers.containsKey('Authorization'), isFalse);
+          return http.Response(
+            jsonEncode({
+              'category': 'clothing',
+              'category_confidence': 0.0,
+              'candidate_count': 0,
+              'cached': false,
+              'timings_ms': {'total': 1},
+              'products': [],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+        accessTokenProvider: () => 'stale-token',
+      );
+
+      final result = await service.search(
+        XFile('definitely-missing-visual-search-source.jpg'),
+        imageBytes: Uint8List.fromList(const [0xFF, 0xD8, 0xFF, 0xD9]),
+      );
+
+      expect(result.products, isEmpty);
+    },
+  );
 
   test('parses normalized visual search object regions', () async {
     final service = VisualSearchService(

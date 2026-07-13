@@ -11,6 +11,9 @@ logging.basicConfig(level=logging.INFO)
 settings = get_settings()
 models = ModelManager(settings)
 try:
+    # Bake both artifacts into the read-only runtime image. Feature flags
+    # control RAM loading/inference, while a larger deployment can still opt
+    # into the clothing parser through its runtime environment.
     for model_name in (
         settings.clothing_region_model_name,
         settings.background_removal_model_name,

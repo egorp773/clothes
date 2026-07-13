@@ -15,6 +15,7 @@ from PIL import Image, ImageOps
 from app.config import Settings
 from app.model_manager import ModelManager
 from app.visual_search.preprocessor import VisualSearchPreprocessor
+from app.visual_search.regions import RegionDetectionResult, VisualSearchRegionDetector
 from app.visual_search.reranker import VisualSearchReranker
 from app.visual_search.schemas import (
     ProductEmbeddingResponse,
@@ -41,6 +42,12 @@ class VisualSearchService:
         self.models = models
         self.store = store
         self.preprocessor = VisualSearchPreprocessor(settings, models.fast_segmentation)
+        self.region_detector = VisualSearchRegionDetector(
+            settings,
+            models.fast_segmentation,
+            models.clothing_regions,
+            models.classification,
+        )
         self.reranker = VisualSearchReranker(settings)
         self.model_version = f"{settings.fashion_model_id}@{settings.fashion_model_revision}"
         self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
@@ -49,6 +56,9 @@ class VisualSearchService:
             follow_redirects=True,
             timeout=httpx.Timeout(settings.visual_search_download_timeout_seconds, connect=2.5),
         )
+
+    def detect_regions(self, image: Image.Image) -> RegionDetectionResult:
+        return self.region_detector.detect(image)
 
     def search(
         self,
@@ -64,27 +74,43 @@ class VisualSearchService:
             cached.timings_ms = {**cached.timings_ms, "cache": 0}
             return cached
 
-        prepared = self.preprocessor.prepare(image)
+        prepared = self.preprocessor.prepare_query(image)
         embedding_started = time.perf_counter()
-        encoded = self.models.classification.embed_and_classify(prepared.image, top_k=3)
+        encoded = self.models.classification.embed_and_classify(
+            prepared.image,
+            top_k=max(6, self.settings.classification_top_k),
+        )
         embedding_ms = round((time.perf_counter() - embedding_started) * 1000)
         top = encoded.candidates[0] if encoded.candidates else None
         confidence = top.confidence if top else 0.0
         category = top.definition.category if top else None
         subcategory = top.definition.subcategory if top else None
         item_type = top.definition.item_type if top else None
-        # High-confidence category narrows retrieval, but related subcategories
-        # remain eligible. Low confidence deliberately searches all categories.
+        category_margin = self._category_margin(encoded.candidates, category)
+        item_type_margin = self._item_type_margin(encoded.candidates)
+        confident_category = bool(
+            top
+            and confidence >= self.settings.visual_search_high_category_confidence
+            and category_margin >= self.settings.visual_search_min_category_margin
+        )
+        confident_item_type = bool(
+            top
+            and confidence >= self.settings.visual_search_high_item_type_confidence
+            and item_type_margin >= self.settings.visual_search_min_item_type_margin
+        )
+        # A fine-grained item probability is not automatically a calibrated
+        # broad-category decision.  Narrow retrieval only when both confidence
+        # and the cross-category margin are strong; ambiguous outfits use one
+        # broad pgvector query instead of a brittle focused+fallback sequence.
         retrieval_category = (
             category
-            if confidence >= self.settings.visual_search_high_category_confidence
+            if confident_category
             else None
         )
         related = self._related_subcategories(encoded.candidates) if retrieval_category else None
 
         retrieval_ms = 0
         rerank_ms = 0
-        confident_category = retrieval_category is not None
         candidates: list[dict[str, Any]] = []
         products = []
         if confident_category:
@@ -106,9 +132,20 @@ class VisualSearchService:
                 item_type=item_type,
                 filters=filters,
                 confident_category=True,
+                confident_item_type=confident_item_type,
             )
             rerank_ms += round((time.perf_counter() - stage_started) * 1000)
-        if not confident_category or len(products) < self.settings.visual_search_focused_min_results:
+        # Reranking deliberately returns only relevant products, so its output
+        # length is not a retrieval-coverage signal.  Falling back whenever it
+        # contains fewer than four results made almost every query issue two
+        # sequential network RPCs.  Use unique pre-rerank products instead;
+        # a genuinely sparse/legacy taxonomy pool still gets the broad safety
+        # net requested here.
+        focused_product_count = self._unique_product_count(candidates)
+        if (
+            not confident_category
+            or focused_product_count < self.settings.visual_search_focused_min_results
+        ):
             stage_started = time.perf_counter()
             fallback = self._retrieve_pool(
                 encoded.embedding,
@@ -128,6 +165,7 @@ class VisualSearchService:
                 item_type=item_type,
                 filters=filters,
                 confident_category=confident_category,
+                confident_item_type=confident_item_type,
             )
             rerank_ms += round((time.perf_counter() - stage_started) * 1000)
         response = VisualSearchResponse(
@@ -291,6 +329,7 @@ class VisualSearchService:
         item_type: str | None,
         filters: VisualSearchFilters,
         confident_category: bool,
+        confident_item_type: bool,
     ):
         return self.reranker.collapse_and_rerank(
             candidates,
@@ -302,6 +341,7 @@ class VisualSearchService:
             query_condition=filters.conditions[0] if len(filters.conditions) == 1 else None,
             limit=self.settings.visual_search_result_count,
             confident_category=confident_category,
+            confident_item_type=confident_item_type,
         )
 
     def _download_image(self, url: str) -> tuple[bytes, Image.Image]:
@@ -339,6 +379,38 @@ class VisualSearchService:
             dict.fromkeys(
                 candidate.definition.subcategory for candidate in candidates[:3]
             )
+        )
+
+    @staticmethod
+    def _category_margin(candidates, category: str | None) -> float:
+        if not candidates or not category:
+            return 0.0
+        top_confidence = float(candidates[0].confidence)
+        strongest_other = max(
+            (
+                float(candidate.confidence)
+                for candidate in candidates[1:]
+                if candidate.definition.category != category
+            ),
+            default=0.0,
+        )
+        return max(0.0, top_confidence - strongest_other)
+
+    @staticmethod
+    def _item_type_margin(candidates) -> float:
+        if not candidates:
+            return 0.0
+        runner_up = float(candidates[1].confidence) if len(candidates) > 1 else 0.0
+        return max(0.0, float(candidates[0].confidence) - runner_up)
+
+    @staticmethod
+    def _unique_product_count(candidates: list[dict[str, Any]]) -> int:
+        return len(
+            {
+                str(candidate.get("product_id"))
+                for candidate in candidates
+                if candidate.get("product_id") is not None
+            }
         )
 
     def _cache_key(self, image_hash: str, filters: VisualSearchFilters) -> str:

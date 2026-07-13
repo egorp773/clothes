@@ -87,6 +87,7 @@ def test_small_catalog_is_not_returned_whole_when_candidate_limit_is_larger(capl
         query_item_type="sweater",
         limit=30,
         confident_category=True,
+        confident_item_type=True,
     )
     assert {item.product_id for item in results} == {
         "sweater-1",
@@ -111,5 +112,53 @@ def test_returns_empty_when_every_candidate_is_below_relevance_threshold():
         query_item_type="sweater",
         limit=30,
         confident_category=True,
+        confident_item_type=True,
     )
+    assert results == []
+
+
+def test_near_exact_visual_match_overrides_wrong_taxonomy():
+    reranker = VisualSearchReranker(Settings())
+    results = reranker.collapse_and_rerank(
+        [
+            _row(
+                "exact",
+                0.99,
+                category="shoes",
+                subcategory="shoes_all",
+                item_type="sneakers",
+                title="Exact catalog image with stale metadata",
+            )
+        ],
+        query_category="clothing",
+        query_subcategory="tops",
+        query_item_type="hoodie",
+        limit=30,
+        confident_category=True,
+        confident_item_type=True,
+    )
+
+    assert [item.product_id for item in results] == ["exact"]
+
+
+def test_taxonomy_override_is_reserved_for_very_strong_visual_matches():
+    reranker = VisualSearchReranker(Settings())
+    results = reranker.collapse_and_rerank(
+        [
+            _row(
+                "wrong",
+                0.79,
+                category="shoes",
+                subcategory="shoes_all",
+                item_type="sneakers",
+            )
+        ],
+        query_category="clothing",
+        query_subcategory="tops",
+        query_item_type="hoodie",
+        limit=30,
+        confident_category=True,
+        confident_item_type=True,
+    )
+
     assert results == []

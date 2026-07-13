@@ -220,7 +220,11 @@ def _decode_rgb_image(payload: bytes) -> Image.Image:
 
 
 def _remove_background_png(image: Image.Image) -> bytes:
-    models.clothing_regions.unload()
+    # A lazily loaded clothing parser and the high-resolution background model
+    # do not fit comfortably together on a small worker. Dedicated larger
+    # deployments that explicitly preload the parser keep it resident.
+    if not settings.visual_search_preload_region_model:
+        models.clothing_regions.unload()
     try:
         cutout = models.background_removal.remove_background(image)
         output = io.BytesIO()
@@ -228,40 +232,6 @@ def _remove_background_png(image: Image.Image) -> bytes:
         return output.getvalue()
     finally:
         models.background_removal.unload()
-
-
-def _propose_visual_search_regions(image: Image.Image):
-    foregrounds = models.fast_segmentation.propose_regions(image)
-    frame_area = float(image.width * image.height)
-    needs_clothing_parse = len(foregrounds) <= 1 and any(
-        ((item.bbox[2] - item.bbox[0]) * (item.bbox[3] - item.bbox[1])) / frame_area
-        >= 0.12
-        for item in foregrounds
-    )
-    if not needs_clothing_parse:
-        return foregrounds
-    models.background_removal.unload()
-    try:
-        clothing = models.clothing_regions.propose_clothing_regions(image)
-    finally:
-        models.clothing_regions.unload()
-    if not clothing:
-        return foregrounds
-
-    combined = list(clothing)
-    clothing_centers = [
-        ((item.bbox[0] + item.bbox[2]) / 2, (item.bbox[1] + item.bbox[3]) / 2)
-        for item in clothing
-    ]
-    for foreground in foregrounds:
-        left, top, right, bottom = foreground.bbox
-        contains_clothing = any(
-            left <= center_x <= right and top <= center_y <= bottom
-            for center_x, center_y in clothing_centers
-        )
-        if not contains_clothing:
-            combined.append(foreground)
-    return combined[:6] if len(combined) > 1 else (foregrounds or combined)
 
 
 @app.post("/v1/remove-background")
@@ -342,9 +312,9 @@ async def detect_visual_search_regions(
     except Exception as error:
         raise HTTPException(400, "Invalid visual search image") from error
     try:
-        proposals = await inference_gate.run(
-            lambda: _propose_visual_search_regions(image),
-            timeout=settings.fast_segmentation_timeout_seconds * 2 + 2,
+        detection = await inference_gate.run(
+            lambda: visual_search.detect_regions(image),
+            timeout=settings.visual_search_region_timeout_seconds,
         )
     except InferenceQueueFull as error:
         raise HTTPException(503, str(error)) from error
@@ -371,9 +341,15 @@ async def detect_visual_search_regions(
                 proposal.bbox[3] / height,
             ),
         )
-        for index, proposal in enumerate(proposals)
+        for index, proposal in enumerate(detection.proposals)
     ]
-    return VisualSearchRegionsResponse(width=width, height=height, regions=regions)
+    return VisualSearchRegionsResponse(
+        width=width,
+        height=height,
+        regions=regions,
+        timings_ms=detection.timings_ms,
+        warnings=detection.warnings,
+    )
 
 
 @app.post("/v1/visual-search", response_model=VisualSearchResponse)

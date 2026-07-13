@@ -86,6 +86,7 @@ class VisualSearchReranker:
         query_condition: str | None = None,
         limit: int,
         confident_category: bool = False,
+        confident_item_type: bool = False,
     ) -> list[VisualSearchProduct]:
         best_by_product: dict[str, dict[str, Any]] = {}
         for row in candidates:
@@ -165,8 +166,12 @@ class VisualSearchReranker:
         reference = [
             entry
             for entry in scored
-            if not confident_category
-            or (entry[1]["category_match"] and entry[1]["item_type_match"] > 0)
+            if (not confident_category or entry[1]["category_match"])
+            and (
+                not confident_item_type
+                or not query_item_type
+                or entry[1]["item_type_match"] > 0
+            )
         ]
         if not reference:
             reference = scored
@@ -175,6 +180,10 @@ class VisualSearchReranker:
         included: list[VisualSearchProduct] = []
         for product, metadata in scored:
             reasons: list[str] = []
+            taxonomy_override = (
+                product.visual_similarity
+                >= self.settings.visual_search_taxonomy_override_similarity
+            )
             minimum_similarity = (
                 self.settings.visual_search_fallback_min_similarity
                 if metadata["pool"] == "fallback"
@@ -191,9 +200,18 @@ class VisualSearchReranker:
                 reasons.append("below_min_rerank_score")
             if product.score < best_score - self.settings.visual_search_max_rerank_gap:
                 reasons.append("too_far_from_top_score")
-            if confident_category and not metadata["category_match"]:
+            if (
+                confident_category
+                and not metadata["category_match"]
+                and not taxonomy_override
+            ):
                 reasons.append("category_mismatch")
-            if confident_category and query_item_type and metadata["item_type_match"] <= 0:
+            if (
+                confident_item_type
+                and query_item_type
+                and metadata["item_type_match"] <= 0
+                and not taxonomy_override
+            ):
                 reasons.append("item_type_mismatch")
             decision = "include" if not reasons else "exclude"
             reason = "relevant" if not reasons else ",".join(reasons)

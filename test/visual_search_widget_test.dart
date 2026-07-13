@@ -32,6 +32,75 @@ void main() {
     expect(decoded.height, 40);
   });
 
+  test('visual search input is normalized to the server image limit', () async {
+    final source = image_lib.Image(width: 1600, height: 800);
+    final file = XFile.fromData(
+      Uint8List.fromList(image_lib.encodeJpg(source)),
+      mimeType: 'image/jpeg',
+      name: 'large.jpg',
+    );
+
+    final normalized = await normalizeVisualSearchImage(file);
+    final decoded = image_lib.decodeImage(await normalized.readAsBytes());
+
+    expect(decoded, isNotNull);
+    expect(decoded!.width, 1024);
+    expect(decoded.height, 512);
+  });
+
+  test('only a confident localized region is auto-cropped', () {
+    expect(
+      shouldAutoCropVisualSearchRegion(
+        const VisualSearchRegion(
+          id: 'jacket',
+          confidence: 0.9,
+          bounds: Rect.fromLTRB(0.2, 0.15, 0.75, 0.8),
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      shouldAutoCropVisualSearchRegion(
+        const VisualSearchRegion(
+          id: 'frame',
+          confidence: 0.9,
+          bounds: Rect.fromLTRB(0.02, 0.02, 0.98, 0.98),
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldAutoCropVisualSearchRegion(
+        const VisualSearchRegion(
+          id: 'uncertain',
+          confidence: 0.45,
+          bounds: Rect.fromLTRB(0.2, 0.15, 0.75, 0.8),
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldAutoCropVisualSearchRegion(
+        const VisualSearchRegion(
+          id: 'bottom-ui',
+          confidence: 0.96,
+          bounds: Rect.fromLTRB(0, 0.62, 1, 1),
+        ),
+      ),
+      isFalse,
+    );
+    expect(
+      shouldOfferVisualSearchSelection(const [
+        VisualSearchRegion(
+          id: 'bottom-ui',
+          confidence: 0.96,
+          bounds: Rect.fromLTRB(0, 0.62, 1, 1),
+        ),
+      ]),
+      isTrue,
+    );
+  });
+
   testWidgets('multi-object photo offers boxes, chips, and manual selection', (
     tester,
   ) async {
@@ -78,6 +147,56 @@ void main() {
     await tester.pump();
     expect(find.text('Проведите по вещи, чтобы выделить её'), findsOneWidget);
     expect(find.text('К найденным вещам'), findsOneWidget);
+    final manualFindButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Найти похожее'),
+    );
+    expect(manualFindButton.onPressed, isNotNull);
+  });
+
+  testWidgets('tap chooses the most specific overlapping clothing region', (
+    tester,
+  ) async {
+    final preview = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisualSearchObjectSelectionScreen(
+          previewBytes: preview,
+          imageSize: const Size(100, 100),
+          regions: const [
+            VisualSearchRegion(
+              id: 'upper',
+              label: 'upper_clothing',
+              confidence: 0.88,
+              bounds: Rect.fromLTRB(0.1, 0.1, 0.9, 0.45),
+            ),
+            VisualSearchRegion(
+              id: 'full',
+              label: 'full_clothing',
+              confidence: 0.92,
+              bounds: Rect.fromLTRB(0.1, 0.05, 0.9, 0.9),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    await tester.tapAt(const Offset(400, 150));
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Верх'))
+          .selected,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Одежда'))
+          .selected,
+      isFalse,
+    );
   });
 
   testWidgets('camera-first search shows minimal controls and gallery panel', (
@@ -135,7 +254,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('1 похожих товаров'), findsOneWidget);
+    expect(find.text('1 похожий товар'), findsOneWidget);
     expect(find.text('Тестовое худи'), findsOneWidget);
     expect(find.text('Выбрать фото'), findsNothing);
   });
@@ -181,6 +300,7 @@ class _FakeVisualSearchService extends VisualSearchService {
   Future<VisualSearchResult> search(
     XFile image, {
     VisualSearchFilters filters = const VisualSearchFilters(),
+    Uint8List? imageBytes,
   }) async => VisualSearchResult(
     products: empty
         ? const []

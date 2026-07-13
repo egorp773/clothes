@@ -21,13 +21,30 @@ class VisualSearchPreprocessor:
         self.settings = settings
         self.segmentation = segmentation
 
+    def prepare_query(self, image: Image.Image) -> PreparedSearchImage:
+        """Normalize an already selected search crop without segmenting it again.
+
+        Camera search performs object/garment region detection before this
+        endpoint is called.  Running generic foreground removal a second time
+        is both expensive and unsafe: connected garment parts (trouser legs,
+        shoes, sleeves) can be mistaken for separate objects and only one part
+        then reaches FashionSigLIP.  FashionSigLIP is trained on normal fashion
+        photographs, so keeping the selected crop is the safer query path.
+
+        Product indexing intentionally keeps ``prepare`` below for backwards
+        compatibility with the embeddings already stored in pgvector.
+        """
+        started = time.perf_counter()
+        normalized = self._normalize(image)
+        resize_ms = round((time.perf_counter() - started) * 1000)
+        return PreparedSearchImage(
+            image=normalized,
+            timings_ms={"resize": resize_ms, "segmentation": 0},
+        )
+
     def prepare(self, image: Image.Image) -> PreparedSearchImage:
         started = time.perf_counter()
-        normalized = ImageOps.exif_transpose(image).convert("RGB")
-        normalized.thumbnail(
-            (self.settings.visual_search_max_side, self.settings.visual_search_max_side),
-            Image.Resampling.LANCZOS,
-        )
+        normalized = self._normalize(image)
         resize_ms = round((time.perf_counter() - started) * 1000)
         segmentation_started = time.perf_counter()
         segment = self.segmentation.segment(normalized)
@@ -47,3 +64,11 @@ class VisualSearchPreprocessor:
             timings_ms={"resize": resize_ms, "segmentation": segmentation_ms},
             warning=warning,
         )
+
+    def _normalize(self, image: Image.Image) -> Image.Image:
+        normalized = ImageOps.exif_transpose(image).convert("RGB")
+        normalized.thumbnail(
+            (self.settings.visual_search_max_side, self.settings.visual_search_max_side),
+            Image.Resampling.LANCZOS,
+        )
+        return normalized

@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     max_decoded_image_pixels: int = 40_000_000
     visual_search_timeout_seconds: float = 8.0
     visual_search_stage_timeout_seconds: float = 4.5
+    visual_search_region_timeout_seconds: float = 15.0
     visual_search_max_image_bytes: int = 10 * 1024 * 1024
     visual_search_max_side: int = 1024
     visual_search_candidate_count: int = 200
@@ -50,16 +51,32 @@ class Settings(BaseSettings):
     visual_search_cache_ttl_seconds: int = 900
     visual_search_rate_limit: int = 20
     visual_search_rate_window_seconds: int = 60
-    visual_search_high_category_confidence: float = 0.15
+    # FashionSigLIP probabilities are over fine-grained item types.  A value
+    # around 0.15 is common for ambiguous outfits and must not be treated as a
+    # hard broad-category decision.
+    visual_search_high_category_confidence: float = 0.32
+    visual_search_min_category_margin: float = 0.08
+    visual_search_high_item_type_confidence: float = 0.36
+    visual_search_min_item_type_margin: float = 0.08
     visual_search_focused_min_results: int = 4
     visual_search_min_similarity: float = 0.56
     visual_search_fallback_min_similarity: float = 0.60
     visual_search_max_similarity_gap: float = 0.12
     visual_search_min_rerank_score: float = 0.48
     visual_search_max_rerank_gap: float = 0.12
+    visual_search_taxonomy_override_similarity: float = 0.80
     visual_search_alternate_similarity: float = 0.70
     visual_search_max_product_images: int = 3
     visual_search_download_timeout_seconds: float = 6.0
+    # u2net_cloth_seg is useful on a roomy worker, but its CPU inference arena
+    # is too large for the 4 GB production container. The fast geometric
+    # upper/lower fallback is the safe default; larger deployments can opt in.
+    visual_search_enable_clothing_parser: bool = False
+    visual_search_preload_region_model: bool = False
+    visual_search_region_single_item_confidence: float = 0.28
+    visual_search_region_single_item_margin: float = 0.07
+    visual_search_region_label_min_confidence: float = 0.16
+    visual_search_region_label_min_margin: float = 0.03
 
     # Reranking weights sum to 1. Visual similarity intentionally dominates.
     rerank_visual_weight: float = 0.66
@@ -83,6 +100,8 @@ class Settings(BaseSettings):
     )
     grounding_dino_box_threshold: float = 0.28
     grounding_dino_text_threshold: float = 0.22
+    grounding_dino_nms_threshold: float = 0.55
+    grounded_sam_max_boxes: int = 6
     enable_grounded_sam: bool = True
     sam_checkpoint_name: str = "sam2.1_hiera_large.pt"
     sam_config: str = "configs/sam2.1/sam2.1_hiera_l.yaml"
@@ -95,7 +114,13 @@ class Settings(BaseSettings):
     rembg_min_quality: float = 0.62
     rembg_min_area_share: float = 0.015
     rembg_max_area_share: float = 0.92
-    rembg_secondary_component_min_share: float = 0.06
+    # Multi-item photos often contain a secondary garment that is much
+    # smaller than the main one.  Keep it when it is both sizeable in the
+    # frame and sizeable relative to the dominant foreground; the relative
+    # guard prevents small background fragments from becoming products.
+    rembg_secondary_component_min_share: float = 0.025
+    rembg_secondary_component_min_relative_area: float = 0.18
+    max_detected_garments: int = 4
     clothing_region_model_name: str = "u2net_cloth_seg"
     background_removal_model_name: str = "isnet-general-use"
     background_removal_max_image_bytes: int = 15 * 1024 * 1024

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui' show Rect, Size;
 
 import 'package:http/http.dart' as http;
@@ -115,36 +116,24 @@ class VisualSearchService {
   final bool _ownsClient;
   final String? Function() _accessTokenProvider;
 
-  Future<VisualSearchRegionsResult> detectRegions(XFile image) async {
-    final token = _accessTokenProvider();
-    final bytes = await image.readAsBytes();
-    final request =
-        http.MultipartRequest(
-            'POST',
-            Uri.parse('$baseUrl/v1/visual-search/regions'),
-          )
-          ..files.add(
-            http.MultipartFile.fromBytes(
-              'file',
-              bytes,
-              filename: image.name,
-              contentType: MediaType.parse(_mimeType(image)),
-            ),
-          );
-    if (token != null && token.isNotEmpty) {
-      request.headers['Authorization'] = 'Bearer $token';
-    }
-    late http.StreamedResponse streamed;
+  Future<VisualSearchRegionsResult> detectRegions(
+    XFile image, {
+    Uint8List? imageBytes,
+  }) async {
+    final bytes = imageBytes ?? await image.readAsBytes();
+    late http.Response response;
     try {
-      streamed = await _client
-          .send(request)
-          .timeout(const Duration(seconds: 40));
+      response = await _sendVisualSearchImage(
+        path: '/v1/visual-search/regions',
+        image: image,
+        bytes: bytes,
+        timeout: const Duration(seconds: 40),
+      );
     } catch (_) {
       throw const VisualSearchException(
         'Не удалось определить вещи на фото. Попробуйте ещё раз.',
       );
     }
-    final response = await http.Response.fromStream(streamed);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw const VisualSearchException(
         'Не удалось определить вещи на фото. Попробуйте ещё раз.',
@@ -189,34 +178,23 @@ class VisualSearchService {
   Future<VisualSearchResult> search(
     XFile image, {
     VisualSearchFilters filters = const VisualSearchFilters(),
+    Uint8List? imageBytes,
   }) async {
-    final token = _accessTokenProvider();
-    final bytes = await image.readAsBytes();
-    final request =
-        http.MultipartRequest('POST', Uri.parse('$baseUrl/v1/visual-search'))
-          ..fields['filters'] = jsonEncode(filters.toJson())
-          ..files.add(
-            http.MultipartFile.fromBytes(
-              'file',
-              bytes,
-              filename: image.name,
-              contentType: MediaType.parse(_mimeType(image)),
-            ),
-          );
-    if (token != null && token.isNotEmpty) {
-      request.headers['Authorization'] = 'Bearer $token';
-    }
-    late http.StreamedResponse streamed;
+    final bytes = imageBytes ?? await image.readAsBytes();
+    late http.Response response;
     try {
-      streamed = await _client
-          .send(request)
-          .timeout(const Duration(seconds: 45));
+      response = await _sendVisualSearchImage(
+        path: '/v1/visual-search',
+        image: image,
+        bytes: bytes,
+        fields: {'filters': jsonEncode(filters.toJson())},
+        timeout: const Duration(seconds: 45),
+      );
     } catch (_) {
       throw const VisualSearchException(
         'Поиск по фото временно недоступен. Попробуйте позже.',
       );
     }
-    final response = await http.Response.fromStream(streamed);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       var message = 'Не удалось выполнить поиск по фото';
       try {
@@ -289,6 +267,27 @@ class VisualSearchService {
         'Индексация товара временно недоступна (${response.statusCode})',
       );
     }
+  }
+
+  Future<http.Response> _sendVisualSearchImage({
+    required String path,
+    required XFile image,
+    required Uint8List bytes,
+    required Duration timeout,
+    Map<String, String> fields = const {},
+  }) async {
+    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'))
+      ..fields.addAll(fields)
+      ..files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: image.name,
+          contentType: MediaType.parse(_mimeType(image)),
+        ),
+      );
+    final streamed = await _client.send(request).timeout(timeout);
+    return http.Response.fromStream(streamed);
   }
 
   String _mimeType(XFile file) {

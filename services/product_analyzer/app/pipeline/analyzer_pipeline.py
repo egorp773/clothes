@@ -106,38 +106,57 @@ class AnalyzerPipeline:
         main_image = self._resize(image)
         timings["resize"] = self._elapsed_ms(started)
 
-        fast_segment, segment_ms = self._stage(
+        fast_segments, segment_ms = self._stage(
             "rembg_segmentation",
             self._remaining_timeout(
                 deadline, self.settings.fast_segmentation_timeout_seconds
             ),
-            self.models.fast_segmentation.segment,
+            self.models.fast_segmentation.segment_many,
             main_image,
             warnings=warnings,
         )
         timings["rembg_segmentation"] = segment_ms
-        segment = fast_segment
+        segments = fast_segments or []
+        segment = segments[0] if segments else None
         fallback_ms = 0
-        if not self.models.fast_segmentation.is_acceptable(fast_segment):
+        if len(segments) > 1:
+            # rembg already isolated the objects.  Grounded-SAM used to run
+            # here, add several seconds, and then discard all but one mask.
+            warnings.append(f"multiple_items_detected:{len(segments)}")
+        elif not self.models.fast_segmentation.is_acceptable(segment):
             warnings.append("rembg_mask_low_quality_or_multiple_items")
-            fallback_segment, fallback_ms = self._stage(
+            fallback_segments, fallback_ms = self._stage(
                 "grounded_sam_fallback",
                 self._remaining_timeout(
                     deadline, self.settings.fallback_segmentation_timeout_seconds
                 ),
-                self.models.segmentation.segment,
+                self.models.segmentation.segment_many,
                 main_image,
                 warnings=warnings,
             )
-            if fallback_segment is not None:
-                segment = fallback_segment
+            if fallback_segments:
+                segments = fallback_segments
+                segment = segments[0]
+                if len(segments) > 1:
+                    warnings.append(f"multiple_items_detected:{len(segments)}")
         timings["grounded_sam_fallback"] = fallback_ms
         timings["segmentation"] = segment_ms + fallback_ms
 
-        classification_image = segment.cutout if segment is not None else main_image
-        category_future = self.models.submit(
-            self._timed, self.models.classification.classify, classification_image
+        classification_images = (
+            [item.cutout for item in segments] if segments else [main_image]
         )
+        if len(classification_images) > 1:
+            category_future = self.models.submit(
+                self._timed,
+                self.models.classification.classify_many,
+                classification_images,
+            )
+        else:
+            category_future = self.models.submit(
+                self._timed,
+                self.models.classification.classify,
+                classification_images[0],
+            )
         color_future = None
         if segment is not None:
             color_future = self.models.submit(
@@ -147,7 +166,7 @@ class AnalyzerPipeline:
                 segment.mask,
             )
 
-        candidates = self._await_future(
+        classified = self._await_future(
             "fashion_siglip",
             category_future,
             self._remaining_timeout(
@@ -155,8 +174,18 @@ class AnalyzerPipeline:
             ),
             warnings,
         )
-        if candidates is None:
+        if classified is None:
             candidates = []
+        elif len(classification_images) > 1:
+            candidates = self._merge_region_candidates(
+                classified,
+                limit=max(
+                    self.settings.classification_top_k,
+                    min(len(classification_images), self.settings.max_detected_garments),
+                ),
+            )
+        else:
+            candidates = classified
         timings["fashion_siglip"] = self._future_duration(category_future)
 
         color_candidates: list[ColorCandidate] = []
@@ -215,7 +244,7 @@ class AnalyzerPipeline:
         if result is not None:
             result.enrichment_status = "pending"
             self.cache.put(image_hash, result)
-        self.models.submit(
+        self.models.submit_background(
             self._enrich, image_hash, image, segment.cutout if segment else None, top
         )
 
@@ -228,7 +257,7 @@ class AnalyzerPipeline:
         ):
             return False
         prepared = [self._resize(image).copy() for image in images]
-        self.models.submit(self._enrich_extra_images, image_hash, prepared)
+        self.models.submit_background(self._enrich_extra_images, image_hash, prepared)
         return True
 
     def _enrich(
@@ -458,6 +487,40 @@ class AnalyzerPipeline:
             self._save_result(result)
         except Exception:
             LOGGER.exception("Extra-image enrichment failed")
+
+    @staticmethod
+    def _merge_region_candidates(candidate_batches, *, limit: int):
+        """Keep the primary garment first and expose other detected types.
+
+        The response schema has one primary item plus a top-k list.  A
+        round-robin merge preserves that contract: the largest rembg component
+        remains the primary item, while the best distinct type from each other
+        component is represented before lower-ranked alternatives.
+        """
+        if limit <= 0:
+            return []
+        merged = []
+        seen_item_types: set[str] = set()
+
+        def append(candidate) -> None:
+            item_type = candidate.definition.item_type
+            if item_type in seen_item_types or len(merged) >= limit:
+                return
+            seen_item_types.add(item_type)
+            merged.append(candidate)
+
+        for batch in candidate_batches:
+            if batch:
+                append(batch[0])
+        depth = 1
+        while len(merged) < limit and any(
+            len(batch) > depth for batch in candidate_batches
+        ):
+            for batch in candidate_batches:
+                if len(batch) > depth:
+                    append(batch[depth])
+            depth += 1
+        return merged
 
     def _base_response(
         self,
