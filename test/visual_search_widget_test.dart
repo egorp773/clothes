@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -48,60 +49,16 @@ void main() {
     expect(decoded.height, 512);
   });
 
-  test('only a confident localized region is auto-cropped', () {
-    expect(
-      shouldAutoCropVisualSearchRegion(
-        const VisualSearchRegion(
-          id: 'jacket',
-          confidence: 0.9,
-          bounds: Rect.fromLTRB(0.2, 0.15, 0.75, 0.8),
-        ),
-      ),
-      isTrue,
+  test('selection reads the full normalized image aspect ratio', () async {
+    final source = image_lib.Image(width: 320, height: 640);
+    final size = await visualSearchImageSize(
+      Uint8List.fromList(image_lib.encodeJpg(source)),
     );
-    expect(
-      shouldAutoCropVisualSearchRegion(
-        const VisualSearchRegion(
-          id: 'frame',
-          confidence: 0.9,
-          bounds: Rect.fromLTRB(0.02, 0.02, 0.98, 0.98),
-        ),
-      ),
-      isFalse,
-    );
-    expect(
-      shouldAutoCropVisualSearchRegion(
-        const VisualSearchRegion(
-          id: 'uncertain',
-          confidence: 0.45,
-          bounds: Rect.fromLTRB(0.2, 0.15, 0.75, 0.8),
-        ),
-      ),
-      isFalse,
-    );
-    expect(
-      shouldAutoCropVisualSearchRegion(
-        const VisualSearchRegion(
-          id: 'bottom-ui',
-          confidence: 0.96,
-          bounds: Rect.fromLTRB(0, 0.62, 1, 1),
-        ),
-      ),
-      isFalse,
-    );
-    expect(
-      shouldOfferVisualSearchSelection(const [
-        VisualSearchRegion(
-          id: 'bottom-ui',
-          confidence: 0.96,
-          bounds: Rect.fromLTRB(0, 0.62, 1, 1),
-        ),
-      ]),
-      isTrue,
-    );
+
+    expect(size, const Size(320, 640));
   });
 
-  testWidgets('multi-object photo offers boxes, chips, and manual selection', (
+  testWidgets('photo selection is manual-first with visible fallback actions', (
     tester,
   ) async {
     final preview = base64Decode(
@@ -129,28 +86,56 @@ void main() {
       ),
     );
 
-    expect(find.text('Что ищем?'), findsOneWidget);
-    expect(find.text('Выберите вещь на фото'), findsOneWidget);
-    expect(find.text('Куртка'), findsWidgets);
-    expect(find.text('Предмет 2'), findsWidgets);
+    expect(find.text('Выделите вещь вручную'), findsOneWidget);
+    expect(
+      find.text('Проведите пальцем по одной вещи на фото'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Ручной выбор точнее.'), findsOneWidget);
     expect(find.text('Искать по всему фото'), findsOneWidget);
     expect(find.text('Выбрать вручную'), findsOneWidget);
+    expect(find.text('Автовыбор'), findsOneWidget);
+    expect(find.byType(ChoiceChip), findsNothing);
+    expect(
+      tester
+          .widget<Image>(find.byKey(const Key('visual-search-selection-photo')))
+          .fit,
+      BoxFit.contain,
+    );
 
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Куртка'));
+    var findButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Найти выделенную вещь'),
+    );
+    expect(findButton.onPressed, isNull);
+
+    final photoRect = tester.getRect(
+      find.byKey(const Key('visual-search-selection-photo')),
+    );
+    await tester.dragFrom(
+      Offset(photoRect.left + photoRect.width * 0.25, photoRect.top + 30),
+      Offset(photoRect.width * 0.5, photoRect.height - 60),
+    );
     await tester.pump();
-    final findButton = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Найти похожее'),
+    findButton = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, 'Найти выделенную вещь'),
     );
     expect(findButton.onPressed, isNotNull);
 
+    await tester.tap(find.text('Автовыбор'));
+    await tester.pump();
+    expect(find.text('Выберите вещь на фото'), findsOneWidget);
+    expect(find.text('Куртка'), findsWidgets);
+    expect(find.text('Предмет 2'), findsWidgets);
+    expect(
+      tester
+          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Куртка'))
+          .selected,
+      isTrue,
+    );
+
     await tester.tap(find.text('Выбрать вручную'));
     await tester.pump();
-    expect(find.text('Проведите по вещи, чтобы выделить её'), findsOneWidget);
-    expect(find.text('К найденным вещам'), findsOneWidget);
-    final manualFindButton = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Найти похожее'),
-    );
-    expect(manualFindButton.onPressed, isNotNull);
+    expect(find.text('Выделите вещь вручную'), findsOneWidget);
   });
 
   testWidgets('tap chooses the most specific overlapping clothing region', (
@@ -182,7 +167,17 @@ void main() {
       ),
     );
 
-    await tester.tapAt(const Offset(400, 150));
+    await tester.tap(find.text('Автовыбор'));
+    await tester.pump();
+    final photoRect = tester.getRect(
+      find.byKey(const Key('visual-search-selection-photo')),
+    );
+    await tester.tapAt(
+      Offset(
+        photoRect.left + photoRect.width * 0.5,
+        photoRect.top + photoRect.height * 0.25,
+      ),
+    );
     await tester.pump();
 
     expect(
@@ -197,6 +192,40 @@ void main() {
           .selected,
       isFalse,
     );
+  });
+
+  testWidgets('automatic suggestions load without blocking manual selection', (
+    tester,
+  ) async {
+    final suggestions = Completer<List<VisualSearchRegion>>();
+    final preview = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisualSearchObjectSelectionScreen(
+          previewBytes: preview,
+          imageSize: const Size(800, 1200),
+          regions: const [],
+          regionsFuture: suggestions.future,
+        ),
+      ),
+    );
+
+    expect(find.text('Выделите вещь вручную'), findsOneWidget);
+    expect(find.text('Ищем вещи…'), findsOneWidget);
+    suggestions.complete(const [
+      VisualSearchRegion(
+        id: 'jacket',
+        label: 'jacket',
+        confidence: 0.91,
+        bounds: Rect.fromLTRB(0.2, 0.1, 0.8, 0.7),
+      ),
+    ]);
+    await tester.pump();
+
+    expect(find.text('Автовыбор'), findsOneWidget);
+    expect(find.text('Выделите вещь вручную'), findsOneWidget);
   });
 
   testWidgets('camera-first search shows minimal controls and gallery panel', (

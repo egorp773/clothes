@@ -277,10 +277,17 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(10),
-                  child: SizedBox(
-                    width: 74,
-                    height: 74,
-                    child: Image.memory(_previewBytes!, fit: BoxFit.cover),
+                  child: ColoredBox(
+                    color: const Color(0xFFF1F1F3),
+                    child: SizedBox(
+                      width: 74,
+                      height: 74,
+                      child: Image.memory(
+                        _previewBytes!,
+                        key: const Key('visual-search-result-preview'),
+                        fit: BoxFit.contain,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),

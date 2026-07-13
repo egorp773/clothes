@@ -309,7 +309,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
     setState(() => _capturing = true);
     try {
       final bytes = await asset.thumbnailDataWithSize(
-        const ThumbnailSize(1024, 1024),
+        _searchThumbnailSize(asset),
         format: ThumbnailFormat.jpeg,
         quality: 88,
       );
@@ -346,51 +346,33 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       await _cameraController?.pausePreview();
     } catch (_) {}
 
-    VisualSearchRegionsResult detected;
+    final regionsFuture = _service
+        .detectRegions(image, imageBytes: previewBytes)
+        .then<List<VisualSearchRegion>>(
+          (result) => result.regions,
+          onError: (_) => const <VisualSearchRegion>[],
+        );
+    Size imageSize;
     try {
-      detected = await _service.detectRegions(image, imageBytes: previewBytes);
+      imageSize = await visualSearchImageSize(previewBytes);
     } catch (_) {
-      if (!mounted || operationGeneration != _searchGeneration) return;
-      setState(() => _detectingObjects = false);
-      await _runSearch(image, preview: previewBytes);
-      return;
+      imageSize = const Size(1, 1);
     }
     if (!mounted || operationGeneration != _searchGeneration) return;
-    if (!shouldOfferVisualSearchSelection(detected.regions)) {
-      var searchImage = image;
-      var searchPreviewBytes = previewBytes;
-      final singleRegion = detected.regions.firstOrNull;
-      if (singleRegion != null &&
-          shouldAutoCropVisualSearchRegion(singleRegion)) {
-        try {
-          searchImage = await cropVisualSearchImage(
-            image,
-            _expandVisualSearchCrop(singleRegion.bounds),
-            imageBytes: previewBytes,
-          );
-          searchPreviewBytes = await searchImage.readAsBytes();
-        } catch (_) {
-          searchImage = image;
-          searchPreviewBytes = previewBytes;
-        }
-      }
-      if (!mounted || operationGeneration != _searchGeneration) return;
-      setState(() => _detectingObjects = false);
-      await _runSearch(searchImage, preview: searchPreviewBytes);
-      return;
-    }
 
     final choice = await Navigator.of(context, rootNavigator: true)
         .push<VisualSearchObjectSelectionResult>(
           MaterialPageRoute<VisualSearchObjectSelectionResult>(
             builder: (context) => VisualSearchObjectSelectionScreen(
               previewBytes: previewBytes,
-              imageSize: detected.imageSize,
-              regions: detected.regions,
+              imageSize: imageSize,
+              regions: const [],
+              regionsFuture: regionsFuture,
             ),
           ),
         );
     if (!mounted || operationGeneration != _searchGeneration) return;
+    _service.cancelActiveSearch();
     if (choice == null) {
       await _finishDetection(operationGeneration);
       return;
@@ -402,7 +384,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       try {
         searchImage = await cropVisualSearchImage(
           image,
-          choice.cropBounds!,
+          _expandVisualSearchCrop(choice.cropBounds!),
           imageBytes: previewBytes,
         );
         searchPreviewBytes = await searchImage.readAsBytes();
@@ -927,7 +909,12 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       child: Stack(
         fit: StackFit.expand,
         children: [
-          Image.memory(_searchPreview!, fit: BoxFit.cover),
+          Image.memory(
+            _searchPreview!,
+            key: const Key('visual-search-searching-preview'),
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.high,
+          ),
           const ColoredBox(color: Color(0x42000000)),
           CustomPaint(
             painter: _CenterWavePainter(
@@ -970,45 +957,27 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
   );
 }
 
-bool shouldAutoCropVisualSearchRegion(VisualSearchRegion region) {
-  final bounds = region.bounds.intersect(const Rect.fromLTWH(0, 0, 1, 1));
-  if (!bounds.left.isFinite ||
-      !bounds.top.isFinite ||
-      !bounds.right.isFinite ||
-      !bounds.bottom.isFinite) {
-    return false;
-  }
-  final area = bounds.width * bounds.height;
-  // Generic foreground segmentation can mistake a bottom sheet, product rail,
-  // or other screenshot chrome for one highly confident foreground.  A nearly
-  // full-width box anchored to the bottom is not safe to crop automatically;
-  // keeping the whole image lets FashionSigLIP use the actual outfit instead.
-  return region.confidence >= 0.7 &&
-      bounds.width >= 0.1 &&
-      bounds.height >= 0.1 &&
-      area >= 0.04 &&
-      area <= 0.78 &&
-      !_looksLikeBottomUi(region);
-}
-
-bool shouldOfferVisualSearchSelection(List<VisualSearchRegion> regions) {
-  if (regions.length > 1) return true;
-  return regions.length == 1 && _looksLikeBottomUi(regions.single);
-}
-
-bool _looksLikeBottomUi(VisualSearchRegion region) {
-  final bounds = region.bounds.intersect(const Rect.fromLTWH(0, 0, 1, 1));
-  return bounds.width >= 0.9 && bounds.bottom >= 0.98 && bounds.top >= 0.35;
-}
-
 Rect _expandVisualSearchCrop(Rect bounds) {
-  final horizontalPadding = bounds.width * 0.04;
-  final verticalPadding = bounds.height * 0.04;
+  final safeBounds = bounds.intersect(const Rect.fromLTWH(0, 0, 1, 1));
+  final horizontalPadding = math.max(safeBounds.width * 0.14, 0.025);
+  final verticalPadding = math.max(safeBounds.height * 0.14, 0.025);
   return Rect.fromLTRB(
-    (bounds.left - horizontalPadding).clamp(0, 1),
-    (bounds.top - verticalPadding).clamp(0, 1),
-    (bounds.right + horizontalPadding).clamp(0, 1),
-    (bounds.bottom + verticalPadding).clamp(0, 1),
+    (safeBounds.left - horizontalPadding).clamp(0, 1),
+    (safeBounds.top - verticalPadding).clamp(0, 1),
+    (safeBounds.right + horizontalPadding).clamp(0, 1),
+    (safeBounds.bottom + verticalPadding).clamp(0, 1),
+  );
+}
+
+ThumbnailSize _searchThumbnailSize(AssetEntity asset) {
+  const maxSide = 1024;
+  final width = asset.width;
+  final height = asset.height;
+  if (width <= 0 || height <= 0) return const ThumbnailSize.square(maxSide);
+  final longestSide = math.max(width, height);
+  return ThumbnailSize(
+    math.max(1, (width * maxSide / longestSide).round()).toInt(),
+    math.max(1, (height * maxSide / longestSide).round()).toInt(),
   );
 }
 
