@@ -39,150 +39,147 @@ class ListingPhotosStep extends StatelessWidget {
         final photos = controller.draft.photos;
         final isAtLimit = photos.length >= 8;
 
-        return Transform.translate(
-          offset: const Offset(0, -115),
-          child: SingleChildScrollView(
-            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 30),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text.rich(
-                  TextSpan(
-                    text: 'Добавьте фотографии вещи',
-                    children: [
-                      TextSpan(
-                        text: ' *',
-                        style: TextStyle(
-                          color: Color(0xFFE11D2E),
-                          fontWeight: AppTypography.bold,
-                        ),
+        return SingleChildScrollView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(18, 0, 18, 30),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text.rich(
+                TextSpan(
+                  text: 'Добавьте фотографии вещи',
+                  children: [
+                    TextSpan(
+                      text: ' *',
+                      style: TextStyle(
+                        color: Color(0xFFE11D2E),
+                        fontWeight: AppTypography.bold,
                       ),
-                    ],
-                  ),
-                  style: TextStyle(
-                    fontFamily: AppTypography.fontFamily,
-                    fontSize: 16,
-                    fontWeight: AppTypography.semiBold,
-                    color: _textColor,
-                    height: 1.2,
-                    letterSpacing: 0,
-                  ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 6),
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 16,
+                  fontWeight: AppTypography.semiBold,
+                  color: _textColor,
+                  height: 1.2,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Первое фото станет главным. Лучше всего работают снимки при хорошем освещении.',
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 12,
+                  fontWeight: AppTypography.medium,
+                  color: _secondaryTextColor,
+                  height: 1.35,
+                  letterSpacing: 0,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: _PhotoSourceButton(
+                      icon: Icons.photo_library_outlined,
+                      title: 'Из галереи',
+                      subtitle: 'Можно несколько',
+                      isBusy: controller.isPickingPhotos,
+                      onTap: isAtLimit || controller.isPickingPhotos
+                          ? null
+                          : () => unawaited(controller.pickFromGallery()),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _PhotoSourceButton(
+                      icon: Icons.photo_camera_outlined,
+                      title: 'Сделать фото',
+                      subtitle: 'Открыть камеру',
+                      isBusy: controller.isPickingPhotos,
+                      onTap: isAtLimit || controller.isPickingPhotos
+                          ? null
+                          : () => unawaited(controller.takePhoto()),
+                    ),
+                  ),
+                ],
+              ),
+              if (controller.transientError case final error?) ...[
+                const SizedBox(height: 12),
+                _InlineError(
+                  message: error,
+                  onDismiss: controller.clearTransientError,
+                ),
+              ],
+              const SizedBox(height: 20),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Фотографии',
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 12.5,
+                        fontWeight: AppTypography.semiBold,
+                        color: _textColor,
+                        height: 1,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${photos.length}/8',
+                    style: const TextStyle(
+                      fontFamily: AppTypography.fontFamily,
+                      fontSize: 11.5,
+                      fontWeight: AppTypography.medium,
+                      color: _secondaryTextColor,
+                      height: 1,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (photos.isEmpty)
+                const _EmptyPhotosHint()
+              else ...[
+                _PhotoReorderList(
+                  photos: photos,
+                  mainPhotoId: controller.draft.mainPhotoId,
+                  onReorder: controller.reorderPhotos,
+                  onSetMain: controller.setMainPhoto,
+                  onPreview: (index) => _showPhotoPreview(
+                    context,
+                    photos: List<ListingPhoto>.of(photos),
+                    initialIndex: index,
+                  ),
+                  onDelete: (photo) => unawaited(
+                    _confirmPhotoDeletion(context, controller, photo),
+                  ),
+                  onRetry: (photo) =>
+                      unawaited(controller.retryPhotoUpload(photo)),
+                ),
+                const SizedBox(height: 8),
                 const Text(
-                  'Первое фото станет главным. Лучше всего работают снимки при хорошем освещении.',
+                  'Зажмите фото и перетащите, чтобы изменить порядок. Нажмите звезду, чтобы выбрать главное.',
                   style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
-                    fontSize: 12,
+                    fontSize: 10.5,
                     fontWeight: AppTypography.medium,
                     color: _secondaryTextColor,
                     height: 1.35,
                     letterSpacing: 0,
                   ),
                 ),
-                const SizedBox(height: 18),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _PhotoSourceButton(
-                        icon: Icons.photo_library_outlined,
-                        title: 'Из галереи',
-                        subtitle: 'Можно несколько',
-                        isBusy: controller.isPickingPhotos,
-                        onTap: isAtLimit || controller.isPickingPhotos
-                            ? null
-                            : () => unawaited(controller.pickFromGallery()),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _PhotoSourceButton(
-                        icon: Icons.photo_camera_outlined,
-                        title: 'Сделать фото',
-                        subtitle: 'Открыть камеру',
-                        isBusy: controller.isPickingPhotos,
-                        onTap: isAtLimit || controller.isPickingPhotos
-                            ? null
-                            : () => unawaited(controller.takePhoto()),
-                      ),
-                    ),
-                  ],
-                ),
-                if (controller.transientError case final error?) ...[
-                  const SizedBox(height: 12),
-                  _InlineError(
-                    message: error,
-                    onDismiss: controller.clearTransientError,
-                  ),
-                ],
-                const SizedBox(height: 20),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Фотографии',
-                        style: TextStyle(
-                          fontFamily: AppTypography.fontFamily,
-                          fontSize: 12.5,
-                          fontWeight: AppTypography.semiBold,
-                          color: _textColor,
-                          height: 1,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '${photos.length}/8',
-                      style: const TextStyle(
-                        fontFamily: AppTypography.fontFamily,
-                        fontSize: 11.5,
-                        fontWeight: AppTypography.medium,
-                        color: _secondaryTextColor,
-                        height: 1,
-                        letterSpacing: 0,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                if (photos.isEmpty)
-                  const _EmptyPhotosHint()
-                else ...[
-                  _PhotoReorderList(
-                    photos: photos,
-                    mainPhotoId: controller.draft.mainPhotoId,
-                    onReorder: controller.reorderPhotos,
-                    onSetMain: controller.setMainPhoto,
-                    onPreview: (index) => _showPhotoPreview(
-                      context,
-                      photos: List<ListingPhoto>.of(photos),
-                      initialIndex: index,
-                    ),
-                    onDelete: (photo) => unawaited(
-                      _confirmPhotoDeletion(context, controller, photo),
-                    ),
-                    onRetry: (photo) =>
-                        unawaited(controller.retryPhotoUpload(photo)),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Зажмите фото и перетащите, чтобы изменить порядок. Нажмите звезду, чтобы выбрать главное.',
-                    style: TextStyle(
-                      fontFamily: AppTypography.fontFamily,
-                      fontSize: 10.5,
-                      fontWeight: AppTypography.medium,
-                      color: _secondaryTextColor,
-                      height: 1.35,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  _AnalysisStatus(status: controller.draft.analysisStatus),
-                ],
+                const SizedBox(height: 16),
+                _AnalysisStatus(status: controller.draft.analysisStatus),
               ],
-            ),
+            ],
           ),
         );
       },

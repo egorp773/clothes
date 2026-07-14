@@ -52,8 +52,8 @@ class ListingPublishController extends ChangeNotifier {
   int get visibleStepNumber => switch (draft.currentStep) {
     ListingPublishStep.photos => 1,
     ListingPublishStep.basics => 2,
-    ListingPublishStep.delivery => 3,
-    ListingPublishStep.attributes => 4,
+    ListingPublishStep.attributes => 3,
+    ListingPublishStep.delivery => 4,
     ListingPublishStep.preview || ListingPublishStep.success => 5,
   };
 

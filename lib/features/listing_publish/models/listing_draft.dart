@@ -296,23 +296,22 @@ class ListingDraft {
     if (description.length > 2000) {
       return 'Описание должно быть короче 2000 символов';
     }
-    if (description.trim().isEmpty) return 'Добавьте описание вещи';
-    if (normalizedCategory.isEmpty) return 'Выберите категорию вещи';
     if (brand.isEmpty || brand == 'other_brand') {
       return 'Укажите бренд или выберите «Без бренда»';
     }
     if (size.isEmpty) return 'Выберите размер';
     if (condition.isEmpty) return 'Выберите состояние';
     if (gender.isEmpty) return 'Выберите аудиторию';
+    return null;
+  }
+
+  String? validateAttributes() {
+    if (normalizedCategory.isEmpty) return 'Выберите категорию вещи';
     if (primaryColor.isEmpty) return 'Выберите основной цвет';
     if (hasDefects && defectDescription.trim().isEmpty) {
       return 'Опишите дефекты вещи';
     }
     return null;
-  }
-
-  String? validateAttributes() {
-    return validateBasics();
   }
 
   String? validateDelivery() {

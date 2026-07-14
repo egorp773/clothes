@@ -23,7 +23,6 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
   late final TextEditingController _titleController;
   late final TextEditingController _priceController;
   late final TextEditingController _descriptionController;
-  late final TextEditingController _defectsController;
   String? _syncedDraftId;
 
   @override
@@ -32,7 +31,6 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     _titleController = TextEditingController();
     _priceController = TextEditingController();
     _descriptionController = TextEditingController();
-    _defectsController = TextEditingController();
     _syncTextFromFlow();
     widget.controller.addListener(_handleFlowChanged);
   }
@@ -53,7 +51,6 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     _titleController.dispose();
     _priceController.dispose();
     _descriptionController.dispose();
-    _defectsController.dispose();
     super.dispose();
   }
 
@@ -74,7 +71,6 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     // syncing here never replaces text entered by the user.
     _applyExternalText(_titleController, draft.title);
     _applyExternalText(_descriptionController, draft.description);
-    _applyExternalText(_defectsController, draft.defectDescription);
     // Price has no analysis suggestion. Sync it only when opening/replacing a
     // draft, otherwise a temporarily entered zero would be erased mid-edit.
     if (isNewDraft) {
@@ -114,224 +110,142 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: () => FocusScope.of(context).unfocus(),
-      child: Transform.translate(
-        offset: const Offset(0, -115),
-        child: SingleChildScrollView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: EdgeInsets.fromLTRB(
-            18,
-            8,
-            18,
-            30 + MediaQuery.viewInsetsOf(context).bottom,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Основная информация',
-                style: TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 16,
-                  fontWeight: AppTypography.semiBold,
-                  color: _textColor,
-                  height: 1.2,
-                  letterSpacing: 0,
-                ),
+      child: SingleChildScrollView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: EdgeInsets.fromLTRB(
+          18,
+          8,
+          18,
+          30 + MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Основная информация',
+              style: TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 16,
+                fontWeight: AppTypography.semiBold,
+                color: _textColor,
+                height: 1.2,
+                letterSpacing: 0,
               ),
-              const SizedBox(height: 6),
-              const Text(
-                'Заполните только главное — остальные характеристики можно проверить на следующем шаге.',
-                style: TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 12,
-                  fontWeight: AppTypography.medium,
-                  color: _secondaryTextColor,
-                  height: 1.35,
-                  letterSpacing: 0,
-                ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Заполните только главное — остальные характеристики можно проверить на следующем шаге.',
+              style: TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 12,
+                fontWeight: AppTypography.medium,
+                color: _secondaryTextColor,
+                height: 1.35,
+                letterSpacing: 0,
               ),
-              const SizedBox(height: 24),
-              _FieldLabel(label: 'Название', isRequired: true),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _titleController,
-                textCapitalization: TextCapitalization.sentences,
-                textInputAction: TextInputAction.next,
-                inputFormatters: [LengthLimitingTextInputFormatter(80)],
-                onChanged: widget.controller.setTitle,
-                style: _inputStyle,
-                decoration: _inputDecoration(
-                  hintText: 'Например, худи Nike',
-                  suffixText: '${_titleController.text.length}/80',
-                ),
+            ),
+            const SizedBox(height: 24),
+            _FieldLabel(label: 'Название', isRequired: true),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _titleController,
+              textCapitalization: TextCapitalization.sentences,
+              textInputAction: TextInputAction.next,
+              inputFormatters: [LengthLimitingTextInputFormatter(80)],
+              onChanged: widget.controller.setTitle,
+              style: _inputStyle,
+              decoration: _inputDecoration(
+                hintText: 'Например, худи Nike',
+                suffixText: '${_titleController.text.length}/80',
               ),
-              const SizedBox(height: 22),
-              _FieldLabel(label: 'Цена', isRequired: true),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _priceController,
-                keyboardType: TextInputType.number,
-                textInputAction: TextInputAction.next,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                onChanged: widget.controller.setPrice,
-                style: _inputStyle,
-                decoration: _inputDecoration(
-                  hintText: 'Введите цену',
-                  suffixText: '₽',
-                  errorText: priceIsInvalid
-                      ? 'Цена должна быть больше 0'
-                      : null,
-                ),
+            ),
+            const SizedBox(height: 22),
+            _FieldLabel(label: 'Цена', isRequired: true),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _priceController,
+              keyboardType: TextInputType.number,
+              textInputAction: TextInputAction.next,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: widget.controller.setPrice,
+              style: _inputStyle,
+              decoration: _inputDecoration(
+                hintText: 'Введите цену',
+                suffixText: '₽',
+                errorText: priceIsInvalid ? 'Цена должна быть больше 0' : null,
               ),
-              const SizedBox(height: 22),
-              _FieldLabel(label: 'Описание', isRequired: true),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _descriptionController,
-                minLines: 4,
-                maxLines: 7,
-                keyboardType: TextInputType.multiline,
-                textCapitalization: TextCapitalization.sentences,
-                inputFormatters: [LengthLimitingTextInputFormatter(2000)],
-                onChanged: widget.controller.setDescription,
-                style: _inputStyle.copyWith(height: 1.35),
-                decoration: _inputDecoration(
-                  hintText: 'Расскажите о вещи, посадке и особенностях',
-                  alignLabelWithHint: true,
-                  suffixText: '${_descriptionController.text.length}/2000',
-                ),
+            ),
+            const SizedBox(height: 22),
+            _FieldLabel(label: 'Описание (необязательно)'),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _descriptionController,
+              minLines: 4,
+              maxLines: 7,
+              keyboardType: TextInputType.multiline,
+              textCapitalization: TextCapitalization.sentences,
+              inputFormatters: [LengthLimitingTextInputFormatter(2000)],
+              onChanged: widget.controller.setDescription,
+              style: _inputStyle.copyWith(height: 1.35),
+              decoration: _inputDecoration(
+                hintText: 'Расскажите о вещи, посадке и особенностях',
+                alignLabelWithHint: true,
+                suffixText: '${_descriptionController.text.length}/2000',
               ),
-              const SizedBox(height: 20),
-              ListingSelectionRow(
-                label: 'Категория',
-                isRequired: true,
-                value: draft.normalizedCategory.isEmpty
-                    ? null
-                    : ListingCatalogs.nameOf(draft.normalizedCategory),
-                placeholder: 'Выберите тип вещи',
-                onTap: () => _selectAttribute(
-                  title: 'Категория вещи',
-                  options: ListingCatalogs.finalCategories,
-                  selected: draft.normalizedCategory,
-                  field: 'normalized_category',
-                ),
+            ),
+            const SizedBox(height: 20),
+            ListingSelectionRow(
+              key: const ValueKey('basic_brand'),
+              label: 'Бренд',
+              isRequired: true,
+              value: draft.brand.isEmpty
+                  ? null
+                  : ListingCatalogs.nameOf(draft.brand, fallback: draft.brand),
+              placeholder: 'Бренд или «Без бренда»',
+              onTap: _showBrandPicker,
+            ),
+            ListingSelectionRow(
+              key: const ValueKey('basic_size'),
+              label: 'Размер',
+              isRequired: true,
+              value: draft.size.isEmpty ? null : _sizeDisplayName(draft.size),
+              placeholder: 'Выберите размер',
+              onTap: _showSizePicker,
+            ),
+            ListingSelectionRow(
+              key: const ValueKey('basic_condition'),
+              label: 'Состояние',
+              isRequired: true,
+              value: draft.condition.isEmpty
+                  ? null
+                  : ListingCatalogs.nameOf(draft.condition),
+              placeholder: 'Выберите состояние',
+              onTap: _showConditionPicker,
+            ),
+            ListingSelectionRow(
+              key: const ValueKey('basic_audience'),
+              label: 'Аудитория',
+              isRequired: true,
+              value: draft.gender.isEmpty
+                  ? null
+                  : ListingCatalogs.nameOf(draft.gender),
+              onTap: () => _selectAttribute(
+                title: 'Для кого вещь',
+                options: ListingCatalogs.genders,
+                selected: draft.gender,
+                field: 'gender',
               ),
-              ListingSelectionRow(
-                label: 'Бренд',
-                isRequired: true,
-                value: draft.brand.isEmpty
-                    ? null
-                    : ListingCatalogs.nameOf(
-                        draft.brand,
-                        fallback: draft.brand,
-                      ),
-                placeholder: 'Бренд или «Без бренда»',
-                onTap: _showBrandPicker,
-              ),
-              ListingSelectionRow(
-                label: 'Размер',
-                isRequired: true,
-                value: draft.size.isEmpty ? null : _sizeDisplayName(draft.size),
-                placeholder: 'Выберите размер',
-                onTap: _showSizePicker,
-              ),
-              ListingSelectionRow(
-                label: 'Состояние',
-                isRequired: true,
-                value: draft.condition.isEmpty
-                    ? null
-                    : ListingCatalogs.nameOf(draft.condition),
-                placeholder: 'Выберите состояние',
-                onTap: _showConditionPicker,
-              ),
-              ListingSelectionRow(
-                label: 'Основной цвет',
-                isRequired: true,
-                value: draft.primaryColor.isEmpty
-                    ? null
-                    : ListingCatalogs.nameOf(draft.primaryColor),
-                onTap: () => _selectAttribute(
-                  title: 'Основной цвет',
-                  options: ListingCatalogs.colors,
-                  selected: draft.primaryColor,
-                  field: 'primary_color',
-                ),
-              ),
-              ListingSelectionRow(
-                label: 'Дополнительные цвета',
-                value: draft.secondaryColors.isEmpty
-                    ? null
-                    : draft.secondaryColors
-                          .map(ListingCatalogs.nameOf)
-                          .join(', '),
-                placeholder: 'Необязательно',
-                onTap: _showSecondaryColorsPicker,
-              ),
-              ListingSelectionRow(
-                label: 'Аудитория',
-                isRequired: true,
-                value: draft.gender.isEmpty
-                    ? null
-                    : ListingCatalogs.nameOf(draft.gender),
-                onTap: () => _selectAttribute(
-                  title: 'Для кого вещь',
-                  options: ListingCatalogs.genders,
-                  selected: draft.gender,
-                  field: 'gender',
-                ),
-              ),
+            ),
+            if (widget.controller.isAnalyzing) ...[
               const SizedBox(height: 18),
-              SwitchListTile.adaptive(
-                contentPadding: EdgeInsets.zero,
-                title: const Text(
-                  'Есть дефекты',
-                  style: TextStyle(
-                    fontFamily: AppTypography.fontFamily,
-                    fontSize: 13,
-                    fontWeight: AppTypography.semiBold,
-                  ),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: ListingAnalysisStatusBadge.processing(
+                  label: 'Анализируем фото — предложим данные автоматически',
                 ),
-                subtitle: const Text(
-                  'Пятна, повреждения или заметные следы носки',
-                  style: TextStyle(
-                    fontFamily: AppTypography.fontFamily,
-                    fontSize: 11.5,
-                    color: _secondaryTextColor,
-                  ),
-                ),
-                value: draft.hasDefects,
-                activeTrackColor: Colors.black,
-                onChanged: widget.controller.setHasDefects,
               ),
-              if (draft.hasDefects) ...[
-                const SizedBox(height: 10),
-                _FieldLabel(label: 'Описание дефектов', isRequired: true),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _defectsController,
-                  minLines: 2,
-                  maxLines: 5,
-                  maxLength: 500,
-                  onChanged: widget.controller.setDefectDescription,
-                  style: _inputStyle.copyWith(height: 1.35),
-                  decoration: _inputDecoration(
-                    hintText: 'Опишите дефект и где он находится',
-                    alignLabelWithHint: true,
-                    suffixText: '${_defectsController.text.length}/500',
-                  ).copyWith(counterText: ''),
-                ),
-              ],
-              if (widget.controller.isAnalyzing) ...[
-                const SizedBox(height: 18),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: ListingAnalysisStatusBadge.processing(
-                    label: 'Анализируем фото — предложим данные автоматически',
-                  ),
-                ),
-              ],
             ],
-          ),
+          ],
         ),
       ),
     );
@@ -357,22 +271,6 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     );
     if (!mounted || value == null) return;
     widget.controller.setAttribute(field, value);
-  }
-
-  Future<void> _showSecondaryColorsPicker() async {
-    FocusScope.of(context).unfocus();
-    final colors = await showModalBottomSheet<List<String>>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.35),
-      builder: (context) => _SecondaryColorsSheet(
-        selectedValues: widget.controller.draft.secondaryColors,
-        excludedValue: widget.controller.draft.primaryColor,
-      ),
-    );
-    if (!mounted || colors == null) return;
-    widget.controller.setSecondaryColors(colors);
   }
 
   Future<void> _showBrandPicker() async {
@@ -778,96 +676,6 @@ class _SheetSectionTitle extends StatelessWidget {
       ),
     );
   }
-}
-
-class _SecondaryColorsSheet extends StatefulWidget {
-  const _SecondaryColorsSheet({
-    required this.selectedValues,
-    required this.excludedValue,
-  });
-
-  final List<String> selectedValues;
-  final String excludedValue;
-
-  @override
-  State<_SecondaryColorsSheet> createState() => _SecondaryColorsSheetState();
-}
-
-class _SecondaryColorsSheetState extends State<_SecondaryColorsSheet> {
-  late final Set<String> _selected;
-
-  @override
-  void initState() {
-    super.initState();
-    _selected = widget.selectedValues.toSet();
-  }
-
-  @override
-  Widget build(BuildContext context) => Container(
-    constraints: BoxConstraints(
-      maxHeight: MediaQuery.sizeOf(context).height * 0.78,
-    ),
-    padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-    decoration: const BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-    ),
-    child: SafeArea(
-      top: false,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Дополнительные цвета',
-            style: TextStyle(
-              fontFamily: AppTypography.fontFamily,
-              fontSize: 16,
-              fontWeight: AppTypography.semiBold,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Flexible(
-            child: SingleChildScrollView(
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: ListingCatalogs.colors
-                    .map((option) {
-                      final disabled = option.id == widget.excludedValue;
-                      return FilterChip(
-                        label: Text(option.name),
-                        avatar: option.color == null
-                            ? null
-                            : CircleAvatar(backgroundColor: option.color),
-                        selected: _selected.contains(option.id),
-                        onSelected: disabled
-                            ? null
-                            : (selected) => setState(() {
-                                selected
-                                    ? _selected.add(option.id)
-                                    : _selected.remove(option.id);
-                              }),
-                      );
-                    })
-                    .toList(growable: false),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.black),
-              onPressed: () => Navigator.pop(context, _selected.toList()),
-              child: const Text('Готово'),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
 }
 
 class _CatalogOptionsSheet extends StatelessWidget {

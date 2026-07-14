@@ -3,6 +3,7 @@ import 'package:clothes/features/listing_publish/listing_publish_controller.dart
 import 'package:clothes/features/listing_publish/models/listing_draft.dart';
 import 'package:clothes/features/listing_publish/screens/listing_publish_flow_screen.dart';
 import 'package:clothes/features/listing_publish/screens/listing_attributes_step.dart';
+import 'package:clothes/features/listing_publish/screens/listing_basics_step.dart';
 import 'package:clothes/features/listing_publish/screens/listing_preview_step.dart';
 import 'package:clothes/features/listing_publish/services/product_image_analyzer.dart';
 import 'package:clothes/features/listing_publish/widgets/listing_publish_widgets.dart';
@@ -12,10 +13,59 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  testWidgets('basic step is stable and contains only first required fields', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.binding.setSurfaceSize(const Size(320, 568));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = ListingPublishController(
+      repository: ListingPublishRepository(
+        sellerName: 'Seller',
+        sellerHandle: '@seller',
+        fallbackCity: 'Москва',
+      ),
+      analyzer: _UnusedAnalyzer(),
+      sellerName: 'Seller',
+      sellerHandle: '@seller',
+    );
+    await controller.initialize();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: ListingBasicsStep(controller: controller)),
+      ),
+    );
+
+    expect(find.text('Название *', findRichText: true), findsOneWidget);
+    expect(find.text('Цена *', findRichText: true), findsOneWidget);
+    expect(find.text('Описание (необязательно)'), findsOneWidget);
+    expect(find.byKey(const ValueKey('basic_brand')), findsOneWidget);
+    expect(find.byKey(const ValueKey('basic_size')), findsOneWidget);
+    expect(find.byKey(const ValueKey('basic_condition')), findsOneWidget);
+    expect(find.byKey(const ValueKey('basic_audience')), findsOneWidget);
+    expect(find.text('Категория', findRichText: true), findsNothing);
+    expect(find.text('Основной цвет', findRichText: true), findsNothing);
+    expect(find.text('Есть дефекты'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.drag(
+      find.byType(SingleChildScrollView).first,
+      const Offset(0, -700),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
   testWidgets('photo step disables continue until a photo exists', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
+    await tester.binding.setSurfaceSize(const Size(320, 568));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = ListingPublishController(
       repository: ListingPublishRepository(
         sellerName: 'Seller',
@@ -41,6 +91,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
 
     var button = tester.widget<ListingPrimaryBottomButton>(
       find.byType(ListingPrimaryBottomButton),
@@ -87,8 +138,16 @@ void main() {
       ..size = 'm'
       ..brand = 'no_brand'
       ..primaryColor = 'black'
+      ..secondaryColors.addAll(['blue', 'white'])
+      ..gender = 'unisex'
       ..material = 'cotton'
-      ..categoryAttributes['material'] = 'cotton';
+      ..pattern = 'solid'
+      ..fit = 'regular'
+      ..categoryAttributes.addAll({
+        'material': 'cotton',
+        'pattern': 'solid',
+        'fit': 'regular',
+      });
     controller.draft
       ..hasDefects = true
       ..defectDescription = 'Небольшая царапина у кармана'
@@ -110,6 +169,19 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(materialFinder, findsOneWidget);
+    expect(
+      find.textContaining('Категория:', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Аудитория:', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Дополнительные цвета:', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Крой:', findRichText: true), findsOneWidget);
     expect(find.text('Раздел'), findsNothing);
     expect(find.text('Подкатегория'), findsNothing);
     expect(find.text('Тип вещи'), findsNothing);
@@ -145,13 +217,24 @@ void main() {
       ),
     );
 
+    expect(find.byKey(const ValueKey('detail_category')), findsOneWidget);
+    expect(find.byKey(const ValueKey('detail_primary_color')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('detail_secondary_colors')),
+      findsOneWidget,
+    );
+    expect(find.text('Есть дефекты'), findsOneWidget);
     expect(find.text('Материал'), findsOneWidget);
     expect(find.text('Рисунок'), findsOneWidget);
     expect(find.text('Крой'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Тип застёжки'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Тип застёжки'), findsOneWidget);
     expect(find.text('Длина рукава'), findsNothing);
     expect(find.text('Посадка'), findsNothing);
-    expect(find.text('Категория'), findsNothing);
     expect(find.text('Пол'), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());

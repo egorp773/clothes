@@ -22,6 +22,22 @@ void main() {
   });
 
   group('ListingDraft', () {
+    test('first step requires only seller-entered essentials', () {
+      final draft = ListingDraft.empty(sellerId: 'seller')
+        ..title = 'Худи'
+        ..price = 4500
+        ..brand = 'no_brand'
+        ..size = 'm'
+        ..condition = 'excellent'
+        ..gender = 'unisex';
+
+      expect(draft.description, isEmpty);
+      expect(draft.normalizedCategory, isEmpty);
+      expect(draft.primaryColor, isEmpty);
+      expect(draft.validateBasics(), isNull);
+      expect(draft.validateAttributes(), contains('категорию'));
+    });
+
     test('round-trips all publication data', () {
       final draft = _validDraft();
       draft.predictions['primary_color'] = ListingFieldPrediction(

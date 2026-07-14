@@ -1290,15 +1290,39 @@ class _ProductDatabaseDescriptionState
               options: ListingCatalogs.closures,
             ),
           ];
-    final importantAttributes = source == null
+    final relevantAttributes = source == null
         ? const <ListingAttributeDefinition>[]
         : relevantDefinitions
               .where(
                 (definition) =>
                     _attributeValue(source, definition.id).isNotEmpty,
               )
-              .take(6)
               .toList(growable: false);
+    final category = _categoryName(product, source);
+    final brand = product.brand.trim().isNotEmpty
+        ? product.brand.trim()
+        : ListingCatalogs.nameOf(source?.normalizedBrand ?? '', fallback: '');
+    final audienceId = source?.audience.trim().isNotEmpty == true
+        ? source!.audience.trim()
+        : source?.gender.trim() ?? '';
+    final audience = ListingCatalogs.nameOf(audienceId, fallback: audienceId);
+    final primaryColorId = source?.primaryColor.trim() ?? '';
+    final primaryColor = primaryColorId.isNotEmpty
+        ? ListingCatalogs.nameOf(primaryColorId, fallback: product.color.trim())
+        : product.color.trim();
+    final additionalColors =
+        source?.secondaryColors
+            .map(
+              (color) => ListingCatalogs.nameOf(color.trim(), fallback: color),
+            )
+            .where(
+              (color) =>
+                  color.trim().isNotEmpty &&
+                  color.trim().toLowerCase() != primaryColor.toLowerCase(),
+            )
+            .toSet()
+            .join(', ') ??
+        '';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1311,11 +1335,17 @@ class _ProductDatabaseDescriptionState
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _CharacteristicLine(label: 'Состояние', value: product.condition),
+              _CharacteristicLine(label: 'Категория', value: category),
+              _CharacteristicLine(label: 'Бренд', value: brand),
               _CharacteristicLine(label: 'Размер', value: product.size),
-              _CharacteristicLine(label: 'Бренд', value: product.brand),
-              _CharacteristicLine(label: 'Цвет', value: product.color),
-              for (final definition in importantAttributes)
+              _CharacteristicLine(label: 'Состояние', value: product.condition),
+              _CharacteristicLine(label: 'Аудитория', value: audience),
+              _CharacteristicLine(label: 'Основной цвет', value: primaryColor),
+              _CharacteristicLine(
+                label: 'Дополнительные цвета',
+                value: additionalColors,
+              ),
+              for (final definition in relevantAttributes)
                 _CharacteristicLine(
                   label: definition.label,
                   value: ListingCatalogs.nameOf(
@@ -1362,6 +1392,24 @@ class _ProductDatabaseDescriptionState
           ),
       ],
     );
+  }
+
+  String _categoryName(ProductDetailData product, Product? source) {
+    final normalizedCategory = source?.normalizedCategory.trim() ?? '';
+    if (normalizedCategory.isNotEmpty) {
+      return ListingCatalogs.nameOf(
+        normalizedCategory,
+        fallback: normalizedCategory,
+      );
+    }
+
+    final legacyCategory = ListingCatalogs.normalizeCategory(
+      source?.itemType ?? '',
+    );
+    if (legacyCategory.isNotEmpty) {
+      return ListingCatalogs.nameOf(legacyCategory, fallback: product.category);
+    }
+    return product.category.trim();
   }
 
   String _attributeValue(Product product, String key) {
