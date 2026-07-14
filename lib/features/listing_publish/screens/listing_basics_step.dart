@@ -22,6 +22,7 @@ class ListingBasicsStep extends StatefulWidget {
 class _ListingBasicsStepState extends State<ListingBasicsStep> {
   late final TextEditingController _titleController;
   late final TextEditingController _priceController;
+  late final TextEditingController _descriptionController;
   String? _syncedDraftId;
 
   @override
@@ -29,6 +30,7 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     super.initState();
     _titleController = TextEditingController();
     _priceController = TextEditingController();
+    _descriptionController = TextEditingController();
     _syncTextFromFlow();
     widget.controller.addListener(_handleFlowChanged);
   }
@@ -48,6 +50,7 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     widget.controller.removeListener(_handleFlowChanged);
     _titleController.dispose();
     _priceController.dispose();
+    _descriptionController.dispose();
     super.dispose();
   }
 
@@ -65,6 +68,9 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
 
     // A recovered draft can already contain a seller-entered title.
     _applyExternalText(_titleController, draft.title);
+    // Description may be filled asynchronously by analysis while this step is
+    // visible, unless the seller has already edited it.
+    _applyExternalText(_descriptionController, draft.description);
     // Price has no analysis suggestion. Sync it only when opening/replacing a
     // draft, otherwise a temporarily entered zero would be erased mid-edit.
     if (isNewDraft) {
@@ -221,6 +227,24 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
                 ),
               ),
             ],
+            const SizedBox(height: 22),
+            const _FieldLabel(label: 'Описание (необязательно)'),
+            const SizedBox(height: 8),
+            TextField(
+              key: const ValueKey('basic_description'),
+              controller: _descriptionController,
+              minLines: 3,
+              maxLines: 7,
+              maxLength: 2000,
+              keyboardType: TextInputType.multiline,
+              textCapitalization: TextCapitalization.sentences,
+              onChanged: widget.controller.setDescription,
+              style: _inputStyle,
+              decoration: _inputDecoration(
+                hintText: 'Расскажите о вещи',
+                alignLabelWithHint: true,
+              ).copyWith(counterText: ''),
+            ),
           ],
         ),
       ),

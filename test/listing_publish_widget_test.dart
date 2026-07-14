@@ -39,7 +39,8 @@ void main() {
 
     expect(find.text('Название *', findRichText: true), findsOneWidget);
     expect(find.text('Цена *', findRichText: true), findsOneWidget);
-    expect(find.text('Описание (необязательно)'), findsNothing);
+    expect(find.text('Описание (необязательно)'), findsOneWidget);
+    expect(find.byKey(const ValueKey('basic_description')), findsOneWidget);
     expect(find.byKey(const ValueKey('basic_brand')), findsOneWidget);
     expect(find.byKey(const ValueKey('basic_size')), findsOneWidget);
     expect(find.byKey(const ValueKey('basic_condition')), findsOneWidget);
@@ -245,18 +246,13 @@ void main() {
     expect(find.text('Посадка'), findsNothing);
     expect(find.text('Пол'), findsNothing);
 
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('detail_description')),
-      250,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.byKey(const ValueKey('detail_description')), findsOneWidget);
+    expect(find.byKey(const ValueKey('detail_description')), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });
 
-  testWidgets('seller can confirm or skip one ML suggestion explicitly', (
+  testWidgets('review has no per-field confirm buttons and supports skip', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -288,14 +284,11 @@ void main() {
       ),
     );
 
-    final confirm = find.byKey(const ValueKey('confirm_material'));
-    await tester.scrollUntilVisible(
-      confirm,
-      220,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.tap(confirm);
-    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('confirm_material')), findsNothing);
+    expect(find.text('Предложено'), findsOneWidget);
+
+    controller.confirmRequiredDetails();
+    await tester.pump();
     expect(controller.draft.predictions['material']?.userConfirmed, isTrue);
 
     await tester.tap(find.byKey(const ValueKey('attribute_material')));

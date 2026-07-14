@@ -13,6 +13,7 @@ from PIL import Image
 from app.catalog import BRANDS, ITEM_TYPE_TITLES, NORMALIZED_CATEGORIES
 from app.color.masked_color_analyzer import ColorCandidate, MaskedColorAnalyzer
 from app.config import Settings
+from app.enrichment.visual_attributes import VisualAttributeSuggester
 from app.model_manager import ModelManager, StageTimeoutError
 from app.ocr.brand_matcher import BrandMatcher
 from app.ocr.paddleocr_adapter import OcrResult
@@ -69,6 +70,7 @@ class AnalyzerPipeline:
         self.settings = settings
         self.models = models
         self.color = MaskedColorAnalyzer()
+        self.visual_attributes = VisualAttributeSuggester(models.classification)
         self.brand_matcher = BrandMatcher(settings.brand_match_threshold)
         self.cache = AnalysisCache(
             settings.analysis_cache_size, settings.analysis_cache_ttl_seconds
@@ -148,13 +150,13 @@ class AnalyzerPipeline:
         if len(classification_images) > 1:
             category_future = self.models.submit(
                 self._timed,
-                self.models.classification.classify_many,
+                self.models.classification.embed_and_classify_many,
                 classification_images,
             )
         else:
             category_future = self.models.submit(
                 self._timed,
-                self.models.classification.classify,
+                self.models.classification.embed_and_classify,
                 classification_images[0],
             )
         color_future = None
@@ -174,18 +176,21 @@ class AnalyzerPipeline:
             ),
             warnings,
         )
+        visual_embedding = None
         if classified is None:
             candidates = []
         elif len(classification_images) > 1:
+            visual_embedding = classified[0].embedding if classified else None
             candidates = self._merge_region_candidates(
-                classified,
+                [item.candidates for item in classified],
                 limit=max(
                     self.settings.classification_top_k,
                     min(len(classification_images), self.settings.max_detected_garments),
                 ),
             )
         else:
-            candidates = classified
+            visual_embedding = classified.embedding
+            candidates = classified.candidates
         timings["fashion_siglip"] = self._future_duration(category_future)
 
         color_candidates: list[ColorCandidate] = []
@@ -215,7 +220,13 @@ class AnalyzerPipeline:
             timings=timings,
         )
         self.cache.put(image_hash, result)
-        self._schedule_enrichment(image_hash, main_image.copy(), segment, top)
+        self._schedule_enrichment(
+            image_hash,
+            main_image.copy(),
+            segment,
+            top,
+            visual_embedding,
+        )
         LOGGER.info("Fast analysis %s: %s", image_hash[:12], timings)
         cached = self.cache.get(image_hash)
         return cached or result
@@ -226,16 +237,8 @@ class AnalyzerPipeline:
         image: Image.Image,
         segment: SegmentedGarment | None,
         top,
+        visual_embedding: np.ndarray | None,
     ) -> None:
-        if not self.models.ocr.available and not self.models.vlm.available:
-            self._apply_enrichment(
-                image_hash,
-                OcrResult([], None, None),
-                VlmAttributes({}, 0.0, "disabled"),
-                ["enrichment_models_disabled"],
-                {},
-            )
-            return
         with self._enrichment_lock:
             if image_hash in self._enrichment_inflight:
                 return
@@ -244,9 +247,50 @@ class AnalyzerPipeline:
         if result is not None:
             result.enrichment_status = "pending"
             self.cache.put(image_hash, result)
+        if not self.models.ocr.available and not self.models.vlm.available:
+            self.models.submit_background(
+                self._enrich_visual_only,
+                image_hash,
+                visual_embedding,
+            )
+            return
         self.models.submit_background(
-            self._enrich, image_hash, image, segment.cutout if segment else None, top
+            self._enrich,
+            image_hash,
+            image,
+            segment.cutout if segment else None,
+            top,
+            visual_embedding,
         )
+
+    def _enrich_visual_only(
+        self,
+        image_hash: str,
+        visual_embedding: np.ndarray | None,
+    ) -> None:
+        """Propose category attributes with the already-computed SigLIP vector."""
+        try:
+            self._apply_enrichment(
+                image_hash,
+                OcrResult([], None, None),
+                VlmAttributes({}, 0.0, "disabled"),
+                ["ocr_and_vlm_disabled_visual_fallback_used"],
+                {},
+                visual_embedding,
+            )
+        except Exception:
+            LOGGER.exception("Visual-only enrichment failed")
+            result = self.cache.get(image_hash)
+            if result is not None:
+                result.enrichment_status = "completed"
+                result.warnings = list(
+                    dict.fromkeys([*result.warnings, "visual_enrichment_failed"])
+                )
+                self.cache.put(image_hash, result)
+                self._save_result(result)
+        finally:
+            with self._enrichment_lock:
+                self._enrichment_inflight.discard(image_hash)
 
     def schedule_extra_images(self, image_hash: str, images: list[Image.Image]) -> bool:
         """Queue detail shots after the fast result; only OCR-worthy shots are read."""
@@ -261,7 +305,12 @@ class AnalyzerPipeline:
         return True
 
     def _enrich(
-        self, image_hash: str, image: Image.Image, cutout: Image.Image | None, top
+        self,
+        image_hash: str,
+        image: Image.Image,
+        cutout: Image.Image | None,
+        top,
+        visual_embedding: np.ndarray | None,
     ) -> None:
         warnings: list[str] = []
         timings: dict[str, int] = {}
@@ -319,7 +368,14 @@ class AnalyzerPipeline:
                 timings["qwen"] = self._future_duration(qwen_future)
             else:
                 timings["qwen"] = 0
-            self._apply_enrichment(image_hash, ocr, vlm, warnings, timings)
+            self._apply_enrichment(
+                image_hash,
+                ocr,
+                vlm,
+                warnings,
+                timings,
+                visual_embedding,
+            )
         except Exception:
             LOGGER.exception("Unexpected enrichment failure")
             self._apply_enrichment(
@@ -328,6 +384,7 @@ class AnalyzerPipeline:
                 VlmAttributes({}, 0.0, "qwen_unavailable"),
                 ["enrichment_failed"],
                 timings,
+                visual_embedding,
             )
         finally:
             with self._enrichment_lock:
@@ -340,6 +397,7 @@ class AnalyzerPipeline:
         vlm: VlmAttributes,
         warnings: list[str],
         timings: dict[str, int],
+        visual_embedding: np.ndarray | None = None,
     ) -> None:
         result = self.cache.get(image_hash)
         if result is None:
@@ -391,6 +449,27 @@ class AnalyzerPipeline:
         result.closure = self._field(
             vlm.values.get("closure"), vlm.confidence, vlm.model
         )
+        result.collar = self._field(
+            vlm.values.get("collar"), vlm.confidence, vlm.model
+        )
+        result.rise = self._field(vlm.values.get("rise"), vlm.confidence, vlm.model)
+        if visual_embedding is not None and result.normalized_category.value:
+            suggestions = self.visual_attributes.suggest(
+                visual_embedding,
+                result.normalized_category.value,
+            )
+            for suggestion in suggestions:
+                current = getattr(result, suggestion.key)
+                if current.value is None:
+                    setattr(
+                        result,
+                        suggestion.key,
+                        self._field(
+                            suggestion.value,
+                            suggestion.confidence,
+                            self.visual_attributes.version,
+                        ),
+                    )
         result.suggested_size = self._field(
             self._normalize_size(ocr.size),
             0.82 if ocr.size else 0.0,

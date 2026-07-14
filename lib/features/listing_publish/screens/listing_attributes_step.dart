@@ -20,7 +20,6 @@ class ListingAttributesStep extends StatefulWidget {
 
 class _ListingAttributesStepState extends State<ListingAttributesStep> {
   late final TextEditingController _defectsController;
-  late final TextEditingController _descriptionController;
 
   ListingPublishController get controller => widget.controller;
 
@@ -29,9 +28,6 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
     super.initState();
     _defectsController = TextEditingController(
       text: controller.draft.defectDescription,
-    );
-    _descriptionController = TextEditingController(
-      text: controller.draft.description,
     );
     controller.addListener(_handleControllerChanged);
   }
@@ -49,7 +45,6 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
   void dispose() {
     controller.removeListener(_handleControllerChanged);
     _defectsController.dispose();
-    _descriptionController.dispose();
     super.dispose();
   }
 
@@ -65,13 +60,6 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
       _defectsController.value = TextEditingValue(
         text: value,
         selection: TextSelection.collapsed(offset: value.length),
-      );
-    }
-    final description = controller.draft.description;
-    if (_descriptionController.text != description) {
-      _descriptionController.value = TextEditingValue(
-        text: description,
-        selection: TextSelection.collapsed(offset: description.length),
       );
     }
   }
@@ -278,7 +266,7 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Поля зависят от категории. В карточку попадут только значения, которые вы подтвердите или измените. Чтобы пропустить поле, выберите «Не указывать».',
+            'Проверьте предложения. Измените значение или выберите «Не указывать», чтобы пропустить. Нажимая «Продолжить», вы принимаете оставшиеся значения.',
             style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 12,
@@ -312,78 +300,6 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
                 onTap: () => _chooseAttribute(definition),
               ),
             ),
-          const SizedBox(height: 22),
-          const Divider(height: 1, color: _border),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Описание',
-                  style: TextStyle(
-                    fontFamily: AppTypography.fontFamily,
-                    fontSize: 15,
-                    fontWeight: AppTypography.semiBold,
-                  ),
-                ),
-              ),
-              if (_hasPendingSuggestion('description'))
-                const ListingAnalysisStatusBadge.needsReview(label: 'Черновик'),
-            ],
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Можно подтвердить предложенный черновик, изменить его или оставить описание пустым.',
-            style: TextStyle(
-              fontFamily: AppTypography.fontFamily,
-              fontSize: 12,
-              height: 1.35,
-              color: _secondaryText,
-            ),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            key: const ValueKey('detail_description'),
-            controller: _descriptionController,
-            minLines: 3,
-            maxLines: 7,
-            maxLength: 2000,
-            keyboardType: TextInputType.multiline,
-            textCapitalization: TextCapitalization.sentences,
-            onChanged: controller.setDescription,
-            decoration: InputDecoration(
-              hintText:
-                  'Описание появится в карточке только после подтверждения',
-              alignLabelWithHint: true,
-              counterText: '',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.black),
-              ),
-            ),
-          ),
-          if (_hasPendingSuggestion('description') &&
-              draft.description.trim().isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                FilledButton.tonal(
-                  key: const ValueKey('confirm_description'),
-                  onPressed: controller.confirmDescription,
-                  child: const Text('Подтвердить'),
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  key: const ValueKey('skip_description'),
-                  onPressed: controller.skipDescription,
-                  child: const Text('Пропустить'),
-                ),
-              ],
-            ),
-          ],
           const SizedBox(height: 18),
           const Text(
             'Замеры необязательны. Покупатель сможет запросить их в чате.',
@@ -421,22 +337,7 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
 
   Widget? _predictionStatus(String field) {
     if (!_hasPendingSuggestion(field)) return null;
-    return TextButton(
-      key: ValueKey('confirm_$field'),
-      style: TextButton.styleFrom(
-        foregroundColor: const Color(0xFF383644),
-        minimumSize: const Size(0, 30),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        textStyle: const TextStyle(
-          fontFamily: AppTypography.fontFamily,
-          fontSize: 11,
-          fontWeight: AppTypography.semiBold,
-        ),
-      ),
-      onPressed: () => controller.confirmSuggestion(field),
-      child: const Text('Подтвердить'),
-    );
+    return const ListingAnalysisStatusBadge.needsReview(label: 'Предложено');
   }
 
   bool _hasPendingSuggestion(String field) {

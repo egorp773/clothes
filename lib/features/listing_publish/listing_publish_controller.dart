@@ -319,6 +319,18 @@ class ListingPublishController extends ChangeNotifier {
     _markChanged();
   }
 
+  /// Continuing from the basics step accepts suggestions that were visible
+  /// there. Empty optional values remain skipped.
+  void confirmBasicDetails() {
+    final title = draft.title.trim();
+    if (title.isNotEmpty) _confirmPrediction('title', title);
+    final description = draft.description.trim();
+    if (description.isNotEmpty) {
+      _confirmPrediction('description', description);
+    }
+    _markChanged();
+  }
+
   void setSize(String value) {
     draft.size = value;
     _setManualPrediction('size', value);
@@ -491,9 +503,9 @@ class ListingPublishController extends ChangeNotifier {
     _markChanged();
   }
 
-  /// The characteristics screen confirms only mandatory values as a whole.
-  /// Optional ML proposals require an explicit tap/change and therefore stay
-  /// private when the seller simply continues.
+  /// Continuing from the review step accepts every non-empty suggestion that
+  /// is visible for the selected category. Clearing a field before continuing
+  /// keeps it skipped.
   void confirmRequiredDetails() {
     if (draft.normalizedCategory.isNotEmpty) {
       _confirmPrediction('normalized_category', draft.normalizedCategory);
@@ -501,12 +513,19 @@ class ListingPublishController extends ChangeNotifier {
     if (draft.primaryColor.isNotEmpty) {
       _confirmPrediction('primary_color', draft.primaryColor);
     }
+    if (draft.secondaryColors.isNotEmpty) {
+      _confirmPrediction('secondary_colors', draft.secondaryColors.join(','));
+    }
+    for (final definition in ListingCatalogs.attributesFor(
+      draft.normalizedCategory,
+    )) {
+      final value = _attributeValue(definition.id);
+      if (value.isNotEmpty) _confirmPrediction(definition.id, value);
+    }
     _markChanged();
   }
 
-  @Deprecated(
-    'Use confirmRequiredDetails; optional ML fields are not bulk-confirmed.',
-  )
+  @Deprecated('Use confirmRequiredDetails.')
   void confirmRelevantAttributes() => confirmRequiredDetails();
 
   void selectAddress(ListingAddress address) {
@@ -801,7 +820,19 @@ class ListingPublishController extends ChangeNotifier {
       );
     }
 
-    _recordPredictionOnly('suggested_title', result.suggestedTitle);
+    final suggestedTitle = result.suggestedTitle.value?.trim() ?? '';
+    if (!draft.titleWasEdited &&
+        draft.title.trim().isEmpty &&
+        result.suggestedTitle.confidence >= 0.45 &&
+        suggestedTitle.isNotEmpty) {
+      _mergePrediction(
+        'title',
+        result.suggestedTitle,
+        (value) => draft.title = value.trim(),
+      );
+    } else if (suggestedTitle.isNotEmpty) {
+      _recordPredictionOnly('title', result.suggestedTitle);
+    }
     final suggestedDescription =
         result.suggestedDescription.value?.trim() ?? '';
     if (!draft.descriptionWasEdited &&

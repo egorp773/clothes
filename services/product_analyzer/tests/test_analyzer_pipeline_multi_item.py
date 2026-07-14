@@ -43,18 +43,41 @@ class _Classification:
     def __init__(self) -> None:
         self.batch_calls = 0
         self.single_calls = 0
+        self.attribute_calls = 0
 
-    def classify_many(self, images):
+    def embed_and_classify_many(self, images):
         self.batch_calls += 1
         assert len(images) == 2
         return [
-            [_candidate("jeans", 0.82), _candidate("trousers", 0.11)],
-            [_candidate("shirt", 0.78), _candidate("tshirt", 0.12)],
+            SimpleNamespace(
+                embedding=np.array([1.0, 0.0], dtype=np.float32),
+                candidates=[
+                    _candidate("jeans", 0.82),
+                    _candidate("trousers", 0.11),
+                ],
+            ),
+            SimpleNamespace(
+                embedding=np.array([0.0, 1.0], dtype=np.float32),
+                candidates=[
+                    _candidate("shirt", 0.78),
+                    _candidate("tshirt", 0.12),
+                ],
+            ),
         ]
 
-    def classify(self, image):
+    def embed_and_classify(self, image):
         self.single_calls += 1
-        return [_candidate("jeans", 0.82)]
+        return SimpleNamespace(
+            embedding=np.array([1.0, 0.0], dtype=np.float32),
+            candidates=[_candidate("jeans", 0.82)],
+        )
+
+    def score_text_options(self, embedding, options, *, temperature=12.0):
+        self.attribute_calls += 1
+        return {
+            key: 0.72 if index == 0 else 0.04
+            for index, key in enumerate(options)
+        }
 
 
 class _Models:
@@ -121,4 +144,8 @@ def test_multi_item_pipeline_batches_classification_and_skips_sam():
     assert "multiple_items_detected:2" in result.warnings
     assert models.classification.batch_calls == 1
     assert models.classification.single_calls == 0
+    assert models.classification.attribute_calls == 4
     assert models.segmentation.calls == 0
+    assert result.material.value == "cotton"
+    assert result.material.source == "fashion_siglip_visual_attributes_v1"
+    assert result.enrichment_status == "completed"

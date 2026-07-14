@@ -495,12 +495,16 @@ async def enrich(
     if settings.require_analysis_auth:
         await _authenticated_user(authorization)
     image_hash = analysis_id
-    if not pipeline.get_cached(image_hash):
+    if pipeline.get_cached(image_hash) is None:
         context = await asyncio.to_thread(analysis_store.get_context, analysis_id)
         if context is None:
             raise HTTPException(404, "Run the main-image analysis before enrichment")
         image_hash, persisted = context
-        pipeline.restore_cached(image_hash, persisted)
+        # Durable analysis ids are UUIDs while the in-process cache is keyed
+        # by the main image hash. Do not replace a newer completed background
+        # result with the earlier persisted basic response.
+        if pipeline.get_cached(image_hash) is None:
+            pipeline.restore_cached(image_hash, persisted)
     images: list[Image.Image] = []
     for upload in files[: settings.max_images - 1]:
         if upload.content_type and not upload.content_type.startswith("image/"):

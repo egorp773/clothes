@@ -111,7 +111,7 @@ void main() {
       controller.dispose();
     });
 
-    test('continuing review confirms only mandatory category and color', () {
+    test('continuing review confirms visible relevant ML suggestions', () {
       final controller = _controller();
       controller.draft = ListingDraft.empty(sellerId: 'seller')
         ..normalizedCategory = 'hoodie';
@@ -129,8 +129,8 @@ void main() {
         controller.draft.predictions['primary_color']?.userConfirmed,
         isTrue,
       );
-      expect(controller.draft.predictions['material']?.userConfirmed, isFalse);
-      expect(controller.buildProduct(preview: true).material, isEmpty);
+      expect(controller.draft.predictions['material']?.userConfirmed, isTrue);
+      expect(controller.buildProduct(preview: true).material, 'cotton');
       controller.dispose();
     });
 
@@ -152,9 +152,13 @@ void main() {
       expect(product.secondaryColors, isEmpty);
       expect(product.description, isEmpty);
 
-      controller.confirmSuggestion('material');
-      controller.confirmSuggestion('secondary_colors');
-      controller.confirmDescription();
+      controller.confirmRequiredDetails();
+      product = controller.buildProduct(preview: true);
+      expect(product.material, 'cotton');
+      expect(product.secondaryColors, ['white']);
+      expect(product.description, isEmpty);
+
+      controller.confirmBasicDetails();
       product = controller.buildProduct(preview: true);
       expect(product.material, 'cotton');
       expect(product.secondaryColors, ['white']);
@@ -173,7 +177,7 @@ void main() {
       controller.dispose();
     });
 
-    test('analysis never fills mandatory seller fields', () {
+    test('analysis suggests title but does not overwrite seller input', () {
       final controller = _controller();
       controller.draft = ListingDraft.empty(sellerId: 'seller');
 
@@ -187,10 +191,16 @@ void main() {
         ),
       );
 
-      expect(controller.draft.title, isEmpty);
+      expect(controller.draft.title, 'Футболка Nike');
       expect(controller.draft.brand, isEmpty);
       expect(controller.draft.size, isEmpty);
       expect(controller.draft.gender, isEmpty);
+
+      controller.setTitle('Моя футболка');
+      controller.applyAnalysisResult(
+        _analysis(primaryColor: 'blue', suggestedTitle: 'Другое название'),
+      );
+      expect(controller.draft.title, 'Моя футболка');
       controller.dispose();
     });
 

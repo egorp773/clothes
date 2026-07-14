@@ -38,6 +38,12 @@ ATTRIBUTE_PROMPTS: dict[str, dict[str, tuple[str, ...]]] = {
         "business": ("business formal fashion",),
         "evening": ("evening occasion fashion",),
     },
+    "season": {
+        "summer": ("lightweight clothing for warm summer weather",),
+        "demi": ("clothing for mild spring or autumn weather",),
+        "winter": ("warm insulated clothing for cold winter weather",),
+        "all_season": ("versatile clothing suitable for every season",),
+    },
     "sleeve_length": {
         "sleeveless": ("sleeveless garment",),
         "short": ("short sleeve garment",),
