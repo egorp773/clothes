@@ -20,6 +20,7 @@ class ListingAttributesStep extends StatefulWidget {
 
 class _ListingAttributesStepState extends State<ListingAttributesStep> {
   late final TextEditingController _defectsController;
+  late final TextEditingController _descriptionController;
 
   ListingPublishController get controller => widget.controller;
 
@@ -28,6 +29,9 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
     super.initState();
     _defectsController = TextEditingController(
       text: controller.draft.defectDescription,
+    );
+    _descriptionController = TextEditingController(
+      text: controller.draft.description,
     );
     controller.addListener(_handleControllerChanged);
   }
@@ -45,6 +49,7 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
   void dispose() {
     controller.removeListener(_handleControllerChanged);
     _defectsController.dispose();
+    _descriptionController.dispose();
     super.dispose();
   }
 
@@ -56,11 +61,19 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
 
   void _syncDefects() {
     final value = controller.draft.defectDescription;
-    if (_defectsController.text == value) return;
-    _defectsController.value = TextEditingValue(
-      text: value,
-      selection: TextSelection.collapsed(offset: value.length),
-    );
+    if (_defectsController.text != value) {
+      _defectsController.value = TextEditingValue(
+        text: value,
+        selection: TextSelection.collapsed(offset: value.length),
+      );
+    }
+    final description = controller.draft.description;
+    if (_descriptionController.text != description) {
+      _descriptionController.value = TextEditingValue(
+        text: description,
+        selection: TextSelection.collapsed(offset: description.length),
+      );
+    }
   }
 
   @override
@@ -154,28 +167,76 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
             onTap: _chooseSecondaryColors,
           ),
           const SizedBox(height: 12),
-          SwitchListTile.adaptive(
-            contentPadding: EdgeInsets.zero,
-            title: const Text(
-              'Есть дефекты',
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 13,
-                fontWeight: AppTypography.semiBold,
-              ),
+          const Text.rich(
+            TextSpan(
+              text: 'Дефекты',
+              children: [
+                TextSpan(
+                  text: ' *',
+                  style: TextStyle(color: Color(0xFFE11D2E)),
+                ),
+              ],
             ),
-            subtitle: const Text(
-              'Пятна, повреждения или заметные следы носки',
-              style: TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 11.5,
-                color: _secondaryText,
-              ),
+            style: TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 13,
+              fontWeight: AppTypography.semiBold,
             ),
-            value: draft.hasDefects,
-            activeTrackColor: Colors.black,
-            onChanged: controller.setHasDefects,
           ),
+          const SizedBox(height: 5),
+          const Text(
+            'Подтвердите, есть ли пятна, повреждения или заметные следы носки.',
+            style: TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 11.5,
+              height: 1.35,
+              color: _secondaryText,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ChoiceChip(
+                key: const ValueKey('defects_none'),
+                label: const Text('Нет дефектов'),
+                selected: draft.defectsReviewed && !draft.hasDefects,
+                showCheckmark: false,
+                selectedColor: Colors.black,
+                labelStyle: TextStyle(
+                  color: draft.defectsReviewed && !draft.hasDefects
+                      ? Colors.white
+                      : Colors.black,
+                ),
+                onSelected: (_) => controller.setHasDefects(false),
+              ),
+              ChoiceChip(
+                key: const ValueKey('defects_yes'),
+                label: const Text('Есть дефекты'),
+                selected: draft.defectsReviewed && draft.hasDefects,
+                showCheckmark: false,
+                selectedColor: Colors.black,
+                labelStyle: TextStyle(
+                  color: draft.defectsReviewed && draft.hasDefects
+                      ? Colors.white
+                      : Colors.black,
+                ),
+                onSelected: (_) => controller.setHasDefects(true),
+              ),
+            ],
+          ),
+          if (!draft.defectsReviewed) ...[
+            const SizedBox(height: 7),
+            const Text(
+              'Выберите один вариант',
+              style: TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 11,
+                color: Color(0xFF706E82),
+              ),
+            ),
+          ],
           if (draft.hasDefects) ...[
             const SizedBox(height: 8),
             TextField(
@@ -217,7 +278,7 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
           ),
           const SizedBox(height: 6),
           const Text(
-            'Поля зависят от категории. Они необязательны, но все найденные значения попадут в карточку.',
+            'Поля зависят от категории. В карточку попадут только значения, которые вы подтвердите или измените. Чтобы пропустить поле, выберите «Не указывать».',
             style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 12,
@@ -251,6 +312,78 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
                 onTap: () => _chooseAttribute(definition),
               ),
             ),
+          const SizedBox(height: 22),
+          const Divider(height: 1, color: _border),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Описание',
+                  style: TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 15,
+                    fontWeight: AppTypography.semiBold,
+                  ),
+                ),
+              ),
+              if (_hasPendingSuggestion('description'))
+                const ListingAnalysisStatusBadge.needsReview(label: 'Черновик'),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Можно подтвердить предложенный черновик, изменить его или оставить описание пустым.',
+            style: TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 12,
+              height: 1.35,
+              color: _secondaryText,
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            key: const ValueKey('detail_description'),
+            controller: _descriptionController,
+            minLines: 3,
+            maxLines: 7,
+            maxLength: 2000,
+            keyboardType: TextInputType.multiline,
+            textCapitalization: TextCapitalization.sentences,
+            onChanged: controller.setDescription,
+            decoration: InputDecoration(
+              hintText:
+                  'Описание появится в карточке только после подтверждения',
+              alignLabelWithHint: true,
+              counterText: '',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: Colors.black),
+              ),
+            ),
+          ),
+          if (_hasPendingSuggestion('description') &&
+              draft.description.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                FilledButton.tonal(
+                  key: const ValueKey('confirm_description'),
+                  onPressed: controller.confirmDescription,
+                  child: const Text('Подтвердить'),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  key: const ValueKey('skip_description'),
+                  onPressed: controller.skipDescription,
+                  child: const Text('Пропустить'),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 18),
           const Text(
             'Замеры необязательны. Покупатель сможет запросить их в чате.',
@@ -287,10 +420,30 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
   };
 
   Widget? _predictionStatus(String field) {
+    if (!_hasPendingSuggestion(field)) return null;
+    return TextButton(
+      key: ValueKey('confirm_$field'),
+      style: TextButton.styleFrom(
+        foregroundColor: const Color(0xFF383644),
+        minimumSize: const Size(0, 30),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        textStyle: const TextStyle(
+          fontFamily: AppTypography.fontFamily,
+          fontSize: 11,
+          fontWeight: AppTypography.semiBold,
+        ),
+      ),
+      onPressed: () => controller.confirmSuggestion(field),
+      child: const Text('Подтвердить'),
+    );
+  }
+
+  bool _hasPendingSuggestion(String field) {
     final prediction = controller.predictionFor(field);
-    if (prediction?.predictedValue?.isEmpty ?? true) return null;
-    if (prediction!.wasEdited || prediction.userConfirmed) return null;
-    return const ListingAnalysisStatusBadge.needsReview(label: 'Предложено');
+    return prediction?.predictedValue?.isNotEmpty == true &&
+        prediction?.wasEdited != true &&
+        prediction?.userConfirmed != true;
   }
 
   Future<void> _chooseCore({
@@ -364,69 +517,72 @@ class _AttributeOptionsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final itemCount = options.length + (allowClear ? 1 : 0);
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.76,
-      ),
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontFamily: AppTypography.fontFamily,
-                fontSize: 16,
-                fontWeight: AppTypography.semiBold,
-              ),
+    return Material(
+      color: Colors.white,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.76,
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 16,
+                    fontWeight: AppTypography.semiBold,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: itemCount,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      if (allowClear && index == 0) {
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text(
+                            'Не указывать',
+                            style: TextStyle(color: Color(0xFF706E82)),
+                          ),
+                          trailing: selected.isEmpty
+                              ? const Icon(Icons.check_rounded, size: 20)
+                              : null,
+                          onTap: () => Navigator.pop(context, _clearValue),
+                        );
+                      }
+                      final option = options[index - (allowClear ? 1 : 0)];
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          option.name,
+                          style: const TextStyle(
+                            fontFamily: AppTypography.fontFamily,
+                            fontSize: 14,
+                            fontWeight: AppTypography.medium,
+                          ),
+                        ),
+                        trailing: option.id == selected
+                            ? const Icon(Icons.check_rounded, size: 20)
+                            : null,
+                        onTap: () => Navigator.pop(context, option.id),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: itemCount,
-                separatorBuilder: (_, _) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  if (allowClear && index == 0) {
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Не указывать',
-                        style: TextStyle(color: Color(0xFF706E82)),
-                      ),
-                      trailing: selected.isEmpty
-                          ? const Icon(Icons.check_rounded, size: 20)
-                          : null,
-                      onTap: () => Navigator.pop(context, _clearValue),
-                    );
-                  }
-                  final option = options[index - (allowClear ? 1 : 0)];
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(
-                      option.name,
-                      style: const TextStyle(
-                        fontFamily: AppTypography.fontFamily,
-                        fontSize: 14,
-                        fontWeight: AppTypography.medium,
-                      ),
-                    ),
-                    trailing: option.id == selected
-                        ? const Icon(Icons.check_rounded, size: 20)
-                        : null,
-                    onTap: () => Navigator.pop(context, option.id),
-                  );
-                },
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

@@ -289,17 +289,33 @@ class ListingPublishController extends ChangeNotifier {
   void setTitle(String value) {
     draft.title = value;
     draft.titleWasEdited = true;
+    _setManualPrediction('title', value);
     _markChanged();
   }
 
   void setPrice(String value) {
     draft.price = int.tryParse(value.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+    _setManualPrediction('price', draft.price > 0 ? '${draft.price}' : '');
     _markChanged();
   }
 
   void setDescription(String value) {
     draft.description = value;
     draft.descriptionWasEdited = true;
+    _setManualPrediction('description', value);
+    _markChanged();
+  }
+
+  void confirmDescription() {
+    final value = draft.description.trim();
+    if (value.isEmpty) return;
+    _confirmPrediction('description', value);
+    _markChanged();
+  }
+
+  void skipDescription() {
+    draft.description = '';
+    _confirmPrediction('description', '');
     _markChanged();
   }
 
@@ -426,37 +442,72 @@ class ListingPublishController extends ChangeNotifier {
 
   void setHasDefects(bool value) {
     draft.hasDefects = value;
+    draft.defectsReviewed = true;
     if (!value) draft.defectDescription = '';
+    _setManualPrediction('has_defects', value.toString());
     _markChanged();
+  }
+
+  void confirmSuggestion(String field) {
+    final value = switch (field) {
+      'secondary_colors' => draft.secondaryColors.join(','),
+      'description' => draft.description.trim(),
+      'normalized_category' => draft.normalizedCategory,
+      'primary_color' => draft.primaryColor,
+      _ => _attributeValue(field),
+    };
+    if (value.isEmpty) return;
+    _confirmPrediction(field, value);
+    _markChanged();
+  }
+
+  void skipSuggestion(String field) {
+    switch (field) {
+      case 'secondary_colors':
+        setSecondaryColors(const []);
+        return;
+      case 'description':
+        skipDescription();
+        return;
+      case 'material':
+      case 'pattern':
+      case 'season':
+      case 'style':
+      case 'fit':
+      case 'sleeve_length':
+      case 'closure':
+      case 'collar':
+      case 'rise':
+        setAttribute(field, '');
+        return;
+      default:
+        return;
+    }
   }
 
   void setDefectDescription(String value) {
     draft.defectDescription = value;
+    _setManualPrediction('defects_description', value);
     _markChanged();
   }
 
-  void confirmRelevantAttributes() {
-    for (final definition in ListingCatalogs.attributesFor(
-      draft.normalizedCategory,
-    )) {
-      final value = _attributeValue(definition.id);
-      if (value.isEmpty) continue;
-      final prediction = draft.predictions.putIfAbsent(
-        definition.id,
-        () => ListingFieldPrediction(
-          fieldName: definition.id,
-          confirmedValue: value,
-          source: 'user',
-          userConfirmed: true,
-        ),
-      );
-      prediction
-        ..confirmedValue = value
-        ..userConfirmed = true
-        ..updatedAt = DateTime.now().toUtc();
+  /// The characteristics screen confirms only mandatory values as a whole.
+  /// Optional ML proposals require an explicit tap/change and therefore stay
+  /// private when the seller simply continues.
+  void confirmRequiredDetails() {
+    if (draft.normalizedCategory.isNotEmpty) {
+      _confirmPrediction('normalized_category', draft.normalizedCategory);
+    }
+    if (draft.primaryColor.isNotEmpty) {
+      _confirmPrediction('primary_color', draft.primaryColor);
     }
     _markChanged();
   }
+
+  @Deprecated(
+    'Use confirmRequiredDetails; optional ML fields are not bulk-confirmed.',
+  )
+  void confirmRelevantAttributes() => confirmRequiredDetails();
 
   void selectAddress(ListingAddress address) {
     draft.shippingAddressId = address.id;
@@ -678,17 +729,15 @@ class ListingPublishController extends ChangeNotifier {
     } else {
       _recordPredictionOnly('item_type', result.itemType);
     }
-    _mergePrediction('gender', result.gender, (value) => draft.gender = value);
+    // These are mandatory seller fields. Analysis may retain a private hint,
+    // but it must never satisfy the form on the seller's behalf.
+    _recordPredictionOnly('gender', result.gender);
     _mergePrediction(
       'primary_color',
       result.primaryColor,
       (value) => draft.primaryColor = value,
     );
-    if (result.brand.value == 'other_brand') {
-      _recordPredictionOnly('brand', result.brand);
-    } else {
-      _mergePrediction('brand', result.brand, (value) => draft.brand = value);
-    }
+    _recordPredictionOnly('brand', result.brand);
     _mergePrediction(
       'material',
       result.material,
@@ -752,27 +801,21 @@ class ListingPublishController extends ChangeNotifier {
       );
     }
 
-    final suggestedTitle = result.suggestedTitle.value?.trim() ?? '';
-    if (!draft.titleWasEdited &&
-        draft.title.trim().isEmpty &&
-        result.suggestedTitle.confidence >= 0.45 &&
-        suggestedTitle.isNotEmpty) {
-      draft.title = suggestedTitle;
-    }
+    _recordPredictionOnly('suggested_title', result.suggestedTitle);
     final suggestedDescription =
         result.suggestedDescription.value?.trim() ?? '';
     if (!draft.descriptionWasEdited &&
-        draft.description.trim().isEmpty &&
         result.suggestedDescription.confidence >= 0.45 &&
         suggestedDescription.isNotEmpty) {
-      draft.description = suggestedDescription;
+      _mergePrediction(
+        'description',
+        result.suggestedDescription,
+        (value) => draft.description = value.trim(),
+      );
+    } else if (suggestedDescription.isNotEmpty) {
+      _recordPredictionOnly('description', result.suggestedDescription);
     }
-    final suggestedSize = result.suggestedSize.value?.trim() ?? '';
-    if (draft.size.isEmpty &&
-        result.suggestedSize.confidence >= 0.65 &&
-        suggestedSize.isNotEmpty) {
-      draft.size = suggestedSize;
-    }
+    _recordPredictionOnly('suggested_size', result.suggestedSize);
   }
 
   @visibleForTesting
@@ -840,6 +883,17 @@ class ListingPublishController extends ChangeNotifier {
       ..updatedAt = DateTime.now().toUtc();
   }
 
+  void _confirmPrediction(String field, String value) {
+    final prediction = draft.predictions.putIfAbsent(
+      field,
+      () => ListingFieldPrediction(fieldName: field, source: 'user'),
+    );
+    prediction
+      ..confirmedValue = value
+      ..userConfirmed = true
+      ..updatedAt = DateTime.now().toUtc();
+  }
+
   void _syncPhotoOrder() {
     for (var index = 0; index < draft.photos.length; index++) {
       draft.photos[index]
@@ -849,6 +903,25 @@ class ListingPublishController extends ChangeNotifier {
   }
 
   void _normalizeRecoveredDraft() {
+    if (draft.titleWasEdited && !draft.predictions.containsKey('title')) {
+      _setManualPrediction('title', draft.title);
+    }
+    if (draft.descriptionWasEdited &&
+        !draft.predictions.containsKey('description')) {
+      _setManualPrediction('description', draft.description);
+    }
+    if (draft.secondaryColors.isNotEmpty &&
+        !draft.predictions.containsKey('secondary_colors')) {
+      _setManualPrediction('secondary_colors', draft.secondaryColors.join(','));
+    }
+    if (draft.primaryColor.isNotEmpty &&
+        !draft.predictions.containsKey('primary_color')) {
+      _setManualPrediction('primary_color', draft.primaryColor);
+    }
+    if (draft.normalizedCategory.isNotEmpty &&
+        !draft.predictions.containsKey('normalized_category')) {
+      _setManualPrediction('normalized_category', draft.normalizedCategory);
+    }
     final normalized = ListingCatalogs.normalizeCategory(
       draft.normalizedCategory.isNotEmpty
           ? draft.normalizedCategory
@@ -859,7 +932,12 @@ class ListingPublishController extends ChangeNotifier {
     _applyLegacyCategory(normalized);
     for (final definition in ListingCatalogs.attributesFor(normalized)) {
       final value = _attributeValue(definition.id);
-      if (value.isNotEmpty) draft.categoryAttributes[definition.id] = value;
+      if (value.isNotEmpty) {
+        draft.categoryAttributes[definition.id] = value;
+        if (!draft.predictions.containsKey(definition.id)) {
+          _setManualPrediction(definition.id, value);
+        }
+      }
     }
   }
 
@@ -939,11 +1017,13 @@ class ListingPublishController extends ChangeNotifier {
               ? mainPhoto!.remoteUrl
               : (urls.firstOrNull ?? ''));
     final colorName = ListingCatalogs.nameOf(draft.primaryColor);
+    final confirmedAttributes = draft.confirmedCategoryAttributes;
+    final confirmedSecondaryColors = draft.confirmedSecondaryColors;
     return Product(
       id: draft.id,
       title: draft.title.trim(),
       detailTitle: draft.title.trim(),
-      description: draft.description.trim(),
+      description: draft.confirmedDescription,
       price: '${_formatPrice(draft.price)} ₽',
       detailPrice: draft.price.toString(),
       priceValue: draft.price,
@@ -971,14 +1051,14 @@ class ListingPublishController extends ChangeNotifier {
       subcategory: draft.subcategory,
       itemType: draft.itemType,
       gender: draft.gender,
-      secondaryColors: List.unmodifiable(draft.secondaryColors),
-      material: draft.material,
-      pattern: draft.pattern,
-      season: draft.season,
-      style: draft.style,
-      fit: draft.fit,
-      sleeveLength: draft.sleeveLength,
-      closure: draft.closure,
+      secondaryColors: confirmedSecondaryColors,
+      material: draft.confirmedValue('material', draft.material),
+      pattern: draft.confirmedValue('pattern', draft.pattern),
+      season: draft.confirmedValue('season', draft.season),
+      style: draft.confirmedValue('style', draft.style),
+      fit: draft.confirmedValue('fit', draft.fit),
+      sleeveLength: draft.confirmedValue('sleeve_length', draft.sleeveLength),
+      closure: draft.confirmedValue('closure', draft.closure),
       shippingAddressId: draft.shippingAddressId,
       shippingAddress: draft.shippingAddress,
       deliveryMethods: List.unmodifiable(draft.deliveryMethods),
@@ -988,9 +1068,11 @@ class ListingPublishController extends ChangeNotifier {
       normalizedCategory: draft.normalizedCategory,
       normalizedBrand: draft.brand,
       audience: draft.gender,
-      hasDefects: draft.hasDefects,
-      defectsDescription: draft.defectDescription.trim(),
-      categoryAttributes: Map.unmodifiable(draft.categoryAttributes),
+      hasDefects: draft.defectsReviewed && draft.hasDefects,
+      defectsDescription: draft.defectsReviewed && draft.hasDefects
+          ? draft.defectDescription.trim()
+          : '',
+      categoryAttributes: confirmedAttributes,
       enrichmentStatus: draft.analysisStatus == ListingAnalysisStatus.completed
           ? 'pending'
           : 'enrichment_pending',

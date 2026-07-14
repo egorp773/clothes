@@ -39,7 +39,7 @@ void main() {
 
     expect(find.text('Название *', findRichText: true), findsOneWidget);
     expect(find.text('Цена *', findRichText: true), findsOneWidget);
-    expect(find.text('Описание (необязательно)'), findsOneWidget);
+    expect(find.text('Описание (необязательно)'), findsNothing);
     expect(find.byKey(const ValueKey('basic_brand')), findsOneWidget);
     expect(find.byKey(const ValueKey('basic_size')), findsOneWidget);
     expect(find.byKey(const ValueKey('basic_condition')), findsOneWidget);
@@ -150,6 +150,7 @@ void main() {
       });
     controller.draft
       ..hasDefects = true
+      ..defectsReviewed = true
       ..defectDescription = 'Небольшая царапина у кармана'
       ..city = 'Москва';
     controller.draft.photos.add(ListingPhoto(id: 'photo', localPath: ''));
@@ -224,8 +225,15 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Есть дефекты'), findsOneWidget);
+    expect(find.byKey(const ValueKey('defects_none')), findsOneWidget);
+    expect(find.byKey(const ValueKey('defects_yes')), findsOneWidget);
     expect(find.text('Материал'), findsOneWidget);
     expect(find.text('Рисунок'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Крой'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Крой'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Тип застёжки'),
@@ -236,6 +244,67 @@ void main() {
     expect(find.text('Длина рукава'), findsNothing);
     expect(find.text('Посадка'), findsNothing);
     expect(find.text('Пол'), findsNothing);
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('detail_description')),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.byKey(const ValueKey('detail_description')), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+
+  testWidgets('seller can confirm or skip one ML suggestion explicitly', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final controller = ListingPublishController(
+      repository: ListingPublishRepository(
+        sellerName: 'Seller',
+        sellerHandle: '@seller',
+        fallbackCity: 'Москва',
+      ),
+      analyzer: _UnusedAnalyzer(),
+      sellerName: 'Seller',
+      sellerHandle: '@seller',
+    );
+    await controller.initialize();
+    controller.draft
+      ..normalizedCategory = 'hoodie'
+      ..material = 'cotton'
+      ..categoryAttributes['material'] = 'cotton'
+      ..predictions['material'] = ListingFieldPrediction(
+        fieldName: 'material',
+        predictedValue: 'cotton',
+        confidence: 0.8,
+        source: 'visual',
+      );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: ListingAttributesStep(controller: controller)),
+      ),
+    );
+
+    final confirm = find.byKey(const ValueKey('confirm_material'));
+    await tester.scrollUntilVisible(
+      confirm,
+      220,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(confirm);
+    await tester.pumpAndSettle();
+    expect(controller.draft.predictions['material']?.userConfirmed, isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('attribute_material')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Не указывать'));
+    await tester.pumpAndSettle();
+    expect(controller.draft.material, isEmpty);
+    expect(controller.buildProduct(preview: true).material, isEmpty);
+    expect(controller.draft.predictions['material']?.predictedValue, 'cotton');
 
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();

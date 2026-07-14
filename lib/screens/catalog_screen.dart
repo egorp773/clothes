@@ -307,7 +307,7 @@ class _CatalogScreenState extends State<CatalogScreen>
 
   double _promoBannerHeight(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
-    return (screenWidth * 1.32).clamp(500.0, 540.0).toDouble();
+    return (screenWidth * 1.40).clamp(525.0, 570.0).toDouble();
   }
 
   @override

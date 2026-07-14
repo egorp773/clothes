@@ -22,7 +22,6 @@ class ListingBasicsStep extends StatefulWidget {
 class _ListingBasicsStepState extends State<ListingBasicsStep> {
   late final TextEditingController _titleController;
   late final TextEditingController _priceController;
-  late final TextEditingController _descriptionController;
   String? _syncedDraftId;
 
   @override
@@ -30,7 +29,6 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     super.initState();
     _titleController = TextEditingController();
     _priceController = TextEditingController();
-    _descriptionController = TextEditingController();
     _syncTextFromFlow();
     widget.controller.addListener(_handleFlowChanged);
   }
@@ -50,7 +48,6 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     widget.controller.removeListener(_handleFlowChanged);
     _titleController.dispose();
     _priceController.dispose();
-    _descriptionController.dispose();
     super.dispose();
   }
 
@@ -66,11 +63,8 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     final isNewDraft = _syncedDraftId != draft.id;
     _syncedDraftId = draft.id;
 
-    // Title and description can receive late analysis suggestions. The flow
-    // only applies them while the corresponding `wasEdited` flag is false, so
-    // syncing here never replaces text entered by the user.
+    // A recovered draft can already contain a seller-entered title.
     _applyExternalText(_titleController, draft.title);
-    _applyExternalText(_descriptionController, draft.description);
     // Price has no analysis suggestion. Sync it only when opening/replacing a
     // draft, otherwise a temporarily entered zero would be erased mid-edit.
     if (isNewDraft) {
@@ -173,24 +167,6 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
                 hintText: 'Введите цену',
                 suffixText: '₽',
                 errorText: priceIsInvalid ? 'Цена должна быть больше 0' : null,
-              ),
-            ),
-            const SizedBox(height: 22),
-            _FieldLabel(label: 'Описание (необязательно)'),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _descriptionController,
-              minLines: 4,
-              maxLines: 7,
-              keyboardType: TextInputType.multiline,
-              textCapitalization: TextCapitalization.sentences,
-              inputFormatters: [LengthLimitingTextInputFormatter(2000)],
-              onChanged: widget.controller.setDescription,
-              style: _inputStyle.copyWith(height: 1.35),
-              decoration: _inputDecoration(
-                hintText: 'Расскажите о вещи, посадке и особенностях',
-                alignLabelWithHint: true,
-                suffixText: '${_descriptionController.text.length}/2000',
               ),
             ),
             const SizedBox(height: 20),

@@ -464,7 +464,9 @@ class ListingPublishRepository {
         ? ListingStatus.published.value
         : ListingStatus.draft.value,
     'title': draft.title.trim(),
-    'description': draft.description.trim(),
+    // Public product columns are a seller-confirmed projection. Pending ML
+    // proposals remain exclusively in `listing_analysis`.
+    'description': draft.confirmedDescription,
     'price': draft.price,
     'size': draft.size,
     'condition': draft.condition,
@@ -476,19 +478,22 @@ class ListingPublishRepository {
     'gender': draft.gender,
     'audience': draft.gender,
     'primary_color': draft.primaryColor,
-    'secondary_colors': draft.secondaryColors,
+    'secondary_colors': draft.confirmedSecondaryColors,
     'color': draft.primaryColor,
     'brand': draft.brand,
     'normalized_brand': draft.brand,
-    'material': draft.material,
-    'pattern': draft.pattern,
-    'season': draft.season,
-    'style': draft.style,
-    'fit': draft.fit,
-    'sleeve_length': draft.sleeveLength,
-    'closure': draft.closure,
-    'has_defects': draft.hasDefects,
-    'defects_description': draft.defectDescription.trim(),
+    'material': draft.confirmedValue('material', draft.material),
+    'pattern': draft.confirmedValue('pattern', draft.pattern),
+    'season': draft.confirmedValue('season', draft.season),
+    'style': draft.confirmedValue('style', draft.style),
+    'fit': draft.confirmedValue('fit', draft.fit),
+    'sleeve_length': draft.confirmedValue('sleeve_length', draft.sleeveLength),
+    'closure': draft.confirmedValue('closure', draft.closure),
+    'has_defects': draft.defectsReviewed && draft.hasDefects,
+    'defects_reviewed': draft.defectsReviewed,
+    'defects_description': draft.defectsReviewed && draft.hasDefects
+        ? draft.defectDescription.trim()
+        : '',
     'city': draft.city,
     'location': draft.city,
     'shipping_address_id': draft.shippingAddressId.isEmpty

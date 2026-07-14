@@ -59,6 +59,7 @@ void main() {
       expect(restored.predictions['primary_color']?.wasEdited, isTrue);
       expect(restored.normalizedCategory, 'hoodie');
       expect(restored.hasDefects, isTrue);
+      expect(restored.defectsReviewed, isTrue);
       expect(restored.defectDescription, 'Небольшая затяжка на рукаве');
       expect(restored.validateForPublish(), isNull);
     });
@@ -100,13 +101,96 @@ void main() {
           source: 'visual',
         );
 
-      controller.confirmRelevantAttributes();
+      controller.confirmSuggestion('material');
       controller.applyAnalysisResult(
         _analysis(primaryColor: 'blue', material: 'polyester'),
       );
 
       expect(controller.draft.material, 'cotton');
       expect(controller.draft.predictions['material']?.userConfirmed, isTrue);
+      controller.dispose();
+    });
+
+    test('continuing review confirms only mandatory category and color', () {
+      final controller = _controller();
+      controller.draft = ListingDraft.empty(sellerId: 'seller')
+        ..normalizedCategory = 'hoodie';
+      controller.applyAnalysisResult(
+        _analysis(primaryColor: 'black', material: 'cotton'),
+      );
+
+      controller.confirmRequiredDetails();
+
+      expect(
+        controller.draft.predictions['normalized_category']?.userConfirmed,
+        isTrue,
+      );
+      expect(
+        controller.draft.predictions['primary_color']?.userConfirmed,
+        isTrue,
+      );
+      expect(controller.draft.predictions['material']?.userConfirmed, isFalse);
+      expect(controller.buildProduct(preview: true).material, isEmpty);
+      controller.dispose();
+    });
+
+    test('buyer projection contains only explicitly reviewed ML values', () {
+      final controller = _controller();
+      controller.draft = ListingDraft.empty(sellerId: 'seller')
+        ..normalizedCategory = 'hoodie';
+      controller.applyAnalysisResult(
+        _analysis(
+          primaryColor: 'black',
+          material: 'cotton',
+          secondaryColors: const ['white'],
+          description: 'Черновик описания',
+        ),
+      );
+
+      var product = controller.buildProduct(preview: true);
+      expect(product.material, isEmpty);
+      expect(product.secondaryColors, isEmpty);
+      expect(product.description, isEmpty);
+
+      controller.confirmSuggestion('material');
+      controller.confirmSuggestion('secondary_colors');
+      controller.confirmDescription();
+      product = controller.buildProduct(preview: true);
+      expect(product.material, 'cotton');
+      expect(product.secondaryColors, ['white']);
+      expect(product.description, 'Черновик описания');
+
+      controller.skipSuggestion('material');
+      controller.applyAnalysisResult(
+        _analysis(primaryColor: 'blue', material: 'polyester'),
+      );
+      product = controller.buildProduct(preview: true);
+      expect(product.material, isEmpty);
+      expect(
+        controller.draft.predictions['material']?.predictedValue,
+        'polyester',
+      );
+      controller.dispose();
+    });
+
+    test('analysis never fills mandatory seller fields', () {
+      final controller = _controller();
+      controller.draft = ListingDraft.empty(sellerId: 'seller');
+
+      controller.applyAnalysisResult(
+        _analysis(
+          primaryColor: 'black',
+          brand: 'nike',
+          gender: 'male',
+          suggestedSize: 'm',
+          suggestedTitle: 'Футболка Nike',
+        ),
+      );
+
+      expect(controller.draft.title, isEmpty);
+      expect(controller.draft.brand, isEmpty);
+      expect(controller.draft.size, isEmpty);
+      expect(controller.draft.gender, isEmpty);
       controller.dispose();
     });
 
@@ -139,6 +223,23 @@ void main() {
 
       expect(controller.draft.gender, 'female');
       expect(controller.draft.section, 'women');
+      controller.dispose();
+    });
+
+    test('defect disclosure requires an explicit seller choice', () {
+      final draft = _validDraft()
+        ..defectsReviewed = false
+        ..hasDefects = false
+        ..defectDescription = '';
+      expect(draft.validateAttributes(), contains('есть ли'));
+
+      final controller = _controller()..draft = draft;
+      controller.setHasDefects(false);
+      expect(draft.validateAttributes(), isNull);
+      controller.setHasDefects(true);
+      expect(draft.validateAttributes(), contains('Опишите'));
+      controller.setDefectDescription('Пятно на рукаве');
+      expect(draft.validateAttributes(), isNull);
       controller.dispose();
     });
 
@@ -187,6 +288,7 @@ ListingDraft _validDraft() {
     ..primaryColor = 'black'
     ..brand = 'no_brand'
     ..hasDefects = true
+    ..defectsReviewed = true
     ..defectDescription = 'Небольшая затяжка на рукаве'
     ..city = 'Москва'
     ..shippingAddress = 'Тверская, 1';
@@ -207,6 +309,12 @@ ListingDraft _validDraft() {
 ProductAnalysisResult _analysis({
   required String primaryColor,
   String? material,
+  List<String> secondaryColors = const [],
+  String? description,
+  String? brand,
+  String? gender,
+  String? suggestedSize,
+  String? suggestedTitle,
 }) {
   const empty = AnalyzedField<String>(
     value: null,
@@ -218,14 +326,30 @@ ProductAnalysisResult _analysis({
     category: empty,
     subcategory: empty,
     itemType: empty,
-    gender: empty,
+    gender: AnalyzedField<String>(
+      value: gender,
+      confidence: gender == null ? 0 : 0.9,
+      source: 'test',
+    ),
     primaryColor: AnalyzedField<String>(
       value: primaryColor,
       confidence: 0.9,
       source: 'test',
     ),
-    secondaryColors: const [],
-    brand: empty,
+    secondaryColors: secondaryColors
+        .map(
+          (value) => AnalyzedField<String>(
+            value: value,
+            confidence: 0.9,
+            source: 'test',
+          ),
+        )
+        .toList(),
+    brand: AnalyzedField<String>(
+      value: brand,
+      confidence: brand == null ? 0 : 0.9,
+      source: 'test',
+    ),
     material: AnalyzedField<String>(
       value: material,
       confidence: material == null ? 0 : 0.9,
@@ -234,8 +358,21 @@ ProductAnalysisResult _analysis({
     pattern: empty,
     season: empty,
     style: empty,
-    suggestedTitle: empty,
-    suggestedDescription: empty,
+    suggestedTitle: AnalyzedField<String>(
+      value: suggestedTitle,
+      confidence: suggestedTitle == null ? 0 : 0.9,
+      source: 'test',
+    ),
+    suggestedDescription: AnalyzedField<String>(
+      value: description,
+      confidence: description == null ? 0 : 0.9,
+      source: 'test',
+    ),
+    suggestedSize: AnalyzedField<String>(
+      value: suggestedSize,
+      confidence: suggestedSize == null ? 0 : 0.9,
+      source: 'test',
+    ),
   );
 }
 

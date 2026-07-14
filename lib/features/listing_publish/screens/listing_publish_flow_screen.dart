@@ -214,7 +214,7 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
       case ListingPublishStep.attributes:
         final error = draft.validateAttributes();
         if (error != null) return _showValidation(error);
-        _controller.confirmRelevantAttributes();
+        _controller.confirmRequiredDetails();
         _controller.goToStep(ListingPublishStep.delivery);
       case ListingPublishStep.delivery:
         final error = draft.validateDelivery();

@@ -243,6 +243,7 @@ class ListingDraft {
   String rise = '';
   final Map<String, String> categoryAttributes = {};
   bool hasDefects = false;
+  bool defectsReviewed = false;
   String defectDescription = '';
 
   String city = '';
@@ -287,6 +288,36 @@ class ListingDraft {
       ? normalizedCategory
       : (itemType.isNotEmpty ? itemType : category);
 
+  /// Values produced by analysis remain private until the seller explicitly
+  /// confirms or changes them. A missing prediction is treated as a legacy
+  /// manual value so recoverable drafts created before this boundary keep
+  /// working.
+  bool isSellerConfirmed(String field) {
+    final prediction = predictions[field];
+    return prediction == null ||
+        prediction.userConfirmed ||
+        prediction.wasEdited ||
+        prediction.source == 'manual' ||
+        prediction.source == 'user';
+  }
+
+  String confirmedValue(String field, String value) =>
+      isSellerConfirmed(field) ? value : '';
+
+  String get confirmedDescription =>
+      confirmedValue('description', description).trim();
+
+  List<String> get confirmedSecondaryColors =>
+      isSellerConfirmed('secondary_colors')
+      ? List<String>.unmodifiable(secondaryColors)
+      : const <String>[];
+
+  Map<String, String> get confirmedCategoryAttributes => Map.unmodifiable({
+    for (final entry in categoryAttributes.entries)
+      if (entry.value.isNotEmpty && isSellerConfirmed(entry.key))
+        entry.key: entry.value,
+  });
+
   String? validateBasics() {
     if (title.trim().isEmpty) return 'Введите название';
     if (title.trim().length > 80) {
@@ -308,6 +339,7 @@ class ListingDraft {
   String? validateAttributes() {
     if (normalizedCategory.isEmpty) return 'Выберите категорию вещи';
     if (primaryColor.isEmpty) return 'Выберите основной цвет';
+    if (!defectsReviewed) return 'Укажите, есть ли у вещи дефекты';
     if (hasDefects && defectDescription.trim().isEmpty) {
       return 'Опишите дефекты вещи';
     }
@@ -366,6 +398,7 @@ class ListingDraft {
     'rise': rise,
     'category_attributes': categoryAttributes,
     'has_defects': hasDefects,
+    'defects_reviewed': defectsReviewed,
     'defect_description': defectDescription,
     'city': city,
     'shipping_address_id': shippingAddressId,
@@ -446,6 +479,11 @@ class ListingDraft {
       }
     }
     draft.hasDefects = json['has_defects'] as bool? ?? false;
+    draft.defectsReviewed =
+        json['defects_reviewed'] as bool? ??
+        // Existing local drafts with a disclosed defect already represent an
+        // explicit seller decision. A default `false` must stay unreviewed.
+        draft.hasDefects;
     draft.defectDescription = json['defect_description'] as String? ?? '';
     draft.city = json['city'] as String? ?? '';
     draft.shippingAddressId = json['shipping_address_id'] as String? ?? '';
