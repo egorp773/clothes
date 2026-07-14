@@ -197,7 +197,10 @@ class ListingPublishController extends ChangeNotifier {
       }
     }
     if (wasEmpty && draft.photos.isNotEmpty) {
-      unawaited(repository.ensureRemoteDraft(draft));
+      // The analyzer persists its status against the listing id. Ensure the
+      // additive draft row exists before starting analysis, otherwise a fast
+      // analyzer request can race the product upsert and lose durable status.
+      await repository.ensureRemoteDraft(draft);
       _startAnalysis();
     } else if (draft.photos.length > initialPhotoCount) {
       _requestAnalysisRestart();

@@ -14,7 +14,10 @@ class RemoteProductImageAnalyzer implements ProductImageAnalyzer {
     String? baseUrl,
     http.Client? client,
     String? Function()? accessTokenProvider,
-    this.timeout = const Duration(seconds: 20),
+    // Production intentionally has a single inference slot. A publication
+    // request can briefly wait behind one durable enrichment job, so the
+    // client timeout must exceed the server queue + inference budgets.
+    this.timeout = const Duration(seconds: 75),
   }) : baseUrl = (baseUrl ?? AppConfig.productAnalyzerUrl).replaceAll(
          RegExp(r'/$'),
          '',

@@ -92,7 +92,11 @@ class Settings(BaseSettings):
     rerank_quality_weight: float = 0.025
     rerank_freshness_weight: float = 0.025
     rerank_popularity_weight: float = 0.02
-    cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+    # Character classes avoid double-escaping when this value is transported
+    # through Docker Compose, .env files, or remote deployment APIs.
+    cors_origin_regex: str = (
+        r"^https?://(localhost|127[.]0[.]0[.]1)(:[0-9]+)?$|^https://.+$"
+    )
 
     model_root: Path = SERVICE_ROOT / "models"
     grounded_sam_repo: Path = SERVICE_ROOT / "vendor" / "Grounded-SAM-2"

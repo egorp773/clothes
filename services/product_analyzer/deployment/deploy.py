@@ -315,7 +315,7 @@ def main() -> None:
         "REQUIRE_ANALYSIS_AUTH": "true",
         "INFERENCE_MAX_CONCURRENCY": "1",
         "INFERENCE_QUEUE_SIZE": "4",
-        "CORS_ORIGIN_REGEX": r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^https://.+$",
+        "CORS_ORIGIN_REGEX": r"^https?://(localhost|127[.]0[.]0[.]1)(:[0-9]+)?$|^https://.+$",
     }
     for key, value in variables.items():
         api.add_space_variable(repo_id, key, value)
