@@ -44,38 +44,63 @@ class SupabaseAnalysisStore:
         listing_id: str,
         image_hash: str,
         main_image_url: str | None,
-    ) -> bool:
+    ) -> str | None:
         if not self.enabled:
-            return False
+            return None
         payload = {
             "id": job_id,
             "listing_id": listing_id,
             "image_hash": image_hash,
             "main_image_url": main_image_url,
             "status": "processing",
+            "basic_result": None,
+            "enrichment_result": None,
+            "timings_ms": {},
+            "error": None,
+            "attempt_count": 0,
+            "lease_until": None,
+            "completed_at": None,
         }
         return self._upsert(payload)
 
     def save_basic(self, job_id: str, result: AnalysisResponse) -> None:
         if not self.enabled:
             return
-        self._patch(
-            {"id": f"eq.{job_id}"},
-            {
-                "basic_result": result.model_dump(mode="json"),
-                "timings_ms": result.timings_ms,
-            },
-        )
+        payload: dict[str, Any] = {
+            "basic_result": result.model_dump(mode="json"),
+            "timings_ms": result.timings_ms,
+        }
+        # A completed content-hash cache hit has no background task to update
+        # the freshly reset durable row, so persist its terminal state here.
+        if result.enrichment_status == "completed":
+            payload.update(
+                {
+                    "status": "completed",
+                    "enrichment_result": result.model_dump(mode="json"),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        self._patch({"id": f"eq.{job_id}"}, payload)
 
     def save_result(self, result: AnalysisResponse) -> None:
         if not self.enabled or not result.analysis_id:
             return
-        status = "completed" if result.enrichment_status == "completed" else "failed" if result.enrichment_status == "failed" else "processing"
+        status = (
+            "completed"
+            if result.enrichment_status == "completed"
+            else "failed"
+            if result.enrichment_status == "failed"
+            else "processing"
+        )
         payload: dict[str, Any] = {
             "status": status,
             "enrichment_result": result.model_dump(mode="json"),
             "timings_ms": result.timings_ms,
-            "completed_at": datetime.now(timezone.utc).isoformat() if status == "completed" else None,
+            "completed_at": (
+                datetime.now(timezone.utc).isoformat()
+                if status == "completed"
+                else None
+            ),
         }
         # Pipeline cache keys are content hashes. Persist the enrichment into
         # every listing job that references this image, including jobs created
@@ -91,14 +116,14 @@ class SupabaseAnalysisStore:
             return None
         try:
             response = self._request(
-                    "GET",
-                    f"{self._url}/rest/v1/listing_analysis_jobs",
-                    params={
-                        "id": f"eq.{analysis_id}",
-                        "select": "id,image_hash,status,basic_result,enrichment_result",
-                    },
-                    headers=self._headers,
-                )
+                "GET",
+                f"{self._url}/rest/v1/listing_analysis_jobs",
+                params={
+                    "id": f"eq.{analysis_id}",
+                    "select": "id,image_hash,status,basic_result,enrichment_result",
+                },
+                headers=self._headers,
+            )
             rows = response.json()
             if not rows:
                 return None
@@ -114,29 +139,33 @@ class SupabaseAnalysisStore:
             LOGGER.exception("Unable to load analysis result %s", analysis_id)
             return None
 
-    def _upsert(self, payload: dict[str, Any]) -> bool:
+    def _upsert(self, payload: dict[str, Any]) -> str | None:
         try:
-            self._request(
-                    "POST",
-                    f"{self._url}/rest/v1/listing_analysis_jobs",
-                    params={"on_conflict": "id"},
-                    headers={**self._headers, "Prefer": "resolution=ignore-duplicates,return=minimal"},
-                    json=payload,
-                )
-            return True
+            response = self._request(
+                "POST",
+                f"{self._url}/rest/v1/listing_analysis_jobs",
+                params={"on_conflict": "listing_id,image_hash"},
+                headers={
+                    **self._headers,
+                    "Prefer": "resolution=merge-duplicates,return=representation",
+                },
+                json=payload,
+            )
+            rows = response.json()
+            return str(rows[0]["id"]) if rows else str(payload["id"])
         except Exception:
             LOGGER.exception("Unable to create analysis job %s", payload.get("id"))
-            return False
+            return None
 
     def _patch(self, filters: dict[str, str], payload: dict[str, Any]) -> None:
         try:
             self._request(
-                    "PATCH",
-                    f"{self._url}/rest/v1/listing_analysis_jobs",
-                    params=filters,
-                    headers={**self._headers, "Prefer": "return=minimal"},
-                    json=payload,
-                )
+                "PATCH",
+                f"{self._url}/rest/v1/listing_analysis_jobs",
+                params=filters,
+                headers={**self._headers, "Prefer": "return=minimal"},
+                json=payload,
+            )
         except Exception:
             LOGGER.exception("Unable to update analysis job with %s", filters)
 

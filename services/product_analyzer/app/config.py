@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     max_main_image_side: int = 1024
     analysis_cache_size: int = 512
     analysis_cache_ttl_seconds: int = 86400
+    # The main image stays on the synchronous path. A few additional views
+    # are fused later in one background batch to stabilize color/attributes
+    # without delaying the seller form or saturating the 2-CPU VPS.
+    analysis_extra_visual_images: int = 3
     background_workers: int = 1
     inference_max_concurrency: int = 1
     inference_queue_size: int = 4

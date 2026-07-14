@@ -112,6 +112,7 @@ async def lifespan(_: FastAPI):
     initialization_task = asyncio.create_task(_initialize_models())
     worker_task: asyncio.Task | None = None
     if settings.enrichment_worker_enabled and enrichment_store.enabled:
+
         async def start_worker_after_initialization() -> None:
             await initialization_task
             if startup_state["ready"]:
@@ -478,9 +479,16 @@ async def get_analysis(
     # Auth is optional only for local/test deployments.
     if settings.require_analysis_auth:
         await _authenticated_user(authorization)
-    result = pipeline.get_cached(image_hash) or await asyncio.to_thread(
-        analysis_store.get_result, image_hash
-    )
+    result = pipeline.get_cached(image_hash)
+    if result is None:
+        context = await asyncio.to_thread(analysis_store.get_context, image_hash)
+        if context is not None:
+            content_hash, persisted = context
+            # Durable API ids are UUIDs, while the live cache is keyed by the
+            # image hash. Prefer the newly completed in-memory enrichment over
+            # an older database snapshot for the same job.
+            result = pipeline.get_cached(content_hash) or persisted
+            result.analysis_id = image_hash
     if result is None:
         raise HTTPException(404, "Analysis result is not cached or has expired")
     return result
@@ -554,14 +562,17 @@ async def analyze(
     )
     durable_job = bool(listing_id and analysis_store.enabled)
     if durable_job:
-        durable_job = await asyncio.to_thread(
+        durable_job_id = await asyncio.to_thread(
             analysis_store.create_pending,
             job_id,
             listing_id,
             image_hash,
             main_image_url,
         )
-        if not durable_job:
+        durable_job = durable_job_id is not None
+        if durable_job_id is not None:
+            job_id = durable_job_id
+        else:
             job_id = image_hash
     cached = pipeline.get_cached(image_hash)
     if cached is not None:

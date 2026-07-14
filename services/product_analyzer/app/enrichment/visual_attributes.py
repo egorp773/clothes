@@ -107,7 +107,7 @@ class AttributeSuggestion:
 
 
 class VisualAttributeSuggester:
-    version = "fashion_siglip_visual_attributes_v1"
+    version = "fashion_siglip_visual_attributes_v2"
 
     def __init__(self, classifier) -> None:
         self.classifier = classifier
@@ -117,22 +117,47 @@ class VisualAttributeSuggester:
         embedding: np.ndarray,
         normalized_category: str,
     ) -> list[AttributeSuggestion]:
+        return self.suggest_many([embedding], normalized_category, [1.0])
+
+    def suggest_many(
+        self,
+        embeddings: list[np.ndarray],
+        normalized_category: str,
+        weights: list[float] | None = None,
+    ) -> list[AttributeSuggestion]:
+        if not embeddings:
+            return []
+        view_weights = weights or [1.0] * len(embeddings)
+        if len(view_weights) != len(embeddings):
+            raise ValueError("Every visual embedding must have a weight")
+        total_weight = max(
+            sum(max(0.0, weight) for weight in view_weights),
+            1e-12,
+        )
         suggestions: list[AttributeSuggestion] = []
         for key in CATEGORY_ATTRIBUTES.get(normalized_category, ()):
-            scores = self.classifier.score_text_options(
-                embedding,
-                ATTRIBUTE_PROMPTS[key],
-            )
-            if not scores:
+            combined = {value: 0.0 for value in ATTRIBUTE_PROMPTS[key]}
+            has_scores = False
+            for embedding, weight in zip(embeddings, view_weights, strict=True):
+                scores = self.classifier.score_text_options(
+                    embedding,
+                    ATTRIBUTE_PROMPTS[key],
+                )
+                has_scores = has_scores or bool(scores)
+                for value, confidence in scores.items():
+                    combined[value] += max(0.0, weight) * confidence
+            if not has_scores:
                 continue
-            value, confidence = max(scores.items(), key=lambda item: item[1])
-            # Closed-vocabulary probabilities below this level are too
-            # ambiguous to put in front of a seller as a proposed value.
-            if confidence < 0.34:
-                continue
-            suggestions.append(
-                AttributeSuggestion(key, value, round(confidence, 4))
-            )
+            averaged = {
+                value: confidence / total_weight
+                for value, confidence in combined.items()
+            }
+            value, confidence = max(averaged.items(), key=lambda item: item[1])
+            # These values are private seller-facing proposals, not facts
+            # published without review. Always return the best category-
+            # relevant option and preserve the real confidence so the caller
+            # can rank or hide it in buyer-facing projections.
+            suggestions.append(AttributeSuggestion(key, value, round(confidence, 4)))
         return suggestions
 
     def moderation_risk(self, embedding: np.ndarray) -> dict[str, object]:

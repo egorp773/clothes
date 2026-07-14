@@ -25,6 +25,9 @@ class _FastSegmentation:
     def segment_many(self, image):
         return self.segments
 
+    def segment(self, image):
+        return self.segments[0] if self.segments else None
+
     @staticmethod
     def is_acceptable(segment):
         return segment is not None
@@ -45,8 +48,16 @@ class _Classification:
         self.single_calls = 0
         self.attribute_calls = 0
 
-    def embed_and_classify_many(self, images):
+    def embed_and_classify_many(self, images, top_k=None):
         self.batch_calls += 1
+        if self.batch_calls > 1:
+            return [
+                SimpleNamespace(
+                    embedding=np.array([1.0, 0.0], dtype=np.float32),
+                    candidates=[_candidate("jeans", 0.82)],
+                )
+                for _ in images
+            ]
         assert len(images) == 2
         return [
             SimpleNamespace(
@@ -74,10 +85,7 @@ class _Classification:
 
     def score_text_options(self, embedding, options, *, temperature=12.0):
         self.attribute_calls += 1
-        return {
-            key: 0.72 if index == 0 else 0.04
-            for index, key in enumerate(options)
-        }
+        return {key: 0.20 if index == 0 else 0.04 for index, key in enumerate(options)}
 
 
 class _Models:
@@ -147,5 +155,18 @@ def test_multi_item_pipeline_batches_classification_and_skips_sam():
     assert models.classification.attribute_calls == 4
     assert models.segmentation.calls == 0
     assert result.material.value == "cotton"
-    assert result.material.source == "fashion_siglip_visual_attributes_v1"
+    assert result.material.confidence == 0.20
+    assert result.material.source == "fashion_siglip_visual_attributes_v2"
     assert result.enrichment_status == "completed"
+
+    extra = Image.new("RGB", (100, 100), (190, 25, 25))
+    pipeline.photo_quality = SimpleNamespace(
+        analyze=lambda image: SimpleNamespace(score=1.0)
+    )
+    assert pipeline.schedule_extra_images("multi-image", [extra, extra]) is True
+    enriched = pipeline.get_cached("multi-image")
+    assert enriched is not None
+    assert enriched.enrichment_status == "completed"
+    assert enriched.primary_color.value == "red"
+    assert enriched.primary_color.source == "opencv_masked_multiview_v1"
+    assert models.classification.batch_calls == 2
