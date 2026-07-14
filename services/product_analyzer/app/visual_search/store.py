@@ -80,6 +80,7 @@ class SupabaseVisualSearchStore:
                 "id": f"eq.{product_id}",
                 "select": (
                     "id,seller_id,status,is_hidden,main_image,image,original_image,images,"
+                    "cutout_image,outfit_images,"
                     "category,subcategory,item_type,primary_color,brand,gender,condition"
                 ),
             },

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -46,6 +46,9 @@ class VisualSearchResponse(BaseModel):
     category_confidence: float = 0
     candidate_count: int = 0
     products: list[VisualSearchProduct] = Field(default_factory=list)
+    similar_products: list[VisualSearchProduct] = Field(default_factory=list)
+    match_status: Literal["strong", "similar_only", "none"] = "none"
+    best_similarity: float = 0
     timings_ms: dict[str, int] = Field(default_factory=dict)
     cached: bool = False
     warnings: list[str] = Field(default_factory=list)

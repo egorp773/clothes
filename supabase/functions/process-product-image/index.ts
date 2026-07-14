@@ -171,6 +171,19 @@ async function processProductImage({
     if (updated.error) {
       throw updated.error;
     }
+
+    const reindexed = await fetch(
+      `${analyzerUrl.replace(/\/$/, "")}/v1/products/${productId}/embeddings`,
+      {
+        method: "POST",
+        headers: { Authorization: authorization },
+      },
+    );
+    if (!reindexed.ok) {
+      console.error(
+        `visual reindex failed for ${productId}: ${reindexed.status}`,
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await supabase

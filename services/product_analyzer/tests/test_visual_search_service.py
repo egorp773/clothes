@@ -67,11 +67,19 @@ class _Classification:
             candidates=self.candidates,
         )
 
+    def embed_and_classify_many(self, images, top_k):
+        return [self.embed_and_classify(image, top_k) for image in images]
+
+
+class _NoSegmentation:
+    def segment(self, image):
+        return None
+
 
 class _SearchModels:
     def __init__(self, candidates):
         self.classification = _Classification(candidates)
-        self.fast_segmentation = object()
+        self.fast_segmentation = _NoSegmentation()
         self.clothing_regions = object()
 
 
@@ -177,3 +185,78 @@ def test_ambiguous_item_probability_uses_one_broad_rpc():
         service.close()
 
     assert store.categories == [None]
+
+
+def test_weak_but_relevant_results_are_returned_as_similar_only():
+    candidates = [
+        _candidate("hoodie", 0.60),
+        _candidate("sweater", 0.15),
+        _candidate("sneakers", 0.10, category="shoes", subcategory="shoes_all"),
+    ]
+    service = VisualSearchService(
+        Settings(visual_search_strong_similarity=0.99),
+        _SearchModels(candidates),  # type: ignore[arg-type]
+        _SearchStore(focused_count=4),  # type: ignore[arg-type]
+    )
+    try:
+        response = service.search(
+            Image.new("RGB", (64, 64)),
+            "similar-only",
+            VisualSearchFilters(),
+        )
+    finally:
+        service.close()
+
+    assert response.products == []
+    assert response.similar_products
+    assert response.match_status == "similar_only"
+
+
+def test_product_image_order_uses_cutout_context_and_three_extra_views():
+    settings = Settings(visual_search_max_product_images=5)
+    service = VisualSearchService(
+        settings,
+        _SearchModels([]),  # type: ignore[arg-type]
+        _SearchStore(),  # type: ignore[arg-type]
+    )
+    product = {
+        "cutout_image": "https://example.com/cutout.png",
+        "outfit_images": ["https://example.com/cutout.png"],
+        "main_image": "https://example.com/main.jpg",
+        "image": "https://example.com/main.jpg",
+        "original_image": "https://example.com/main.jpg",
+        "images": [
+            "https://example.com/main.jpg",
+            "https://example.com/side.jpg",
+            "https://example.com/back.jpg",
+            "https://example.com/detail.jpg",
+            "https://example.com/extra.jpg",
+        ],
+    }
+    try:
+        urls = service._product_image_urls(product)
+    finally:
+        service.close()
+
+    assert urls == [
+        "https://example.com/cutout.png",
+        "https://example.com/main.jpg",
+        "https://example.com/side.jpg",
+        "https://example.com/back.jpg",
+        "https://example.com/detail.jpg",
+    ]
+
+
+def test_foreground_similarity_dominates_context_background():
+    foreground = [
+        {"product_id": "garment", "visual_similarity": 0.80},
+        {"product_id": "crowd", "visual_similarity": 0.55},
+    ]
+    context = [
+        {"product_id": "garment", "visual_similarity": 0.40},
+        {"product_id": "crowd", "visual_similarity": 0.95},
+    ]
+
+    fused = VisualSearchService._fuse_query_candidates(foreground, context)
+
+    assert fused[0]["visual_similarity"] > fused[1]["visual_similarity"]

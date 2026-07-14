@@ -88,6 +88,43 @@ void main() {
     expect(result.products, isEmpty);
   });
 
+  test('parses weak matches separately from strong results', () async {
+    final service = VisualSearchService(
+      baseUrl: 'https://analyzer.example',
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'products': [],
+            'similar_products': [
+              {
+                'product_id': 'similar-1',
+                'title': 'Похожая футболка',
+                'price': 2100,
+                'main_image': 'https://example.com/main.jpg',
+                'matched_image_url': 'https://example.com/side.jpg',
+              },
+            ],
+            'match_status': 'similar_only',
+            'best_similarity': 0.64,
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+      ),
+      accessTokenProvider: () => null,
+    );
+
+    final result = await service.search(
+      XFile.fromData(Uint8List.fromList(const [1]), name: 'query.jpg'),
+    );
+
+    expect(result.products, isEmpty);
+    expect(result.similarProducts.single.id, 'similar-1');
+    expect(result.similarProducts.single.image, 'https://example.com/side.jpg');
+    expect(result.matchStatus, 'similar_only');
+    expect(result.bestSimilarity, 0.64);
+  });
+
   test(
     'reuses supplied image bytes instead of reading the source again',
     () async {

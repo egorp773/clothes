@@ -74,12 +74,19 @@ class VisualSearchService:
             cached.timings_ms = {**cached.timings_ms, "cache": 0}
             return cached
 
-        prepared = self.preprocessor.prepare_query(image)
+        prepared = self.preprocessor.prepare_query_variants(image)
         embedding_started = time.perf_counter()
-        encoded = self.models.classification.embed_and_classify(
-            prepared.image,
+        query_images = (
+            [prepared.foreground, prepared.context]
+            if prepared.foreground is not None
+            else [prepared.context]
+        )
+        encoded_variants = self.models.classification.embed_and_classify_many(
+            query_images,
             top_k=max(6, self.settings.classification_top_k),
         )
+        encoded = encoded_variants[0]
+        context_encoded = encoded_variants[-1]
         embedding_ms = round((time.perf_counter() - embedding_started) * 1000)
         top = encoded.candidates[0] if encoded.candidates else None
         confidence = top.confidence if top else 0.0
@@ -168,6 +175,51 @@ class VisualSearchService:
                 confident_item_type=confident_item_type,
             )
             rerank_ms += round((time.perf_counter() - stage_started) * 1000)
+        if prepared.foreground is not None:
+            stage_started = time.perf_counter()
+            context_candidates = self._retrieve_pool(
+                context_encoded.embedding,
+                category=retrieval_category,
+                related_subcategories=related,
+                filters=filters,
+                match_count=self.settings.visual_search_candidate_count,
+                pool="context",
+            )
+            retrieval_ms += round((time.perf_counter() - stage_started) * 1000)
+            candidates = self._fuse_query_candidates(candidates, context_candidates)
+            stage_started = time.perf_counter()
+            products = self._rerank(
+                candidates,
+                category=category,
+                subcategory=subcategory,
+                item_type=item_type,
+                filters=filters,
+                confident_category=confident_category,
+                confident_item_type=confident_item_type,
+            )
+            rerank_ms += round((time.perf_counter() - stage_started) * 1000)
+        best_similarity = max(
+            (product.visual_similarity for product in products),
+            default=0.0,
+        )
+        strong_products = [
+            product
+            for product in products
+            if product.visual_similarity >= self.settings.visual_search_strong_similarity
+            and product.score >= self.settings.visual_search_strong_rerank_score
+        ]
+        similar_products = (
+            []
+            if strong_products
+            else products[: self.settings.visual_search_similar_result_count]
+        )
+        match_status = (
+            "strong"
+            if strong_products
+            else "similar_only"
+            if similar_products
+            else "none"
+        )
         response = VisualSearchResponse(
             image_hash=image_hash,
             model_version=self.model_version,
@@ -176,7 +228,10 @@ class VisualSearchService:
             item_type=item_type,
             category_confidence=round(confidence, 6),
             candidate_count=len(candidates),
-            products=products,
+            products=strong_products,
+            similar_products=similar_products,
+            match_status=match_status,
+            best_similarity=round(best_similarity, 6),
             timings_ms={
                 **prepared.timings_ms,
                 "preparation": sum(prepared.timings_ms.values()),
@@ -185,7 +240,7 @@ class VisualSearchService:
                 "reranking": rerank_ms,
                 "total": round((time.perf_counter() - started) * 1000),
             },
-            warnings=[prepared.warning] if prepared.warning else [],
+            warnings=prepared.warnings,
         )
         self._cache_put(cache_key, response)
         return response
@@ -196,15 +251,17 @@ class VisualSearchService:
         if product is None:
             raise KeyError(product_id)
         urls = self._product_image_urls(product)
+        cutout_urls = self._product_cutout_urls(product)
+        context_urls = (
+            self._product_context_urls(product) if cutout_urls else set()
+        )
         if not urls:
             raise ValueError("Product has no usable image URLs")
         rows: list[dict[str, Any]] = []
+        prepared_sources: list[tuple[str, bytes, Image.Image]] = []
         skipped = 0
-        main_embedding: np.ndarray | None = None
-        main_category: str | None = None
         download_ms = 0
         preparation_ms = 0
-        embedding_ms = 0
         for url in urls:
             download_started = time.perf_counter()
             try:
@@ -214,11 +271,30 @@ class VisualSearchService:
                 continue
             download_ms += round((time.perf_counter() - download_started) * 1000)
             preparation_started = time.perf_counter()
-            prepared = self.preprocessor.prepare(image)
+            prepared = (
+                self.preprocessor.prepare_cutout(image)
+                if url in cutout_urls
+                else self.preprocessor.prepare_query(image)
+                if url in context_urls
+                else self.preprocessor.prepare(image)
+            )
             preparation_ms += round((time.perf_counter() - preparation_started) * 1000)
-            embedding_started = time.perf_counter()
-            encoded = self.models.classification.embed_and_classify(prepared.image, top_k=1)
-            embedding_ms += round((time.perf_counter() - embedding_started) * 1000)
+            prepared_sources.append((url, payload, prepared.image))
+        if not prepared_sources:
+            raise ValueError("No product images could be prepared")
+        embedding_started = time.perf_counter()
+        encoded_sources = self.models.classification.embed_and_classify_many(
+            [source[2] for source in prepared_sources],
+            top_k=1,
+        )
+        embedding_ms = round((time.perf_counter() - embedding_started) * 1000)
+        main_embedding: np.ndarray | None = None
+        main_category: str | None = None
+        for (url, payload, _), encoded in zip(
+            prepared_sources,
+            encoded_sources,
+            strict=True,
+        ):
             category = encoded.candidates[0].definition.category if encoded.candidates else None
             definition = encoded.candidates[0].definition if encoded.candidates else None
             category_confidence = encoded.candidates[0].confidence if encoded.candidates else 0.0
@@ -226,7 +302,7 @@ class VisualSearchService:
             if is_main:
                 main_embedding = encoded.embedding
                 main_category = category
-            else:
+            elif url not in context_urls:
                 similarity = float(np.dot(main_embedding, encoded.embedding)) if main_embedding is not None else 0
                 # Reject tags, defects and detail shots through visual/category
                 # consistency with the main garment, without OCR/Qwen/SAM.
@@ -320,6 +396,37 @@ class VisualSearchService:
                 merged[key] = row
         return list(merged.values())
 
+    @staticmethod
+    def _fuse_query_candidates(
+        foreground: list[dict[str, Any]],
+        context: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        context_by_product: dict[str, float] = {}
+        for row in context:
+            product_id = str(row.get("product_id"))
+            similarity = float(row.get("visual_similarity") or 0)
+            context_by_product[product_id] = max(
+                similarity,
+                context_by_product.get(product_id, -1.0),
+            )
+        fused = []
+        for row in foreground:
+            foreground_similarity = float(row.get("visual_similarity") or 0)
+            context_similarity = context_by_product.get(
+                str(row.get("product_id")),
+                foreground_similarity,
+            )
+            fused.append(
+                {
+                    **row,
+                    "visual_similarity": 0.85 * foreground_similarity
+                    + 0.15 * context_similarity,
+                    "_foreground_similarity": foreground_similarity,
+                    "_context_similarity": context_similarity,
+                }
+            )
+        return fused
+
     def _rerank(
         self,
         candidates: list[dict[str, Any]],
@@ -353,12 +460,14 @@ class VisualSearchService:
         payload = response.content
         if len(payload) > self.settings.visual_search_max_image_bytes:
             raise ValueError("Remote image is too large")
-        image = ImageOps.exif_transpose(Image.open(io.BytesIO(payload))).convert("RGB")
+        image = ImageOps.exif_transpose(Image.open(io.BytesIO(payload)))
         image.load()
         return payload, image
 
     def _product_image_urls(self, product: dict[str, Any]) -> list[str]:
         candidates = [
+            product.get("cutout_image"),
+            *(product.get("outfit_images") or []),
             product.get("main_image"),
             product.get("image"),
             product.get("original_image"),
@@ -372,6 +481,29 @@ class VisualSearchService:
             if len(urls) >= self.settings.visual_search_max_product_images:
                 break
         return urls
+
+    @staticmethod
+    def _product_cutout_urls(product: dict[str, Any]) -> set[str]:
+        return {
+            str(value).strip()
+            for value in [
+                product.get("cutout_image"),
+                *(product.get("outfit_images") or []),
+            ]
+            if str(value or "").strip().startswith(("https://", "http://"))
+        }
+
+    @staticmethod
+    def _product_context_urls(product: dict[str, Any]) -> set[str]:
+        return {
+            str(value).strip()
+            for value in [
+                product.get("main_image"),
+                product.get("image"),
+                product.get("original_image"),
+            ]
+            if str(value or "").strip().startswith(("https://", "http://"))
+        }
 
     @staticmethod
     def _related_subcategories(candidates) -> list[str]:

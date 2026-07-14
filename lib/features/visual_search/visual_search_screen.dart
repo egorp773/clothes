@@ -267,7 +267,10 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
   );
 
   Widget _buildResults() {
-    final products = _result?.products ?? const <Product>[];
+    final exactProducts = _result?.products ?? const <Product>[];
+    final similarProducts = _result?.similarProducts ?? const <Product>[];
+    final similarOnly = exactProducts.isEmpty && similarProducts.isNotEmpty;
+    final products = similarOnly ? similarProducts : exactProducts;
     return CustomScrollView(
       slivers: [
         SliverToBoxAdapter(
@@ -277,17 +280,10 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(10),
-                  child: ColoredBox(
-                    color: const Color(0xFFF1F1F3),
-                    child: SizedBox(
-                      width: 74,
-                      height: 74,
-                      child: Image.memory(
-                        _previewBytes!,
-                        key: const Key('visual-search-result-preview'),
-                        fit: BoxFit.contain,
-                      ),
-                    ),
+                  child: SizedBox(
+                    width: 74,
+                    height: 74,
+                    child: Image.memory(_previewBytes!, fit: BoxFit.cover),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -298,6 +294,8 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
                       Text(
                         _searching
                             ? 'Ищем похожие вещи…'
+                            : similarOnly
+                            ? 'Похожие варианты'
                             : _productsCountLabel(products.length),
                         style: const TextStyle(
                           fontFamily: AppTypography.fontFamily,
@@ -349,13 +347,47 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
             hasScrollBody: false,
             child: _MessageState(
               icon: Icons.search_off_rounded,
-              title: 'Похожих товаров пока не найдено',
-              subtitle: 'Попробуйте другой ракурс или сбросьте фильтры.',
+              title: 'Похоже, такую вещь у нас ещё никто не выложил',
+              subtitle:
+                  'Попробуйте выделить вещь точнее или загрузить другой ракурс.',
               action: 'Сделать новое фото',
               onTap: _backToCamera,
             ),
           )
-        else
+        else ...[
+          if (similarOnly)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Похоже, такую вещь у нас ещё никто не выложил',
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 17,
+                        fontWeight: AppTypography.bold,
+                      ),
+                    ),
+                    SizedBox(height: 5),
+                    Text(
+                      'Но мы нашли несколько действительно похожих вариантов.',
+                      style: TextStyle(color: Color(0xFF77777C), fontSize: 13),
+                    ),
+                    SizedBox(height: 18),
+                    Text(
+                      'Смотрите похожее',
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 16,
+                        fontWeight: AppTypography.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(8, 4, 8, 28),
             sliver: SliverGrid.builder(
@@ -379,6 +411,7 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
               },
             ),
           ),
+        ],
       ],
     );
   }

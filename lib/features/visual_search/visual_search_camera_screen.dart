@@ -346,12 +346,6 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       await _cameraController?.pausePreview();
     } catch (_) {}
 
-    final regionsFuture = _service
-        .detectRegions(image, imageBytes: previewBytes)
-        .then<List<VisualSearchRegion>>(
-          (result) => result.regions,
-          onError: (_) => const <VisualSearchRegion>[],
-        );
     Size imageSize;
     try {
       imageSize = await visualSearchImageSize(previewBytes);
@@ -366,13 +360,10 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
             builder: (context) => VisualSearchObjectSelectionScreen(
               previewBytes: previewBytes,
               imageSize: imageSize,
-              regions: const [],
-              regionsFuture: regionsFuture,
             ),
           ),
         );
     if (!mounted || operationGeneration != _searchGeneration) return;
-    _service.cancelActiveSearch();
     if (choice == null) {
       await _finishDetection(operationGeneration);
       return;
@@ -380,20 +371,18 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
 
     var searchImage = image;
     var searchPreviewBytes = previewBytes;
-    if (!choice.useWholePhoto && choice.cropBounds != null) {
-      try {
-        searchImage = await cropVisualSearchImage(
-          image,
-          _expandVisualSearchCrop(choice.cropBounds!),
-          imageBytes: previewBytes,
-        );
-        searchPreviewBytes = await searchImage.readAsBytes();
-      } catch (_) {
-        if (!mounted || operationGeneration != _searchGeneration) return;
-        _showError('Не удалось выделить выбранную вещь');
-        await _finishDetection(operationGeneration);
-        return;
-      }
+    try {
+      searchImage = await cropVisualSearchImage(
+        image,
+        choice.cropBounds,
+        imageBytes: previewBytes,
+      );
+      searchPreviewBytes = await searchImage.readAsBytes();
+    } catch (_) {
+      if (!mounted || operationGeneration != _searchGeneration) return;
+      _showError('Не удалось выделить выбранную вещь');
+      await _finishDetection(operationGeneration);
+      return;
     }
     if (!mounted || operationGeneration != _searchGeneration) return;
     setState(() => _detectingObjects = false);
@@ -909,12 +898,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       child: Stack(
         fit: StackFit.expand,
         children: [
-          Image.memory(
-            _searchPreview!,
-            key: const Key('visual-search-searching-preview'),
-            fit: BoxFit.contain,
-            filterQuality: FilterQuality.high,
-          ),
+          Image.memory(_searchPreview!, fit: BoxFit.cover),
           const ColoredBox(color: Color(0x42000000)),
           CustomPaint(
             painter: _CenterWavePainter(
@@ -954,18 +938,6 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
         ],
       ),
     ),
-  );
-}
-
-Rect _expandVisualSearchCrop(Rect bounds) {
-  final safeBounds = bounds.intersect(const Rect.fromLTWH(0, 0, 1, 1));
-  final horizontalPadding = math.max(safeBounds.width * 0.14, 0.025);
-  final verticalPadding = math.max(safeBounds.height * 0.14, 0.025);
-  return Rect.fromLTRB(
-    (safeBounds.left - horizontalPadding).clamp(0, 1),
-    (safeBounds.top - verticalPadding).clamp(0, 1),
-    (safeBounds.right + horizontalPadding).clamp(0, 1),
-    (safeBounds.bottom + verticalPadding).clamp(0, 1),
   );
 }
 

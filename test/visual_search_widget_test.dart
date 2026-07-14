@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -58,7 +57,7 @@ void main() {
     expect(size, const Size(320, 640));
   });
 
-  testWidgets('photo selection is manual-first with visible fallback actions', (
+  testWidgets('photo selection keeps the original design and is manual-only', (
     tester,
   ) async {
     final preview = base64Decode(
@@ -69,163 +68,29 @@ void main() {
         home: VisualSearchObjectSelectionScreen(
           previewBytes: preview,
           imageSize: const Size(800, 1200),
-          regions: const [
-            VisualSearchRegion(
-              id: 'jacket',
-              label: 'jacket',
-              confidence: 0.9,
-              bounds: Rect.fromLTRB(0.08, 0.1, 0.62, 0.56),
-            ),
-            VisualSearchRegion(
-              id: 'unknown',
-              confidence: 0.82,
-              bounds: Rect.fromLTRB(0.55, 0.48, 0.92, 0.91),
-            ),
-          ],
         ),
       ),
     );
 
-    expect(find.text('Выделите вещь вручную'), findsOneWidget);
-    expect(
-      find.text('Проведите пальцем по одной вещи на фото'),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Ручной выбор точнее.'), findsOneWidget);
-    expect(find.text('Искать по всему фото'), findsOneWidget);
-    expect(find.text('Выбрать вручную'), findsOneWidget);
-    expect(find.text('Автовыбор'), findsOneWidget);
+    expect(find.text('Что ищем?'), findsOneWidget);
+    expect(find.text('Проведите по вещи, чтобы выделить её'), findsOneWidget);
+    expect(find.text('Найти похожее'), findsOneWidget);
+    expect(find.text('Искать по всему фото'), findsNothing);
+    expect(find.text('Выбрать вручную'), findsNothing);
+    expect(find.text('Автовыбор'), findsNothing);
     expect(find.byType(ChoiceChip), findsNothing);
-    expect(
-      tester
-          .widget<Image>(find.byKey(const Key('visual-search-selection-photo')))
-          .fit,
-      BoxFit.contain,
-    );
 
     var findButton = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Найти выделенную вещь'),
+      find.widgetWithText(FilledButton, 'Найти похожее'),
     );
     expect(findButton.onPressed, isNull);
 
-    final photoRect = tester.getRect(
-      find.byKey(const Key('visual-search-selection-photo')),
-    );
-    await tester.dragFrom(
-      Offset(photoRect.left + photoRect.width * 0.25, photoRect.top + 30),
-      Offset(photoRect.width * 0.5, photoRect.height - 60),
-    );
+    await tester.dragFrom(const Offset(300, 100), const Offset(180, 220));
     await tester.pump();
     findButton = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Найти выделенную вещь'),
+      find.widgetWithText(FilledButton, 'Найти похожее'),
     );
     expect(findButton.onPressed, isNotNull);
-
-    await tester.tap(find.text('Автовыбор'));
-    await tester.pump();
-    expect(find.text('Выберите вещь на фото'), findsOneWidget);
-    expect(find.text('Куртка'), findsWidgets);
-    expect(find.text('Предмет 2'), findsWidgets);
-    expect(
-      tester
-          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Куртка'))
-          .selected,
-      isTrue,
-    );
-
-    await tester.tap(find.text('Выбрать вручную'));
-    await tester.pump();
-    expect(find.text('Выделите вещь вручную'), findsOneWidget);
-  });
-
-  testWidgets('tap chooses the most specific overlapping clothing region', (
-    tester,
-  ) async {
-    final preview = base64Decode(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        home: VisualSearchObjectSelectionScreen(
-          previewBytes: preview,
-          imageSize: const Size(100, 100),
-          regions: const [
-            VisualSearchRegion(
-              id: 'upper',
-              label: 'upper_clothing',
-              confidence: 0.88,
-              bounds: Rect.fromLTRB(0.1, 0.1, 0.9, 0.45),
-            ),
-            VisualSearchRegion(
-              id: 'full',
-              label: 'full_clothing',
-              confidence: 0.92,
-              bounds: Rect.fromLTRB(0.1, 0.05, 0.9, 0.9),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    await tester.tap(find.text('Автовыбор'));
-    await tester.pump();
-    final photoRect = tester.getRect(
-      find.byKey(const Key('visual-search-selection-photo')),
-    );
-    await tester.tapAt(
-      Offset(
-        photoRect.left + photoRect.width * 0.5,
-        photoRect.top + photoRect.height * 0.25,
-      ),
-    );
-    await tester.pump();
-
-    expect(
-      tester
-          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Верх'))
-          .selected,
-      isTrue,
-    );
-    expect(
-      tester
-          .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, 'Одежда'))
-          .selected,
-      isFalse,
-    );
-  });
-
-  testWidgets('automatic suggestions load without blocking manual selection', (
-    tester,
-  ) async {
-    final suggestions = Completer<List<VisualSearchRegion>>();
-    final preview = base64Decode(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        home: VisualSearchObjectSelectionScreen(
-          previewBytes: preview,
-          imageSize: const Size(800, 1200),
-          regions: const [],
-          regionsFuture: suggestions.future,
-        ),
-      ),
-    );
-
-    expect(find.text('Выделите вещь вручную'), findsOneWidget);
-    expect(find.text('Ищем вещи…'), findsOneWidget);
-    suggestions.complete(const [
-      VisualSearchRegion(
-        id: 'jacket',
-        label: 'jacket',
-        confidence: 0.91,
-        bounds: Rect.fromLTRB(0.2, 0.1, 0.8, 0.7),
-      ),
-    ]);
-    await tester.pump();
-
-    expect(find.text('Автовыбор'), findsOneWidget);
-    expect(find.text('Выделите вещь вручную'), findsOneWidget);
   });
 
   testWidgets('camera-first search shows minimal controls and gallery panel', (
@@ -310,13 +175,46 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Похожих товаров пока не найдено'), findsOneWidget);
+    expect(
+      find.text('Похоже, такую вещь у нас ещё никто не выложил'),
+      findsOneWidget,
+    );
     expect(find.text('21 похожих товаров'), findsNothing);
+  });
+
+  testWidgets('shows a separate section for relevant but weak matches', (
+    tester,
+  ) async {
+    final image = XFile.fromData(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+      mimeType: 'image/png',
+      name: 'query.png',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisualSearchScreen(
+          initialImage: image,
+          service: _FakeVisualSearchService(similarOnly: true),
+          onProductTap: (_) {},
+          onToggleLike: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Похоже, такую вещь у нас ещё никто не выложил'),
+      findsOneWidget,
+    );
+    expect(find.text('Смотрите похожее'), findsOneWidget);
+    expect(find.text('Тестовое худи'), findsOneWidget);
   });
 }
 
 class _FakeVisualSearchService extends VisualSearchService {
-  _FakeVisualSearchService({this.empty = false})
+  _FakeVisualSearchService({this.empty = false, this.similarOnly = false})
     : super(
         baseUrl: 'https://example.test',
         client: MockClient((_) async => throw UnimplementedError()),
@@ -324,6 +222,7 @@ class _FakeVisualSearchService extends VisualSearchService {
       );
 
   final bool empty;
+  final bool similarOnly;
 
   @override
   Future<VisualSearchResult> search(
@@ -331,7 +230,7 @@ class _FakeVisualSearchService extends VisualSearchService {
     VisualSearchFilters filters = const VisualSearchFilters(),
     Uint8List? imageBytes,
   }) async => VisualSearchResult(
-    products: empty
+    products: empty || similarOnly
         ? const []
         : [
             Product.fromSupabase({
@@ -343,6 +242,23 @@ class _FakeVisualSearchService extends VisualSearchService {
               'category': 'clothing',
             }),
           ],
+    similarProducts: similarOnly
+        ? [
+            Product.fromSupabase({
+              'id': 'similar-product',
+              'title': 'Тестовое худи',
+              'price': 3500,
+              'main_image': '',
+              'images': <String>[],
+              'category': 'clothing',
+            }),
+          ]
+        : const [],
+    matchStatus: similarOnly
+        ? 'similar_only'
+        : empty
+        ? 'none'
+        : 'strong',
     category: 'clothing',
     categoryConfidence: 0.8,
     timingsMs: const {'total': 700},

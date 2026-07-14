@@ -48,6 +48,9 @@ class VisualSearchFilters {
 class VisualSearchResult {
   const VisualSearchResult({
     required this.products,
+    this.similarProducts = const [],
+    this.matchStatus = 'strong',
+    this.bestSimilarity = 0,
     required this.category,
     required this.categoryConfidence,
     required this.timingsMs,
@@ -56,6 +59,9 @@ class VisualSearchResult {
   });
 
   final List<Product> products;
+  final List<Product> similarProducts;
+  final String matchStatus;
+  final double bestSimilarity;
   final String category;
   final double categoryConfidence;
   final Map<String, int> timingsMs;
@@ -210,20 +216,10 @@ class VisualSearchService {
       throw const VisualSearchException('Сервис вернул некорректный ответ');
     }
     final payload = Map<String, dynamic>.from(decoded);
-    final rows = payload['products'];
-    final products = rows is List
-        ? rows
-              .whereType<Map>()
-              .map((raw) {
-                final row = Map<String, dynamic>.from(raw);
-                return Product.fromSupabase({
-                  ...row,
-                  'id': row['product_id'],
-                  'image': row['main_image'] ?? row['matched_image_url'],
-                });
-              })
-              .toList(growable: false)
-        : <Product>[];
+    final products = _parseVisualSearchProducts(payload['products']);
+    final similarProducts = _parseVisualSearchProducts(
+      payload['similar_products'],
+    );
     final timings = <String, int>{};
     final rawTimings = payload['timings_ms'];
     if (rawTimings is Map) {
@@ -235,6 +231,11 @@ class VisualSearchService {
     }
     return VisualSearchResult(
       products: products,
+      similarProducts: similarProducts,
+      matchStatus:
+          payload['match_status'] as String? ??
+          (products.isEmpty ? 'none' : 'strong'),
+      bestSimilarity: (payload['best_similarity'] as num?)?.toDouble() ?? 0,
       category: payload['category'] as String? ?? '',
       categoryConfidence:
           (payload['category_confidence'] as num?)?.toDouble() ?? 0,
@@ -310,4 +311,21 @@ class VisualSearchService {
   }
 
   void close() => _client.close();
+}
+
+List<Product> _parseVisualSearchProducts(Object? rawRows) {
+  if (rawRows is! List) return const [];
+  return rawRows
+      .whereType<Map>()
+      .map((raw) {
+        final row = Map<String, dynamic>.from(raw);
+        final matchedImage = row['matched_image_url'] as String?;
+        return Product.fromSupabase({
+          ...row,
+          'id': row['product_id'],
+          'image': matchedImage ?? row['main_image'],
+          'main_image': matchedImage ?? row['main_image'],
+        });
+      })
+      .toList(growable: false);
 }

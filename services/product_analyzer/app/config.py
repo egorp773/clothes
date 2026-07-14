@@ -66,7 +66,10 @@ class Settings(BaseSettings):
     visual_search_max_rerank_gap: float = 0.12
     visual_search_taxonomy_override_similarity: float = 0.80
     visual_search_alternate_similarity: float = 0.70
-    visual_search_max_product_images: int = 3
+    visual_search_max_product_images: int = 5
+    visual_search_strong_similarity: float = 0.70
+    visual_search_strong_rerank_score: float = 0.58
+    visual_search_similar_result_count: int = 12
     visual_search_download_timeout_seconds: float = 6.0
     # u2net_cloth_seg is useful on a roomy worker, but its CPU inference arena
     # is too large for the 4 GB production container. The fast geometric
