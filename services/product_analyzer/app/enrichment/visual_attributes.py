@@ -116,14 +116,23 @@ class VisualAttributeSuggester:
         self,
         embedding: np.ndarray,
         normalized_category: str,
+        *,
+        all_attributes: bool = False,
     ) -> list[AttributeSuggestion]:
-        return self.suggest_many([embedding], normalized_category, [1.0])
+        return self.suggest_many(
+            [embedding],
+            normalized_category,
+            [1.0],
+            all_attributes=all_attributes,
+        )
 
     def suggest_many(
         self,
         embeddings: list[np.ndarray],
         normalized_category: str,
         weights: list[float] | None = None,
+        *,
+        all_attributes: bool = False,
     ) -> list[AttributeSuggestion]:
         if not embeddings:
             return []
@@ -135,7 +144,12 @@ class VisualAttributeSuggester:
             1e-12,
         )
         suggestions: list[AttributeSuggestion] = []
-        for key in CATEGORY_ATTRIBUTES.get(normalized_category, ()):
+        attribute_keys = (
+            tuple(ATTRIBUTE_PROMPTS)
+            if all_attributes
+            else CATEGORY_ATTRIBUTES.get(normalized_category, ())
+        )
+        for key in attribute_keys:
             combined = {value: 0.0 for value in ATTRIBUTE_PROMPTS[key]}
             has_scores = False
             for embedding, weight in zip(embeddings, view_weights, strict=True):

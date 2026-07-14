@@ -152,7 +152,7 @@ def test_multi_item_pipeline_batches_classification_and_skips_sam():
     assert "multiple_items_detected:2" in result.warnings
     assert models.classification.batch_calls == 1
     assert models.classification.single_calls == 0
-    assert models.classification.attribute_calls == 4
+    assert models.classification.attribute_calls == 9
     assert models.segmentation.calls == 0
     assert result.material.value == "cotton"
     assert result.material.confidence == 0.20

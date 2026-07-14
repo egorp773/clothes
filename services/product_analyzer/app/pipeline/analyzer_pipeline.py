@@ -492,6 +492,7 @@ class AnalyzerPipeline:
             suggestions = self.visual_attributes.suggest(
                 visual_embedding,
                 result.normalized_category.value,
+                all_attributes=True,
             )
             for suggestion in suggestions:
                 current = getattr(result, suggestion.key)
@@ -785,6 +786,7 @@ class AnalyzerPipeline:
                 embeddings,
                 category,
                 weights,
+                all_attributes=True,
             ):
                 current = getattr(result, suggestion.key)
                 if current.source in {
