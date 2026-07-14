@@ -55,7 +55,6 @@ class MaskedColorAnalyzer:
         hsv = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2HSV)
         lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
         values = hsv[..., 2][mask]
-        saturation = hsv[..., 1][mask]
         low, high = np.percentile(values, [8, 96])
         valid = mask.copy()
         valid[mask] = (values >= max(18, low)) & (values <= min(248, high))

@@ -10,7 +10,7 @@ from typing import Callable, TypeVar
 import numpy as np
 from PIL import Image
 
-from app.catalog import BRANDS, ITEM_TYPE_TITLES
+from app.catalog import BRANDS, ITEM_TYPE_TITLES, NORMALIZED_CATEGORIES
 from app.color.masked_color_analyzer import ColorCandidate, MaskedColorAnalyzer
 from app.config import Settings
 from app.model_manager import ModelManager, StageTimeoutError
@@ -562,7 +562,13 @@ class AnalyzerPipeline:
                 category_confidence,
                 self.settings.fashion_model_id if top else "not_detected",
             ),
+            normalized_category=self._field(
+                NORMALIZED_CATEGORIES.get(top.definition.item_type) if top else None,
+                category_confidence,
+                "taxonomy_normalization_v1" if top else "not_detected",
+            ),
             gender=pending,
+            audience=pending,
             primary_color=self._field(
                 primary.color_id if primary else None,
                 primary.confidence if primary else 0.0,
@@ -580,6 +586,8 @@ class AnalyzerPipeline:
             style=pending,
             fit=pending,
             sleeve_length=pending,
+            collar=pending,
+            rise=pending,
             closure=pending,
             suggested_title=self._field(
                 title,

@@ -1244,29 +1244,61 @@ class _ProductDatabaseDescription extends StatefulWidget {
 
 class _ProductDatabaseDescriptionState
     extends State<_ProductDatabaseDescription> {
-  bool _showMore = false;
-
   @override
   Widget build(BuildContext context) {
     final product = widget.product;
     final source = widget.sourceProduct;
     final description = product.description.trim();
-    final hasMore =
-        source != null &&
-        <String>[
-          source.section,
-          source.subcategory,
-          source.itemType,
-          source.gender,
-          ...source.secondaryColors,
-          source.material,
-          source.pattern,
-          source.season,
-          source.style,
-          source.fit,
-          source.sleeveLength,
-          source.closure,
-        ].any((value) => value.trim().isNotEmpty);
+    final schema = source == null
+        ? const <ListingAttributeDefinition>[]
+        : ListingCatalogs.attributesFor(
+            source.normalizedCategory.isNotEmpty
+                ? source.normalizedCategory
+                : source.itemType,
+          );
+    final relevantDefinitions = schema.isNotEmpty
+        ? schema
+        : const <ListingAttributeDefinition>[
+            ListingAttributeDefinition(
+              id: 'material',
+              label: 'Материал',
+              options: ListingCatalogs.materials,
+            ),
+            ListingAttributeDefinition(
+              id: 'pattern',
+              label: 'Рисунок',
+              options: ListingCatalogs.patterns,
+            ),
+            ListingAttributeDefinition(
+              id: 'fit',
+              label: 'Крой',
+              options: ListingCatalogs.fits,
+            ),
+            ListingAttributeDefinition(
+              id: 'style',
+              label: 'Стиль',
+              options: ListingCatalogs.styles,
+            ),
+            ListingAttributeDefinition(
+              id: 'season',
+              label: 'Сезон',
+              options: ListingCatalogs.seasons,
+            ),
+            ListingAttributeDefinition(
+              id: 'closure',
+              label: 'Тип застёжки',
+              options: ListingCatalogs.closures,
+            ),
+          ];
+    final importantAttributes = source == null
+        ? const <ListingAttributeDefinition>[]
+        : relevantDefinitions
+              .where(
+                (definition) =>
+                    _attributeValue(source, definition.id).isNotEmpty,
+              )
+              .take(6)
+              .toList(growable: false);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1279,117 +1311,16 @@ class _ProductDatabaseDescriptionState
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _CharacteristicLine(label: 'Категория', value: product.category),
               _CharacteristicLine(label: 'Состояние', value: product.condition),
               _CharacteristicLine(label: 'Размер', value: product.size),
               _CharacteristicLine(label: 'Бренд', value: product.brand),
               _CharacteristicLine(label: 'Цвет', value: product.color),
-              _CharacteristicLine(label: 'Город', value: product.location),
-              if (_showMore && source != null) ...[
+              for (final definition in importantAttributes)
                 _CharacteristicLine(
-                  label: 'Раздел',
+                  label: definition.label,
                   value: ListingCatalogs.nameOf(
-                    source.section,
-                    fallback: source.section,
-                  ),
-                ),
-                _CharacteristicLine(
-                  label: 'Подкатегория',
-                  value: ListingCatalogs.nameOf(
-                    source.subcategory,
-                    fallback: source.subcategory,
-                  ),
-                ),
-                _CharacteristicLine(
-                  label: 'Тип вещи',
-                  value: ListingCatalogs.nameOf(
-                    source.itemType,
-                    fallback: source.itemType,
-                  ),
-                ),
-                _CharacteristicLine(
-                  label: 'Пол',
-                  value: ListingCatalogs.nameOf(
-                    source.gender,
-                    fallback: source.gender,
-                  ),
-                ),
-                _CharacteristicLine(
-                  label: 'Дополнительные цвета',
-                  value: source.secondaryColors
-                      .map(
-                        (value) =>
-                            ListingCatalogs.nameOf(value, fallback: value),
-                      )
-                      .join(', '),
-                ),
-                _CharacteristicLine(
-                  label: 'Материал',
-                  value: ListingCatalogs.nameOf(
-                    source.material,
-                    fallback: source.material,
-                  ),
-                ),
-                _CharacteristicLine(
-                  label: 'Рисунок или принт',
-                  value: ListingCatalogs.nameOf(
-                    source.pattern,
-                    fallback: source.pattern,
-                  ),
-                ),
-                _CharacteristicLine(
-                  label: 'Сезон',
-                  value: ListingCatalogs.nameOf(
-                    source.season,
-                    fallback: source.season,
-                  ),
-                ),
-                _CharacteristicLine(
-                  label: 'Стиль',
-                  value: ListingCatalogs.nameOf(
-                    source.style,
-                    fallback: source.style,
-                  ),
-                ),
-                _CharacteristicLine(
-                  label: 'Крой',
-                  value: ListingCatalogs.nameOf(
-                    source.fit,
-                    fallback: source.fit,
-                  ),
-                ),
-                _CharacteristicLine(
-                  label: 'Длина рукава',
-                  value: ListingCatalogs.nameOf(
-                    source.sleeveLength,
-                    fallback: source.sleeveLength,
-                  ),
-                ),
-                _CharacteristicLine(
-                  label: 'Застёжка',
-                  value: ListingCatalogs.nameOf(
-                    source.closure,
-                    fallback: source.closure,
-                  ),
-                ),
-              ],
-              if (hasMore)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => setState(() => _showMore = !_showMore),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.black,
-                      padding: EdgeInsets.zero,
-                    ),
-                    iconAlignment: IconAlignment.end,
-                    icon: Icon(
-                      _showMore
-                          ? Icons.keyboard_arrow_up_rounded
-                          : Icons.keyboard_arrow_down_rounded,
-                      size: 18,
-                    ),
-                    label: Text(_showMore ? 'Скрыть' : 'Подробнее'),
+                    _attributeValue(source!, definition.id),
+                    fallback: _attributeValue(source, definition.id),
                   ),
                 ),
             ],
@@ -1412,8 +1343,40 @@ class _ProductDatabaseDescriptionState
               ),
             ),
           ),
+        if (source?.hasDefects == true &&
+            source!.defectsDescription.trim().isNotEmpty)
+          _ProductInfoSection(
+            title: 'Дефекты',
+            hairline: widget.hairline,
+            showTopBorder: false,
+            compact: true,
+            child: Text(
+              source.defectsDescription.trim(),
+              style: const TextStyle(
+                fontSize: 15,
+                height: 1.24,
+                fontWeight: FontWeight.w500,
+                color: Colors.black,
+              ),
+            ),
+          ),
       ],
     );
+  }
+
+  String _attributeValue(Product product, String key) {
+    final structured = product.categoryAttributes[key];
+    if (structured?.isNotEmpty == true) return structured!;
+    return switch (key) {
+      'material' => product.material,
+      'pattern' => product.pattern,
+      'fit' => product.fit,
+      'sleeve_length' => product.sleeveLength,
+      'closure' => product.closure,
+      'season' => product.season,
+      'style' => product.style,
+      _ => '',
+    };
   }
 }
 

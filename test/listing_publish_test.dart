@@ -1,10 +1,26 @@
 import 'package:clothes/features/listing_publish/data/listing_publish_repository.dart';
+import 'package:clothes/features/listing_publish/data/listing_catalogs.dart';
 import 'package:clothes/features/listing_publish/listing_publish_controller.dart';
 import 'package:clothes/features/listing_publish/models/listing_draft.dart';
 import 'package:clothes/features/listing_publish/services/product_image_analyzer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('category schemas stay compact and relevant', () {
+    final tShirtFields = ListingCatalogs.attributesFor(
+      't_shirt',
+    ).map((field) => field.id).toList();
+    final jeansFields = ListingCatalogs.attributesFor(
+      'jeans',
+    ).map((field) => field.id).toList();
+
+    expect(tShirtFields.length, inInclusiveRange(3, 6));
+    expect(tShirtFields, contains('sleeve_length'));
+    expect(tShirtFields, isNot(contains('rise')));
+    expect(jeansFields, contains('rise'));
+    expect(jeansFields, isNot(contains('sleeve_length')));
+  });
+
   group('ListingDraft', () {
     test('round-trips all publication data', () {
       final draft = _validDraft();
@@ -25,6 +41,9 @@ void main() {
       expect(restored.predictions['primary_color']?.predictedValue, 'blue');
       expect(restored.predictions['primary_color']?.confirmedValue, 'black');
       expect(restored.predictions['primary_color']?.wasEdited, isTrue);
+      expect(restored.normalizedCategory, 'hoodie');
+      expect(restored.hasDefects, isTrue);
+      expect(restored.defectDescription, 'Небольшая затяжка на рукаве');
       expect(restored.validateForPublish(), isNull);
     });
 
@@ -51,6 +70,50 @@ void main() {
       expect(entry?.wasEdited, isTrue);
       controller.dispose();
     });
+
+    test('never overwrites a confirmed ML suggestion on a later pass', () {
+      final controller = _controller();
+      controller.draft = ListingDraft.empty(sellerId: 'seller')
+        ..normalizedCategory = 'hoodie'
+        ..material = 'cotton'
+        ..categoryAttributes['material'] = 'cotton'
+        ..predictions['material'] = ListingFieldPrediction(
+          fieldName: 'material',
+          predictedValue: 'cotton',
+          confidence: 0.8,
+          source: 'visual',
+        );
+
+      controller.confirmRelevantAttributes();
+      controller.applyAnalysisResult(
+        _analysis(primaryColor: 'blue', material: 'polyester'),
+      );
+
+      expect(controller.draft.material, 'cotton');
+      expect(controller.draft.predictions['material']?.userConfirmed, isTrue);
+      controller.dispose();
+    });
+
+    test(
+      'publishing is allowed while enrichment analysis is unavailable',
+      () async {
+        final repository = _FakeRepository();
+        final controller = ListingPublishController(
+          repository: repository,
+          analyzer: _FakeAnalyzer(),
+          sellerName: 'Seller',
+          sellerHandle: '@seller',
+        );
+        controller.draft = _validDraft()
+          ..analysisStatus = ListingAnalysisStatus.failed;
+
+        final product = await controller.publish();
+
+        expect(product.id, controller.draft.id);
+        expect(repository.publishCalls, 1);
+        controller.dispose();
+      },
+    );
 
     test('selecting gender keeps the internal section in sync', () {
       final controller = _controller();
@@ -96,15 +159,19 @@ ListingDraft _validDraft() {
   final draft = ListingDraft.empty(sellerId: 'seller')
     ..title = 'Худи'
     ..price = 4500
+    ..description = 'Чёрное хлопковое худи в отличном состоянии'
     ..size = 'm'
     ..condition = 'excellent'
     ..section = 'unisex'
     ..category = 'clothing'
     ..subcategory = 'tops'
     ..itemType = 'hoodie'
+    ..normalizedCategory = 'hoodie'
     ..gender = 'unisex'
     ..primaryColor = 'black'
     ..brand = 'no_brand'
+    ..hasDefects = true
+    ..defectDescription = 'Небольшая затяжка на рукаве'
     ..city = 'Москва'
     ..shippingAddress = 'Тверская, 1';
   draft.deliveryMethods.add('cdek');
@@ -121,7 +188,10 @@ ListingDraft _validDraft() {
   return draft;
 }
 
-ProductAnalysisResult _analysis({required String primaryColor}) {
+ProductAnalysisResult _analysis({
+  required String primaryColor,
+  String? material,
+}) {
   const empty = AnalyzedField<String>(
     value: null,
     confidence: 0,
@@ -140,7 +210,11 @@ ProductAnalysisResult _analysis({required String primaryColor}) {
     ),
     secondaryColors: const [],
     brand: empty,
-    material: empty,
+    material: AnalyzedField<String>(
+      value: material,
+      confidence: material == null ? 0 : 0.9,
+      source: 'test',
+    ),
     pattern: empty,
     season: empty,
     style: empty,

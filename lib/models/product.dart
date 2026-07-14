@@ -51,6 +51,13 @@ class Product {
   final String mainImage;
   final DateTime? publishedAt;
   final String analysisStatus;
+  final String normalizedCategory;
+  final String normalizedBrand;
+  final String audience;
+  final bool hasDefects;
+  final String defectsDescription;
+  final Map<String, String> categoryAttributes;
+  final String enrichmentStatus;
 
   Product({
     required this.id,
@@ -98,11 +105,34 @@ class Product {
     this.mainImage = '',
     this.publishedAt,
     this.analysisStatus = 'pending',
+    this.normalizedCategory = '',
+    this.normalizedBrand = '',
+    this.audience = '',
+    this.hasDefects = false,
+    this.defectsDescription = '',
+    this.categoryAttributes = const {},
+    this.enrichmentStatus = 'pending',
   });
 
   String get outfitImage => outfitImages.isNotEmpty ? outfitImages.first : '';
   String get outfitDisplayImage =>
       outfitImages.isNotEmpty ? outfitImages.first : image;
+
+  Map<String, String> get importantCharacteristics {
+    final values = <String, String>{...categoryAttributes};
+    void add(String key, String value) {
+      if (value.isNotEmpty) values.putIfAbsent(key, () => value);
+    }
+
+    add('material', material);
+    add('pattern', pattern);
+    add('fit', fit);
+    add('sleeve_length', sleeveLength);
+    add('closure', closure);
+    add('season', season);
+    add('style', style);
+    return values;
+  }
 
   factory Product.fromJson(Map<String, dynamic> json) {
     final priceValue = (json['priceValue'] as num?)?.toInt() ?? 0;
@@ -152,6 +182,13 @@ class Product {
       mainImage: json['mainImage'] as String? ?? json['image'] as String? ?? '',
       publishedAt: DateTime.tryParse(json['publishedAt'] as String? ?? ''),
       analysisStatus: json['analysisStatus'] as String? ?? 'pending',
+      normalizedCategory: json['normalizedCategory'] as String? ?? '',
+      normalizedBrand: json['normalizedBrand'] as String? ?? '',
+      audience: json['audience'] as String? ?? json['gender'] as String? ?? '',
+      hasDefects: json['hasDefects'] as bool? ?? false,
+      defectsDescription: json['defectsDescription'] as String? ?? '',
+      categoryAttributes: _attributeMap(json['categoryAttributes']),
+      enrichmentStatus: json['enrichmentStatus'] as String? ?? 'pending',
     );
   }
 
@@ -168,7 +205,15 @@ class Product {
     ];
     final title = json['title'] as String? ?? '';
     final categoryId = json['category'] as String? ?? '';
+    final itemType = json['item_type'] as String? ?? '';
+    final storedNormalizedCategory =
+        json['normalized_category'] as String? ?? '';
+    final normalizedCategory = ListingCatalogs.normalizeCategory(
+      storedNormalizedCategory.isNotEmpty ? storedNormalizedCategory : itemType,
+    );
     final brandId = json['brand'] as String? ?? '';
+    final normalizedBrand =
+        json['normalized_brand'] as String? ?? brandId.toLowerCase();
     final sizeId = json['size'] as String? ?? '';
     final conditionId = json['condition'] as String? ?? '';
     final primaryColor =
@@ -190,8 +235,12 @@ class Product {
       detailPrice: json['detail_price'] as String? ?? priceValue.toString(),
       priceValue: priceValue,
       image: image,
-      category: _displayName(categoryId),
-      brand: _displayName(brandId),
+      category: _displayName(
+        normalizedCategory.isNotEmpty
+            ? normalizedCategory
+            : (itemType.isNotEmpty ? itemType : categoryId),
+      ),
+      brand: _displayName(brandId.isEmpty ? normalizedBrand : brandId),
       size: _displayName(sizeId),
       color: _displayName(primaryColor),
       condition: _displayName(conditionId),
@@ -210,8 +259,8 @@ class Product {
       section: json['section'] as String? ?? '',
       categoryId: categoryId,
       subcategory: json['subcategory'] as String? ?? '',
-      itemType: json['item_type'] as String? ?? '',
-      gender: json['gender'] as String? ?? '',
+      itemType: itemType,
+      gender: json['audience'] as String? ?? json['gender'] as String? ?? '',
       primaryColor: primaryColor,
       secondaryColors: _strings(json['secondary_colors']),
       material: json['material'] as String? ?? '',
@@ -228,6 +277,21 @@ class Product {
       mainImage: image,
       publishedAt: DateTime.tryParse(json['published_at'] as String? ?? ''),
       analysisStatus: json['analysis_status'] as String? ?? 'pending',
+      normalizedCategory: normalizedCategory,
+      normalizedBrand: normalizedBrand,
+      audience: json['audience'] as String? ?? json['gender'] as String? ?? '',
+      hasDefects: json['has_defects'] as bool? ?? false,
+      defectsDescription:
+          json['defects_description'] as String? ??
+          json['defect_description'] as String? ??
+          '',
+      categoryAttributes: _attributeMap(
+        json['product_attributes'] ?? json['category_attributes'],
+      ),
+      enrichmentStatus:
+          json['enrichment_status'] as String? ??
+          json['analysis_status'] as String? ??
+          'pending',
     );
   }
 
@@ -277,6 +341,13 @@ class Product {
     'mainImage': mainImage,
     'publishedAt': publishedAt?.toIso8601String(),
     'analysisStatus': analysisStatus,
+    'normalizedCategory': normalizedCategory,
+    'normalizedBrand': normalizedBrand,
+    'audience': audience,
+    'hasDefects': hasDefects,
+    'defectsDescription': defectsDescription,
+    'categoryAttributes': categoryAttributes,
+    'enrichmentStatus': enrichmentStatus,
   };
 
   Map<String, dynamic> toSupabaseJson({
@@ -324,6 +395,12 @@ class Product {
       'main_image': mainImage.isEmpty ? image : mainImage,
       'published_at': publishedAt?.toIso8601String(),
       'analysis_status': analysisStatus,
+      'normalized_category': normalizedCategory,
+      'normalized_brand': normalizedBrand,
+      'audience': audience.isEmpty ? gender : audience,
+      'has_defects': hasDefects,
+      'defects_description': defectsDescription,
+      'enrichment_status': enrichmentStatus,
     };
     if (includeOutfitImages) data['outfit_images'] = outfitImages;
     return data;
@@ -375,6 +452,13 @@ class Product {
     String? mainImage,
     DateTime? publishedAt,
     String? analysisStatus,
+    String? normalizedCategory,
+    String? normalizedBrand,
+    String? audience,
+    bool? hasDefects,
+    String? defectsDescription,
+    Map<String, String>? categoryAttributes,
+    String? enrichmentStatus,
   }) => Product(
     id: id ?? this.id,
     title: title ?? this.title,
@@ -421,10 +505,38 @@ class Product {
     mainImage: mainImage ?? this.mainImage,
     publishedAt: publishedAt ?? this.publishedAt,
     analysisStatus: analysisStatus ?? this.analysisStatus,
+    normalizedCategory: normalizedCategory ?? this.normalizedCategory,
+    normalizedBrand: normalizedBrand ?? this.normalizedBrand,
+    audience: audience ?? this.audience,
+    hasDefects: hasDefects ?? this.hasDefects,
+    defectsDescription: defectsDescription ?? this.defectsDescription,
+    categoryAttributes: categoryAttributes ?? this.categoryAttributes,
+    enrichmentStatus: enrichmentStatus ?? this.enrichmentStatus,
   );
 
   static List<String> _strings(Object? value) =>
       (value as List<dynamic>? ?? const []).whereType<String>().toList();
+
+  static Map<String, String> _attributeMap(Object? value) {
+    final result = <String, String>{};
+    if (value is Map) {
+      for (final entry in value.entries) {
+        final raw = entry.value;
+        if (raw != null && raw.toString().isNotEmpty) {
+          result[entry.key.toString()] = raw.toString();
+        }
+      }
+    } else if (value is List) {
+      for (final raw in value.whereType<Map>()) {
+        final key = raw['attribute_key']?.toString() ?? '';
+        final attributeValue = raw['value'];
+        if (key.isNotEmpty && attributeValue != null) {
+          result[key] = attributeValue.toString();
+        }
+      }
+    }
+    return Map.unmodifiable(result);
+  }
 
   static String _displayName(String id) =>
       ListingCatalogs.nameOf(id, fallback: id);

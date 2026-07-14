@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     max_main_image_side: int = 1024
     analysis_cache_size: int = 512
     analysis_cache_ttl_seconds: int = 86400
-    background_workers: int = 2
+    background_workers: int = 1
     inference_max_concurrency: int = 1
     inference_queue_size: int = 4
     inference_queue_timeout_seconds: float = 20.0
@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     grounding_dino_text_threshold: float = 0.22
     grounding_dino_nms_threshold: float = 0.55
     grounded_sam_max_boxes: int = 6
-    enable_grounded_sam: bool = True
+    enable_grounded_sam: bool = False
     sam_checkpoint_name: str = "sam2.1_hiera_large.pt"
     sam_config: str = "configs/sam2.1/sam2.1_hiera_l.yaml"
     grounding_dino_checkpoint_name: str = "groundingdino_swint_ogc.pth"
@@ -125,7 +125,9 @@ class Settings(BaseSettings):
     rembg_secondary_component_min_relative_area: float = 0.18
     max_detected_garments: int = 4
     clothing_region_model_name: str = "u2net_cloth_seg"
-    background_removal_model_name: str = "isnet-general-use"
+    # Production uses the same compact rembg model for masks and final PNGs.
+    # Keeping one ONNX session resident is important on the 4 GB CPU VPS.
+    background_removal_model_name: str = "u2netp"
     background_removal_max_image_bytes: int = 15 * 1024 * 1024
     background_removal_max_side: int = 1600
     background_removal_timeout_seconds: float = 60.0
@@ -137,10 +139,10 @@ class Settings(BaseSettings):
     paddleocr_repo_commit: str = "211989f046cc1878460f9e65574690c00a127a1a"
     paddleocr_language: str = "en"
     paddleocr_version: str = "PP-OCRv6"
-    enable_paddleocr: bool = True
+    enable_paddleocr: bool = False
     brand_match_threshold: float = 78.0
 
-    enable_qwen: bool = True
+    enable_qwen: bool = False
     allow_qwen_cpu: bool = False
     # 2B keeps the optional background worker from competing with the fast
     # FashionSigLIP path on modest deployment GPUs.
@@ -155,6 +157,16 @@ class Settings(BaseSettings):
     warmup_on_start: bool = True
     preload_slow_models: bool = False
     require_core_models: bool = False
+
+    enrichment_worker_enabled: bool = True
+    enrichment_poll_seconds: float = 5.0
+    enrichment_lease_seconds: int = 900
+    enrichment_job_timeout_seconds: float = 720.0
+    enrichment_retry_base_seconds: int = 60
+    enrichment_max_images: int = 8
+    enrichment_image_max_side: int = 1280
+    enrichment_embedding_batch_size: int = 4
+    enrichment_cutout_bucket: str = "product-images"
 
     @property
     def sam_checkpoint(self) -> Path:

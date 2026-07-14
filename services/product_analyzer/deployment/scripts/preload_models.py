@@ -11,13 +11,12 @@ logging.basicConfig(level=logging.INFO)
 settings = get_settings()
 models = ModelManager(settings)
 try:
-    # Bake both artifacts into the read-only runtime image. Feature flags
-    # control RAM loading/inference, while a larger deployment can still opt
-    # into the clothing parser through its runtime environment.
-    for model_name in (
-        settings.clothing_region_model_name,
+    # The 4 GB production worker intentionally bakes only the compact model
+    # used by both segmentation and final transparent PNG generation.
+    for model_name in {
+        settings.rembg_model_name,
         settings.background_removal_model_name,
-    ):
+    }:
         session = sessions.get(model_name)
         if session is None:
             raise RuntimeError(f"Unknown rembg model: {model_name}")

@@ -8,6 +8,18 @@ class CatalogOption {
   final Color? color;
 }
 
+class ListingAttributeDefinition {
+  const ListingAttributeDefinition({
+    required this.id,
+    required this.label,
+    required this.options,
+  });
+
+  final String id;
+  final String label;
+  final List<CatalogOption> options;
+}
+
 abstract final class ListingCatalogs {
   static const sections = <CatalogOption>[
     CatalogOption('women', 'Женское'),
@@ -21,6 +33,23 @@ abstract final class ListingCatalogs {
     CatalogOption('shoes', 'Обувь'),
     CatalogOption('accessories', 'Аксессуары'),
     CatalogOption('jewelry', 'Украшения'),
+  ];
+
+  /// Final buyer-facing categories. New listings select exactly one of these
+  /// instead of exposing the legacy section/category/subcategory hierarchy.
+  static const finalCategories = <CatalogOption>[
+    CatalogOption('t_shirt', 'Футболка'),
+    CatalogOption('hoodie', 'Худи'),
+    CatalogOption('shirt', 'Рубашка'),
+    CatalogOption('jacket', 'Куртка'),
+    CatalogOption('jeans', 'Джинсы'),
+    CatalogOption('trousers', 'Брюки'),
+    CatalogOption('dress', 'Платье'),
+    CatalogOption('skirt', 'Юбка'),
+    CatalogOption('sneakers', 'Кроссовки'),
+    CatalogOption('boots', 'Ботинки'),
+    CatalogOption('bag', 'Сумка'),
+    CatalogOption('accessory', 'Аксессуар'),
   ];
 
   static const subcategoriesByCategory = <String, List<CatalogOption>>{
@@ -186,6 +215,322 @@ abstract final class ListingCatalogs {
     CatalogOption('buckle', 'Пряжка'),
   ];
 
+  static const collars = <CatalogOption>[
+    CatalogOption('round', 'Круглый'),
+    CatalogOption('v_neck', 'V-образный'),
+    CatalogOption('polo', 'Поло'),
+    CatalogOption('shirt', 'Рубашечный'),
+    CatalogOption('stand', 'Стойка'),
+    CatalogOption('hood', 'Капюшон'),
+    CatalogOption('none', 'Без воротника'),
+  ];
+
+  static const rises = <CatalogOption>[
+    CatalogOption('low', 'Низкая'),
+    CatalogOption('mid', 'Средняя'),
+    CatalogOption('high', 'Высокая'),
+  ];
+
+  static const categoryAttributeSchemas =
+      <String, List<ListingAttributeDefinition>>{
+        't_shirt': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(
+            id: 'pattern',
+            label: 'Рисунок',
+            options: patterns,
+          ),
+          ListingAttributeDefinition(id: 'fit', label: 'Крой', options: fits),
+          ListingAttributeDefinition(
+            id: 'sleeve_length',
+            label: 'Длина рукава',
+            options: sleeveLengths,
+          ),
+          ListingAttributeDefinition(
+            id: 'collar',
+            label: 'Воротник',
+            options: collars,
+          ),
+        ],
+        'hoodie': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(
+            id: 'pattern',
+            label: 'Рисунок',
+            options: patterns,
+          ),
+          ListingAttributeDefinition(id: 'fit', label: 'Крой', options: fits),
+          ListingAttributeDefinition(
+            id: 'closure',
+            label: 'Тип застёжки',
+            options: closures,
+          ),
+        ],
+        'shirt': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(
+            id: 'pattern',
+            label: 'Рисунок',
+            options: patterns,
+          ),
+          ListingAttributeDefinition(id: 'fit', label: 'Крой', options: fits),
+          ListingAttributeDefinition(
+            id: 'sleeve_length',
+            label: 'Длина рукава',
+            options: sleeveLengths,
+          ),
+          ListingAttributeDefinition(
+            id: 'collar',
+            label: 'Воротник',
+            options: collars,
+          ),
+          ListingAttributeDefinition(
+            id: 'closure',
+            label: 'Тип застёжки',
+            options: closures,
+          ),
+        ],
+        'jacket': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(id: 'fit', label: 'Крой', options: fits),
+          ListingAttributeDefinition(
+            id: 'collar',
+            label: 'Воротник',
+            options: collars,
+          ),
+          ListingAttributeDefinition(
+            id: 'closure',
+            label: 'Тип застёжки',
+            options: closures,
+          ),
+          ListingAttributeDefinition(
+            id: 'season',
+            label: 'Сезон',
+            options: seasons,
+          ),
+        ],
+        'jeans': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(id: 'fit', label: 'Крой', options: fits),
+          ListingAttributeDefinition(
+            id: 'rise',
+            label: 'Посадка',
+            options: rises,
+          ),
+          ListingAttributeDefinition(
+            id: 'closure',
+            label: 'Тип застёжки',
+            options: closures,
+          ),
+        ],
+        'trousers': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(
+            id: 'pattern',
+            label: 'Рисунок',
+            options: patterns,
+          ),
+          ListingAttributeDefinition(id: 'fit', label: 'Крой', options: fits),
+          ListingAttributeDefinition(
+            id: 'rise',
+            label: 'Посадка',
+            options: rises,
+          ),
+          ListingAttributeDefinition(
+            id: 'closure',
+            label: 'Тип застёжки',
+            options: closures,
+          ),
+        ],
+        'dress': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(
+            id: 'pattern',
+            label: 'Рисунок',
+            options: patterns,
+          ),
+          ListingAttributeDefinition(id: 'fit', label: 'Крой', options: fits),
+          ListingAttributeDefinition(
+            id: 'sleeve_length',
+            label: 'Длина рукава',
+            options: sleeveLengths,
+          ),
+          ListingAttributeDefinition(
+            id: 'collar',
+            label: 'Воротник',
+            options: collars,
+          ),
+          ListingAttributeDefinition(
+            id: 'closure',
+            label: 'Тип застёжки',
+            options: closures,
+          ),
+        ],
+        'skirt': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(
+            id: 'pattern',
+            label: 'Рисунок',
+            options: patterns,
+          ),
+          ListingAttributeDefinition(id: 'fit', label: 'Крой', options: fits),
+          ListingAttributeDefinition(
+            id: 'rise',
+            label: 'Посадка',
+            options: rises,
+          ),
+          ListingAttributeDefinition(
+            id: 'closure',
+            label: 'Тип застёжки',
+            options: closures,
+          ),
+        ],
+        'sneakers': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(
+            id: 'pattern',
+            label: 'Рисунок',
+            options: patterns,
+          ),
+          ListingAttributeDefinition(
+            id: 'closure',
+            label: 'Тип застёжки',
+            options: closures,
+          ),
+          ListingAttributeDefinition(
+            id: 'style',
+            label: 'Стиль',
+            options: styles,
+          ),
+        ],
+        'boots': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(
+            id: 'closure',
+            label: 'Тип застёжки',
+            options: closures,
+          ),
+          ListingAttributeDefinition(
+            id: 'season',
+            label: 'Сезон',
+            options: seasons,
+          ),
+          ListingAttributeDefinition(
+            id: 'style',
+            label: 'Стиль',
+            options: styles,
+          ),
+        ],
+        'bag': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(
+            id: 'pattern',
+            label: 'Рисунок',
+            options: patterns,
+          ),
+          ListingAttributeDefinition(
+            id: 'closure',
+            label: 'Тип застёжки',
+            options: closures,
+          ),
+          ListingAttributeDefinition(
+            id: 'style',
+            label: 'Стиль',
+            options: styles,
+          ),
+        ],
+        'accessory': [
+          ListingAttributeDefinition(
+            id: 'material',
+            label: 'Материал',
+            options: materials,
+          ),
+          ListingAttributeDefinition(
+            id: 'pattern',
+            label: 'Рисунок',
+            options: patterns,
+          ),
+          ListingAttributeDefinition(
+            id: 'style',
+            label: 'Стиль',
+            options: styles,
+          ),
+        ],
+      };
+
+  static const categoryAliases = <String, String>{
+    'tshirt': 't_shirt',
+    't-shirt': 't_shirt',
+    'tee': 't_shirt',
+    'футболка': 't_shirt',
+    'толстовка': 'hoodie',
+    'худи': 'hoodie',
+    'рубашка': 'shirt',
+    'куртка': 'jacket',
+    'джинсы': 'jeans',
+    'брюки': 'trousers',
+    'штаны': 'trousers',
+    'платье': 'dress',
+    'юбка': 'skirt',
+    'кроссовки': 'sneakers',
+    'ботинки': 'boots',
+    'сумка': 'bag',
+    'аксессуар': 'accessory',
+  };
+
+  static String normalizeCategory(String raw) {
+    final value = raw.trim().toLowerCase().replaceAll('ё', 'е');
+    if (finalCategories.any((option) => option.id == value)) return value;
+    return categoryAliases[value] ?? '';
+  }
+
+  static List<ListingAttributeDefinition> attributesFor(String category) =>
+      categoryAttributeSchemas[normalizeCategory(category)] ?? const [];
+
   static const universalSizes = <CatalogOption>[
     CatalogOption('xxs', 'XXS'),
     CatalogOption('xs', 'XS'),
@@ -224,6 +569,7 @@ abstract final class ListingCatalogs {
     final all = <CatalogOption>[
       ...sections,
       ...categories,
+      ...finalCategories,
       ...subcategoriesByCategory.values.expand((items) => items),
       ...itemTypesBySubcategory.values.expand((items) => items),
       ...genders,
@@ -236,6 +582,8 @@ abstract final class ListingCatalogs {
       ...fits,
       ...sleeveLengths,
       ...closures,
+      ...collars,
+      ...rises,
       ...universalSizes,
       ...shoeSizes,
       ...conditions,

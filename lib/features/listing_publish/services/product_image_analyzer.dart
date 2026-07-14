@@ -3,11 +3,13 @@ class AnalyzedField<T> {
     required this.value,
     required this.confidence,
     required this.source,
+    this.modelVersion = '',
   }) : assert(confidence >= 0 && confidence <= 1);
 
   final T? value;
   final double confidence;
   final String source;
+  final String modelVersion;
 
   bool get hasValue => value != null;
   bool get needsReview => hasValue && confidence < 0.65;
@@ -16,6 +18,7 @@ class AnalyzedField<T> {
     'value': value,
     'confidence': confidence,
     'source': source,
+    'model_version': modelVersion,
   };
 
   factory AnalyzedField.fromJson(
@@ -25,6 +28,7 @@ class AnalyzedField<T> {
     value: decodeValue(json['value']),
     confidence: ((json['confidence'] as num?)?.toDouble() ?? 0).clamp(0, 1),
     source: json['source'] as String? ?? 'unknown',
+    modelVersion: json['model_version'] as String? ?? '',
   );
 }
 
@@ -56,6 +60,9 @@ class ProductAnalysisResult {
     this.sleeveLength = _emptyField,
     this.closure = _emptyField,
     this.suggestedSize = _emptyField,
+    this.normalizedCategory = _emptyField,
+    this.collar = _emptyField,
+    this.rise = _emptyField,
   });
 
   final AnalyzedField<String> section;
@@ -73,6 +80,9 @@ class ProductAnalysisResult {
   final AnalyzedField<String> fit;
   final AnalyzedField<String> sleeveLength;
   final AnalyzedField<String> closure;
+  final AnalyzedField<String> normalizedCategory;
+  final AnalyzedField<String> collar;
+  final AnalyzedField<String> rise;
   final AnalyzedField<String> suggestedTitle;
   final AnalyzedField<String> suggestedDescription;
   final String? analysisId;
@@ -94,6 +104,9 @@ class ProductAnalysisResult {
     'fit': fit,
     'sleeve_length': sleeveLength,
     'closure': closure,
+    'normalized_category': normalizedCategory,
+    'collar': collar,
+    'rise': rise,
   };
 
   Map<String, dynamic> toJson() => {
@@ -122,7 +135,7 @@ class ProductAnalysisResult {
       category: field('category'),
       subcategory: field('subcategory'),
       itemType: field('item_type'),
-      gender: field('gender'),
+      gender: field('audience').hasValue ? field('audience') : field('gender'),
       primaryColor: field('primary_color'),
       secondaryColors: secondary is List
           ? secondary
@@ -143,6 +156,9 @@ class ProductAnalysisResult {
       fit: field('fit'),
       sleeveLength: field('sleeve_length'),
       closure: field('closure'),
+      normalizedCategory: field('normalized_category'),
+      collar: field('collar'),
+      rise: field('rise'),
       suggestedTitle: field('suggested_title'),
       suggestedDescription: field('suggested_description'),
       analysisId: json['analysis_id'] as String?,

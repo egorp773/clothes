@@ -135,7 +135,7 @@ def test_background_removal_releases_region_model_and_returns_local_png(monkeypa
     )
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
-    assert response.headers["x-background-model"] == "isnet-general-use"
+    assert response.headers["x-background-model"] == "u2netp"
     assert Image.open(io.BytesIO(response.content)).mode == "RGBA"
     assert region_unloads == 1
 

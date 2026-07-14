@@ -210,16 +210,16 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
       case ListingPublishStep.basics:
         final error = draft.validateBasics();
         if (error != null) return _showValidation(error);
-        await _controller.waitBrieflyForAnalysis();
-        if (mounted) _controller.goToStep(ListingPublishStep.attributes);
+        _controller.goToStep(ListingPublishStep.delivery);
       case ListingPublishStep.attributes:
         final error = draft.validateAttributes();
         if (error != null) return _showValidation(error);
-        _controller.goToStep(ListingPublishStep.delivery);
+        _controller.confirmRelevantAttributes();
+        _controller.goToStep(ListingPublishStep.preview);
       case ListingPublishStep.delivery:
         final error = draft.validateDelivery();
         if (error != null) return _showValidation(error);
-        _controller.goToStep(ListingPublishStep.preview);
+        _controller.goToStep(ListingPublishStep.attributes);
       case ListingPublishStep.preview:
         final error = draft.validateForPublish();
         if (error != null) return _showValidation(error);
@@ -243,9 +243,9 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
   void _goBack() {
     final previous = switch (_controller.draft.currentStep) {
       ListingPublishStep.basics => ListingPublishStep.photos,
-      ListingPublishStep.attributes => ListingPublishStep.basics,
-      ListingPublishStep.delivery => ListingPublishStep.attributes,
-      ListingPublishStep.preview => ListingPublishStep.delivery,
+      ListingPublishStep.delivery => ListingPublishStep.basics,
+      ListingPublishStep.attributes => ListingPublishStep.delivery,
+      ListingPublishStep.preview => ListingPublishStep.attributes,
       _ => ListingPublishStep.photos,
     };
     _controller.goToStep(previous);
@@ -389,7 +389,7 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
   String _titleFor(ListingPublishStep step) => switch (step) {
     ListingPublishStep.photos => 'Фотографии',
     ListingPublishStep.basics => 'Основная информация',
-    ListingPublishStep.attributes => 'Характеристики',
+    ListingPublishStep.attributes => 'Проверьте характеристики',
     ListingPublishStep.delivery => 'Адрес и доставка',
     ListingPublishStep.preview => 'Предпросмотр',
     ListingPublishStep.success => 'Готово',

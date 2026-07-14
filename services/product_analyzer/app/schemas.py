@@ -31,7 +31,17 @@ class AnalysisResponse(BaseModel):
     category: AnalyzedField
     subcategory: AnalyzedField
     item_type: AnalyzedField
+    normalized_category: AnalyzedField = Field(
+        default_factory=lambda: AnalyzedField(
+            value=None, confidence=0.0, source="not_detected"
+        )
+    )
     gender: AnalyzedField
+    audience: AnalyzedField = Field(
+        default_factory=lambda: AnalyzedField(
+            value=None, confidence=0.0, source="not_detected"
+        )
+    )
     primary_color: AnalyzedField
     secondary_colors: list[AnalyzedField]
     brand: AnalyzedField
@@ -41,6 +51,16 @@ class AnalysisResponse(BaseModel):
     style: AnalyzedField
     fit: AnalyzedField
     sleeve_length: AnalyzedField
+    collar: AnalyzedField = Field(
+        default_factory=lambda: AnalyzedField(
+            value=None, confidence=0.0, source="pending_enrichment"
+        )
+    )
+    rise: AnalyzedField = Field(
+        default_factory=lambda: AnalyzedField(
+            value=None, confidence=0.0, source="pending_enrichment"
+        )
+    )
     closure: AnalyzedField
     suggested_title: AnalyzedField
     suggested_description: AnalyzedField

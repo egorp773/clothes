@@ -39,6 +39,7 @@ class FashionSiglipAdapter:
         self._prompt_slices: list[tuple[int, int]] = []
         self._ocr_target_embeddings = None
         self._ocr_target_labels = ("garment", "tag", "label", "logo")
+        self._text_embedding_cache: dict[tuple[str, ...], np.ndarray] = {}
 
     @property
     def model_name(self) -> str:
@@ -234,3 +235,57 @@ class FashionSiglipAdapter:
                 confidence, index = torch.max(probabilities, dim=0)
             label = self._ocr_target_labels[int(index)]
             return label if label != "garment" and float(confidence) >= 0.55 else None
+
+    def score_text_options(
+        self,
+        embedding: np.ndarray,
+        options: dict[str, tuple[str, ...]],
+        *,
+        temperature: float = 12.0,
+    ) -> dict[str, float]:
+        """Score a small closed vocabulary without loading another model.
+
+        Prompt embeddings are cached for the lifetime of the worker. This is
+        used only by asynchronous enrichment, never on the publish request.
+        """
+        if not options:
+            return {}
+        self.load()
+        labels = list(options)
+        prompts: list[str] = []
+        slices: list[tuple[int, int]] = []
+        for label in labels:
+            start = len(prompts)
+            prompts.extend(options[label])
+            slices.append((start, len(prompts)))
+        cache_key = tuple(prompts)
+        with self._lock:
+            text_embeddings = self._text_embedding_cache.get(cache_key)
+            if text_embeddings is None:
+                import torch
+
+                encoded = self._processor(
+                    text=prompts,
+                    padding="max_length",
+                    return_tensors="pt",
+                )
+                with torch.inference_mode():
+                    features = self._model.get_text_features(
+                        encoded["input_ids"].to(self._device),
+                        normalize=True,
+                    )
+                text_embeddings = features.detach().float().cpu().numpy()
+                self._text_embedding_cache[cache_key] = text_embeddings
+        vector = np.asarray(embedding, dtype=np.float32)
+        raw = vector @ text_embeddings.T
+        grouped = np.asarray(
+            [float(raw[start:end].mean()) for start, end in slices],
+            dtype=np.float64,
+        )
+        grouped = (grouped - grouped.max()) * temperature
+        probabilities = np.exp(grouped)
+        probabilities /= max(float(probabilities.sum()), 1e-12)
+        return {
+            label: float(probability)
+            for label, probability in zip(labels, probabilities, strict=True)
+        }

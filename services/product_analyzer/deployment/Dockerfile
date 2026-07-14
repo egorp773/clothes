@@ -1,4 +1,4 @@
-FROM python:3.10.18-slim-bookworm
+FROM python:3.10.18-slim-bookworm AS dependencies
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -33,11 +33,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     VISUAL_SEARCH_REGION_TIMEOUT_SECONDS=15 \
     VISUAL_SEARCH_ENABLE_CLOTHING_PARSER=false \
     VISUAL_SEARCH_PRELOAD_REGION_MODEL=false \
-    BACKGROUND_REMOVAL_MODEL_NAME=isnet-general-use \
+    REMBG_MODEL_NAME=u2netp \
+    BACKGROUND_REMOVAL_MODEL_NAME=u2netp \
     BACKGROUND_REMOVAL_MAX_SIDE=1600 \
     BACKGROUND_REMOVAL_TIMEOUT_SECONDS=60 \
     MAX_MAIN_IMAGE_SIDE=768 \
-    VISUAL_SEARCH_MAX_SIDE=768
+    VISUAL_SEARCH_MAX_SIDE=768 \
+    ENRICHMENT_WORKER_ENABLED=true \
+    ENRICHMENT_EMBEDDING_BATCH_SIZE=4
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       curl libglib2.0-0 libgl1 libgomp1 \
@@ -48,6 +51,7 @@ COPY deployment/requirements-space.txt ./requirements-space.txt
 RUN python -m pip install --upgrade pip==25.1.1 \
     && python -m pip install -r requirements-space.txt
 
+FROM dependencies AS model-runtime
 COPY app ./app
 COPY deployment/scripts ./scripts
 RUN mkdir -p /opt/models/huggingface /opt/models/rembg \
@@ -56,9 +60,22 @@ RUN mkdir -p /opt/models/huggingface /opt/models/rembg \
     && chown -R app:app /app /opt/models \
     && chmod +x scripts/start.sh
 
+FROM model-runtime AS test
+COPY deployment/requirements-test.txt ./requirements-test.txt
+RUN python -m pip install -r requirements-test.txt
+COPY tests ./tests
+COPY pytest.ini ./pytest.ini
+ENV EAGER_LOAD_MODELS=false \
+    WARMUP_ON_START=false \
+    REQUIRE_CORE_MODELS=false \
+    REQUIRE_ANALYSIS_AUTH=false \
+    ENRICHMENT_WORKER_ENABLED=false
+USER app
+CMD ["python", "-m", "pytest", "-q"]
+
+FROM model-runtime AS production
 EXPOSE 7860
 HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=5 \
-  CMD curl --fail --silent http://127.0.0.1:${PORT}/health || exit 1
-
+  CMD curl --fail --silent http://127.0.0.1:${PORT}/ready || exit 1
 USER app
 CMD ["/app/scripts/start.sh"]

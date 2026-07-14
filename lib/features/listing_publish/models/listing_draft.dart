@@ -39,14 +39,22 @@ class ListingPhoto {
     required this.id,
     required this.localPath,
     this.remoteUrl = '',
+    this.noBackgroundUrl = '',
     this.storagePath = '',
+    this.role = 'gallery',
+    this.position = 0,
+    this.qualityScore,
     this.uploadStatus = ListingPhotoUploadStatus.pending,
   });
 
   final String id;
   final String localPath;
   String remoteUrl;
+  String noBackgroundUrl;
   String storagePath;
+  String role;
+  int position;
+  double? qualityScore;
   ListingPhotoUploadStatus uploadStatus;
 
   String get displaySource => remoteUrl.isNotEmpty ? remoteUrl : localPath;
@@ -56,18 +64,30 @@ class ListingPhoto {
     'id': id,
     'local_path': localPath,
     'remote_url': remoteUrl,
+    'original_url': remoteUrl,
+    'no_background_url': noBackgroundUrl,
     'storage_path': storagePath,
+    'role': role,
+    'position': position,
+    'quality_score': qualityScore,
     'upload_status': uploadStatus.name,
   };
 
   factory ListingPhoto.fromJson(Map<String, dynamic> json) => ListingPhoto(
     id: json['id'] as String? ?? const Uuid().v4(),
     localPath: json['local_path'] as String? ?? '',
-    remoteUrl: json['remote_url'] as String? ?? '',
+    remoteUrl:
+        json['original_url'] as String? ?? json['remote_url'] as String? ?? '',
+    noBackgroundUrl: json['no_background_url'] as String? ?? '',
     storagePath: json['storage_path'] as String? ?? '',
+    role: json['role'] as String? ?? 'gallery',
+    position: (json['position'] as num?)?.toInt() ?? 0,
+    qualityScore: (json['quality_score'] as num?)?.toDouble(),
     uploadStatus: ListingPhotoUploadStatus.values.firstWhere(
       (value) => value.name == json['upload_status'],
-      orElse: () => (json['remote_url'] as String? ?? '').isNotEmpty
+      orElse: () =>
+          ((json['original_url'] as String? ?? '').isNotEmpty ||
+              (json['remote_url'] as String? ?? '').isNotEmpty)
           ? ListingPhotoUploadStatus.uploaded
           : ListingPhotoUploadStatus.pending,
     ),
@@ -82,7 +102,10 @@ class ListingFieldPrediction {
     this.confidence = 0,
     this.source = 'manual',
     this.wasEdited = false,
-  });
+    this.userConfirmed = false,
+    this.modelVersion = '',
+    DateTime? updatedAt,
+  }) : updatedAt = updatedAt ?? DateTime.now().toUtc();
 
   final String fieldName;
   String? predictedValue;
@@ -90,29 +113,42 @@ class ListingFieldPrediction {
   double confidence;
   String source;
   bool wasEdited;
+  bool userConfirmed;
+  String modelVersion;
+  DateTime updatedAt;
 
   String? get effectiveValue => confirmedValue ?? predictedValue;
   bool get needsReview =>
       predictedValue != null && predictedValue!.isNotEmpty && confidence < 0.65;
+  bool get isProtected => wasEdited || userConfirmed || source == 'manual';
 
   Map<String, dynamic> toJson() => {
     'field_name': fieldName,
+    'value': effectiveValue,
     'predicted_value': predictedValue,
     'confirmed_value': confirmedValue,
     'confidence': confidence,
     'source': source,
     'was_edited': wasEdited,
+    'user_confirmed': userConfirmed || wasEdited,
+    'model_version': modelVersion,
+    'updated_at': updatedAt.toIso8601String(),
   };
 
-  factory ListingFieldPrediction.fromJson(Map<String, dynamic> json) =>
-      ListingFieldPrediction(
-        fieldName: json['field_name'] as String? ?? '',
-        predictedValue: json['predicted_value'] as String?,
-        confirmedValue: json['confirmed_value'] as String?,
-        confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
-        source: json['source'] as String? ?? 'manual',
-        wasEdited: json['was_edited'] as bool? ?? false,
-      );
+  factory ListingFieldPrediction.fromJson(
+    Map<String, dynamic> json,
+  ) => ListingFieldPrediction(
+    fieldName: json['field_name'] as String? ?? '',
+    predictedValue: json['predicted_value'] as String?,
+    confirmedValue: json['confirmed_value'] as String?,
+    confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
+    source: json['source'] as String? ?? 'manual',
+    wasEdited: json['was_edited'] as bool? ?? false,
+    userConfirmed:
+        json['user_confirmed'] as bool? ?? json['was_edited'] as bool? ?? false,
+    modelVersion: json['model_version'] as String? ?? '',
+    updatedAt: DateTime.tryParse(json['updated_at'] as String? ?? '')?.toUtc(),
+  );
 }
 
 class ListingAddress {
@@ -191,6 +227,7 @@ class ListingDraft {
   String category = '';
   String subcategory = '';
   String itemType = '';
+  String normalizedCategory = '';
   String gender = '';
   String primaryColor = '';
   final List<String> secondaryColors = [];
@@ -202,6 +239,11 @@ class ListingDraft {
   String fit = '';
   String sleeveLength = '';
   String closure = '';
+  String collar = '';
+  String rise = '';
+  final Map<String, String> categoryAttributes = {};
+  bool hasDefects = false;
+  String defectDescription = '';
 
   String city = '';
   String shippingAddressId = '';
@@ -241,6 +283,10 @@ class ListingDraft {
     (photo) => photo.uploadStatus == ListingPhotoUploadStatus.failed,
   );
 
+  String get effectiveCategory => normalizedCategory.isNotEmpty
+      ? normalizedCategory
+      : (itemType.isNotEmpty ? itemType : category);
+
   String? validateBasics() {
     if (title.trim().isEmpty) return 'Введите название';
     if (title.trim().length > 80) {
@@ -250,20 +296,23 @@ class ListingDraft {
     if (description.length > 2000) {
       return 'Описание должно быть короче 2000 символов';
     }
+    if (description.trim().isEmpty) return 'Добавьте описание вещи';
+    if (normalizedCategory.isEmpty) return 'Выберите категорию вещи';
+    if (brand.isEmpty || brand == 'other_brand') {
+      return 'Укажите бренд или выберите «Без бренда»';
+    }
     if (size.isEmpty) return 'Выберите размер';
     if (condition.isEmpty) return 'Выберите состояние';
+    if (gender.isEmpty) return 'Выберите аудиторию';
+    if (primaryColor.isEmpty) return 'Выберите основной цвет';
+    if (hasDefects && defectDescription.trim().isEmpty) {
+      return 'Опишите дефекты вещи';
+    }
     return null;
   }
 
   String? validateAttributes() {
-    if (section.isEmpty) return 'Выберите раздел';
-    if (category.isEmpty) return 'Выберите категорию';
-    if (subcategory.isEmpty) return 'Выберите подкатегорию';
-    if (itemType.isEmpty) return 'Выберите тип вещи';
-    if (gender.isEmpty) return 'Выберите пол';
-    if (primaryColor.isEmpty) return 'Выберите основной цвет';
-    if (brand.isEmpty) return 'Укажите бренд или выберите «Без бренда»';
-    return null;
+    return validateBasics();
   }
 
   String? validateDelivery() {
@@ -302,6 +351,7 @@ class ListingDraft {
     'category': category,
     'subcategory': subcategory,
     'item_type': itemType,
+    'normalized_category': normalizedCategory,
     'gender': gender,
     'primary_color': primaryColor,
     'secondary_colors': secondaryColors,
@@ -313,6 +363,11 @@ class ListingDraft {
     'fit': fit,
     'sleeve_length': sleeveLength,
     'closure': closure,
+    'collar': collar,
+    'rise': rise,
+    'category_attributes': categoryAttributes,
+    'has_defects': hasDefects,
+    'defect_description': defectDescription,
     'city': city,
     'shipping_address_id': shippingAddressId,
     'shipping_address': shippingAddress,
@@ -364,6 +419,8 @@ class ListingDraft {
     draft.category = json['category'] as String? ?? '';
     draft.subcategory = json['subcategory'] as String? ?? '';
     draft.itemType = json['item_type'] as String? ?? '';
+    draft.normalizedCategory =
+        json['normalized_category'] as String? ?? draft.itemType;
     draft.gender = json['gender'] as String? ?? '';
     draft.primaryColor = json['primary_color'] as String? ?? '';
     draft.secondaryColors.addAll(
@@ -378,6 +435,19 @@ class ListingDraft {
     draft.fit = json['fit'] as String? ?? '';
     draft.sleeveLength = json['sleeve_length'] as String? ?? '';
     draft.closure = json['closure'] as String? ?? '';
+    draft.collar = json['collar'] as String? ?? '';
+    draft.rise = json['rise'] as String? ?? '';
+    final categoryAttributesJson = json['category_attributes'];
+    if (categoryAttributesJson is Map) {
+      for (final entry in categoryAttributesJson.entries) {
+        final value = entry.value;
+        if (value is String && value.isNotEmpty) {
+          draft.categoryAttributes[entry.key.toString()] = value;
+        }
+      }
+    }
+    draft.hasDefects = json['has_defects'] as bool? ?? false;
+    draft.defectDescription = json['defect_description'] as String? ?? '';
     draft.city = json['city'] as String? ?? '';
     draft.shippingAddressId = json['shipping_address_id'] as String? ?? '';
     draft.shippingAddress = json['shipping_address'] as String? ?? '';

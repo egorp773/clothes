@@ -28,9 +28,13 @@ class ModelManager:
             settings,
             model_name=settings.clothing_region_model_name,
         )
-        self.background_removal = RembgAdapter(
-            settings,
-            model_name=settings.background_removal_model_name,
+        self.background_removal = (
+            self.fast_segmentation
+            if settings.background_removal_model_name == settings.rembg_model_name
+            else RembgAdapter(
+                settings,
+                model_name=settings.background_removal_model_name,
+            )
         )
         self.segmentation = GroundedSamAdapter(settings)
         self.classification = FashionSiglipAdapter(settings)

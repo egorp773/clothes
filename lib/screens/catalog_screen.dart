@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/app_typography.dart';
 import '../features/chat/chat_actions.dart';
+import '../features/listing_publish/data/listing_catalogs.dart';
 import '../features/visual_search/visual_search_camera_screen.dart';
 import '../models/app_profile.dart';
 import '../models/message_thread.dart';
@@ -85,6 +86,8 @@ class _CatalogScreenState extends State<CatalogScreen>
   final ScrollController _scrollController = ScrollController();
   bool _showFloatingSearch = false;
   double _lastScrollOffset = 0;
+  String _searchQuery = '';
+  final _filters = _CatalogFilters();
 
   final List<String> _tabs = [
     'Новинки',
@@ -125,6 +128,9 @@ class _CatalogScreenState extends State<CatalogScreen>
   List<Product> get _visibleProducts {
     final products = widget.products
         .where((product) => !product.isHidden)
+        .where(_matchesSelectedTab)
+        .where(_matchesHardFilters)
+        .where(_matchesSearch)
         .toList();
     switch (_selectedSort) {
       case 'Сначала дешёвые':
@@ -141,10 +147,126 @@ class _CatalogScreenState extends State<CatalogScreen>
         break;
       case 'По рекомендациям':
       default:
+        products.sort((a, b) => _softScore(b).compareTo(_softScore(a)));
         break;
     }
     return products;
   }
+
+  bool _matchesHardFilters(Product product) {
+    final category = product.normalizedCategory.isNotEmpty
+        ? product.normalizedCategory
+        : ListingCatalogs.normalizeCategory(product.itemType);
+    if (_filters.category.isNotEmpty && category != _filters.category) {
+      return false;
+    }
+    if (_filters.size.isNotEmpty && !_sameOption(product.size, _filters.size)) {
+      return false;
+    }
+    if (_filters.minPrice != null && product.priceValue < _filters.minPrice!) {
+      return false;
+    }
+    if (_filters.maxPrice != null && product.priceValue > _filters.maxPrice!) {
+      return false;
+    }
+    if (_filters.brand.isNotEmpty &&
+        _normalizedText(
+              product.normalizedBrand.isNotEmpty
+                  ? product.normalizedBrand
+                  : product.brand,
+            ) !=
+            _normalizedText(_filters.brand)) {
+      return false;
+    }
+    if (_filters.condition.isNotEmpty &&
+        !_sameOption(product.condition, _filters.condition)) {
+      return false;
+    }
+    final audience = product.audience.isNotEmpty
+        ? product.audience
+        : product.gender;
+    if (_filters.audience.isNotEmpty && audience != _filters.audience) {
+      return false;
+    }
+    if (_filters.delivery.isNotEmpty &&
+        !product.deliveryMethods.contains(_filters.delivery)) {
+      return false;
+    }
+    return true;
+  }
+
+  bool _matchesSearch(Product product) {
+    final query = _normalizedText(_searchQuery);
+    if (query.isEmpty) return true;
+    final categoryName = ListingCatalogs.nameOf(
+      product.normalizedCategory,
+      fallback: product.category,
+    );
+    return <String>[
+      product.title,
+      product.description,
+      product.brand,
+      product.normalizedBrand,
+      product.normalizedCategory,
+      categoryName,
+    ].any((value) => _normalizedText(value).contains(query));
+  }
+
+  bool _matchesSelectedTab(Product product) {
+    final audience = product.audience.isNotEmpty
+        ? product.audience
+        : product.gender;
+    final category = product.normalizedCategory.isNotEmpty
+        ? product.normalizedCategory
+        : ListingCatalogs.normalizeCategory(product.itemType);
+    return switch (_selectedTabIndex) {
+      2 => audience == 'female',
+      3 => audience == 'male',
+      4 => category == 'jeans' || product.material == 'denim',
+      5 => const {'t_shirt', 'hoodie', 'shirt'}.contains(category),
+      6 => const {'jeans', 'trousers', 'skirt'}.contains(category),
+      _ => true,
+    };
+  }
+
+  int _softScore(Product product) {
+    var score = 0;
+    if (_filters.color.isNotEmpty &&
+        _sameOption(
+          product.primaryColor.isEmpty ? product.color : product.primaryColor,
+          _filters.color,
+        )) {
+      score += 5;
+    }
+    if (_filters.material.isNotEmpty &&
+        _sameOption(product.material, _filters.material)) {
+      score += 4;
+    }
+    if (_filters.pattern.isNotEmpty &&
+        _sameOption(product.pattern, _filters.pattern)) {
+      score += 3;
+    }
+    if (_filters.fit.isNotEmpty && _sameOption(product.fit, _filters.fit)) {
+      score += 3;
+    }
+    if (_filters.style.isNotEmpty &&
+        _sameOption(product.style, _filters.style)) {
+      score += 2;
+    }
+    return score;
+  }
+
+  bool _sameOption(String actual, String selected) {
+    if (_normalizedText(actual) == _normalizedText(selected)) return true;
+    return _normalizedText(actual) ==
+        _normalizedText(ListingCatalogs.nameOf(selected, fallback: selected));
+  }
+
+  String _normalizedText(String value) => value
+      .trim()
+      .toLowerCase()
+      .replaceAll('ё', 'е')
+      .replaceAll(RegExp(r'[^a-zа-я0-9]+'), '');
 
   @override
   void initState() {
@@ -268,7 +390,7 @@ class _CatalogScreenState extends State<CatalogScreen>
         children: [
           Expanded(
             child: InkWell(
-              onTap: () => _showSnackBar('Поиск'),
+              onTap: _showTextSearch,
               child: Padding(
                 padding: const EdgeInsets.only(left: 14, right: 8),
                 child: Row(
@@ -281,7 +403,9 @@ class _CatalogScreenState extends State<CatalogScreen>
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'Найти вещь или бренд',
+                        _searchQuery.isEmpty
+                            ? 'Найти вещь или бренд'
+                            : _searchQuery,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -388,7 +512,9 @@ class _CatalogScreenState extends State<CatalogScreen>
               child: Row(
                 children: [
                   Text(
-                    'Фильтр',
+                    _filters.activeCount == 0
+                        ? 'Фильтр'
+                        : 'Фильтр ${_filters.activeCount}',
                     style: TextStyle(
                       fontSize: 14.5 * scale,
                       fontWeight: FontWeight.w500,
@@ -643,44 +769,31 @@ class _CatalogScreenState extends State<CatalogScreen>
     );
   }
 
+  Future<void> _showTextSearch() async {
+    final query = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _CatalogSearchSheet(initialQuery: _searchQuery),
+    );
+    if (!mounted || query == null) return;
+    setState(() => _searchQuery = query.trim());
+  }
+
   void _showFilterSheet() {
     _showAppSheet(
       title: 'Фильтр',
-      child: Column(
-        children: [
-          const _FilterRow(title: 'Категория', value: 'Все'),
-          const _FilterRow(title: 'Размер', value: 'Любой'),
-          const _FilterRow(title: 'Цена', value: 'Любая'),
-          const _FilterRow(title: 'Бренд', value: 'Все'),
-          const _FilterRow(title: 'Цвет', value: 'Любой'),
-          const _FilterRow(title: 'Состояние', value: 'Любое'),
-          const SizedBox(height: 20),
-          Row(
-            children: [
-              Expanded(
-                child: _SheetButton(
-                  label: 'Сбросить',
-                  isPrimary: false,
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showSnackBar('Фильтры сброшены');
-                  },
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _SheetButton(
-                  label: 'Применить',
-                  isPrimary: true,
-                  onTap: () {
-                    Navigator.pop(context);
-                    _showSnackBar('Фильтры применены');
-                  },
-                ),
-              ),
-            ],
-          ),
-        ],
+      child: _CatalogFilterSheet(
+        initial: _filters,
+        products: widget.products,
+        onApply: (filters) {
+          setState(() => _filters.replaceWith(filters));
+          Navigator.pop(context);
+        },
+        onReset: () {
+          setState(_filters.clear);
+          Navigator.pop(context);
+        },
       ),
     );
   }
@@ -1316,6 +1429,353 @@ class ProductDetailsSheet extends StatelessWidget {
   }
 }
 
+class _CatalogFilters {
+  String category = '';
+  String size = '';
+  int? minPrice;
+  int? maxPrice;
+  String brand = '';
+  String condition = '';
+  String audience = '';
+  String delivery = '';
+  String color = '';
+  String material = '';
+  String pattern = '';
+  String fit = '';
+  String style = '';
+
+  int get activeCount => <Object?>[
+    category,
+    size,
+    minPrice,
+    maxPrice,
+    brand,
+    condition,
+    audience,
+    delivery,
+    color,
+    material,
+    pattern,
+    fit,
+    style,
+  ].where((value) => value != null && value.toString().isNotEmpty).length;
+
+  _CatalogFilters clone() => _CatalogFilters()..replaceWith(this);
+
+  void replaceWith(_CatalogFilters other) {
+    category = other.category;
+    size = other.size;
+    minPrice = other.minPrice;
+    maxPrice = other.maxPrice;
+    brand = other.brand;
+    condition = other.condition;
+    audience = other.audience;
+    delivery = other.delivery;
+    color = other.color;
+    material = other.material;
+    pattern = other.pattern;
+    fit = other.fit;
+    style = other.style;
+  }
+
+  void clear() => replaceWith(_CatalogFilters());
+}
+
+class _CatalogSearchSheet extends StatefulWidget {
+  const _CatalogSearchSheet({required this.initialQuery});
+
+  final String initialQuery;
+
+  @override
+  State<_CatalogSearchSheet> createState() => _CatalogSearchSheetState();
+}
+
+class _CatalogSearchSheetState extends State<_CatalogSearchSheet> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialQuery,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.pop(context, _controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) => AnimatedPadding(
+    duration: const Duration(milliseconds: 180),
+    padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+    child: Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                autofocus: true,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (_) => _submit(),
+                decoration: InputDecoration(
+                  hintText: 'Название, категория или бренд',
+                  prefixIcon: const Icon(Icons.search_rounded),
+                  suffixIcon: IconButton(
+                    tooltip: 'Очистить',
+                    onPressed: () {
+                      _controller.clear();
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                  filled: true,
+                  fillColor: const Color(0xFFF2F2F3),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            TextButton(onPressed: _submit, child: const Text('Найти')),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _CatalogFilterSheet extends StatefulWidget {
+  const _CatalogFilterSheet({
+    required this.initial,
+    required this.products,
+    required this.onApply,
+    required this.onReset,
+  });
+
+  final _CatalogFilters initial;
+  final List<Product> products;
+  final ValueChanged<_CatalogFilters> onApply;
+  final VoidCallback onReset;
+
+  @override
+  State<_CatalogFilterSheet> createState() => _CatalogFilterSheetState();
+}
+
+class _CatalogFilterSheetState extends State<_CatalogFilterSheet> {
+  late final _CatalogFilters _value = widget.initial.clone();
+  late final TextEditingController _minPrice = TextEditingController(
+    text: _value.minPrice?.toString() ?? '',
+  );
+  late final TextEditingController _maxPrice = TextEditingController(
+    text: _value.maxPrice?.toString() ?? '',
+  );
+
+  @override
+  void dispose() {
+    _minPrice.dispose();
+    _maxPrice.dispose();
+    super.dispose();
+  }
+
+  List<CatalogOption> get _sizes {
+    final values =
+        widget.products
+            .map((product) => product.size.trim())
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    return values.map((value) => CatalogOption(value, value)).toList();
+  }
+
+  List<CatalogOption> get _brands {
+    final values =
+        widget.products
+            .map((product) => product.brand.trim())
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
+    return values.map((value) => CatalogOption(value, value)).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Text(
+        'Точные параметры',
+        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+      ),
+      _FilterDropdown(
+        label: 'Категория',
+        value: _value.category,
+        options: ListingCatalogs.finalCategories,
+        onChanged: (value) => setState(() => _value.category = value),
+      ),
+      _FilterDropdown(
+        label: 'Размер',
+        value: _value.size,
+        options: _sizes,
+        onChanged: (value) => setState(() => _value.size = value),
+      ),
+      Row(
+        children: [
+          Expanded(
+            child: _PriceField(label: 'Цена от', controller: _minPrice),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _PriceField(label: 'Цена до', controller: _maxPrice),
+          ),
+        ],
+      ),
+      _FilterDropdown(
+        label: 'Бренд',
+        value: _value.brand,
+        options: _brands,
+        onChanged: (value) => setState(() => _value.brand = value),
+      ),
+      _FilterDropdown(
+        label: 'Состояние',
+        value: _value.condition,
+        options: ListingCatalogs.conditions,
+        onChanged: (value) => setState(() => _value.condition = value),
+      ),
+      _FilterDropdown(
+        label: 'Аудитория',
+        value: _value.audience,
+        options: ListingCatalogs.genders,
+        onChanged: (value) => setState(() => _value.audience = value),
+      ),
+      _FilterDropdown(
+        label: 'Доставка',
+        value: _value.delivery,
+        options: ListingCatalogs.deliveryMethods,
+        onChanged: (value) => setState(() => _value.delivery = value),
+      ),
+      const SizedBox(height: 22),
+      const Text(
+        'Учитывать при ранжировании',
+        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Эти параметры поднимают подходящие вещи выше, но не скрывают остальные.',
+        style: TextStyle(fontSize: 11.5, color: Color(0xFF8F8F94)),
+      ),
+      _FilterDropdown(
+        label: 'Цвет',
+        value: _value.color,
+        options: ListingCatalogs.colors,
+        onChanged: (value) => setState(() => _value.color = value),
+      ),
+      _FilterDropdown(
+        label: 'Материал',
+        value: _value.material,
+        options: ListingCatalogs.materials,
+        onChanged: (value) => setState(() => _value.material = value),
+      ),
+      _FilterDropdown(
+        label: 'Рисунок',
+        value: _value.pattern,
+        options: ListingCatalogs.patterns,
+        onChanged: (value) => setState(() => _value.pattern = value),
+      ),
+      _FilterDropdown(
+        label: 'Крой',
+        value: _value.fit,
+        options: ListingCatalogs.fits,
+        onChanged: (value) => setState(() => _value.fit = value),
+      ),
+      _FilterDropdown(
+        label: 'Стиль',
+        value: _value.style,
+        options: ListingCatalogs.styles,
+        onChanged: (value) => setState(() => _value.style = value),
+      ),
+      const SizedBox(height: 20),
+      Row(
+        children: [
+          Expanded(
+            child: _SheetButton(
+              label: 'Сбросить',
+              isPrimary: false,
+              onTap: widget.onReset,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _SheetButton(
+              label: 'Применить',
+              isPrimary: true,
+              onTap: () {
+                _value
+                  ..minPrice = int.tryParse(_minPrice.text)
+                  ..maxPrice = int.tryParse(_maxPrice.text);
+                widget.onApply(_value);
+              },
+            ),
+          ),
+        ],
+      ),
+    ],
+  );
+}
+
+class _FilterDropdown extends StatelessWidget {
+  const _FilterDropdown({
+    required this.label,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String value;
+  final List<CatalogOption> options;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) => DropdownButtonFormField<String>(
+    initialValue: value,
+    isExpanded: true,
+    decoration: InputDecoration(labelText: label),
+    items: [
+      const DropdownMenuItem(value: '', child: Text('Любой')),
+      ...options.map(
+        (option) => DropdownMenuItem(
+          value: option.id,
+          child: Text(option.name, overflow: TextOverflow.ellipsis),
+        ),
+      ),
+    ],
+    onChanged: (selected) => onChanged(selected ?? ''),
+  );
+}
+
+class _PriceField extends StatelessWidget {
+  const _PriceField({required this.label, required this.controller});
+
+  final String label;
+  final TextEditingController controller;
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    controller: controller,
+    keyboardType: TextInputType.number,
+    decoration: InputDecoration(labelText: label, suffixText: '₽'),
+  );
+}
+
 class _AppActionSheet extends StatelessWidget {
   final String title;
   final Widget child;
@@ -1356,43 +1816,6 @@ class _AppActionSheet extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _FilterRow extends StatelessWidget {
-  final String title;
-  final String value;
-
-  const _FilterRow({required this.title, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 51,
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFE7E7EA))),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(
-                fontSize: 14.5,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF0B0B0B),
-              ),
-            ),
-          ),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 13.5, color: Color(0xFF8F8F94)),
-          ),
-          const SizedBox(width: 6),
-          const Icon(Icons.chevron_right, size: 16, color: Color(0xFFC7C7CC)),
-        ],
       ),
     );
   }

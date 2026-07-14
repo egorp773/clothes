@@ -16,6 +16,6 @@ void main() {
     await tester.pumpWidget(const FashionApp());
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.search), findsWidgets);
+    expect(find.byIcon(Icons.search_rounded), findsWidgets);
   });
 }

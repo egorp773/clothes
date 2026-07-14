@@ -34,4 +34,45 @@ void main() {
 
     expect(item.price, '8 400 \u20BD');
   });
+
+  test('reads enriched product fields without exposing ML metadata', () {
+    final product = Product.fromSupabase({
+      'id': 'new-product',
+      'title': 'Рубашка',
+      'price': 3500,
+      'brand': 'Saint Laurent',
+      'normalized_brand': 'saint_laurent',
+      'normalized_category': 'shirt',
+      'audience': 'unisex',
+      'has_defects': true,
+      'defects_description': 'След у нижней пуговицы',
+      'product_attributes': [
+        {'attribute_key': 'material', 'value': 'cotton'},
+        {'attribute_key': 'collar', 'value': 'shirt'},
+      ],
+    });
+
+    expect(product.category, 'Рубашка');
+    expect(product.brand, 'Saint Laurent');
+    expect(product.normalizedBrand, 'saint_laurent');
+    expect(product.audience, 'unisex');
+    expect(product.categoryAttributes['material'], 'cotton');
+    expect(product.defectsDescription, 'След у нижней пуговицы');
+  });
+
+  test('keeps legacy product category readable', () {
+    final product = Product.fromSupabase({
+      'id': 'legacy-product',
+      'title': 'Футболка',
+      'price': 1200,
+      'category': 'clothing',
+      'item_type': 'tshirt',
+      'brand': 'no_brand',
+      'material': 'cotton',
+    });
+
+    expect(product.normalizedCategory, 't_shirt');
+    expect(product.category, 'Футболка');
+    expect(product.material, 'cotton');
+  });
 }

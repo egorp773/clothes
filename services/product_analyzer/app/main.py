@@ -8,6 +8,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
+from contextlib import suppress
 
 from fastapi import (
     FastAPI,
@@ -24,6 +25,9 @@ from PIL import Image, ImageOps
 
 from app.analysis_store import SupabaseAnalysisStore
 from app.config import get_settings
+from app.enrichment.service import ProductEnrichmentService
+from app.enrichment.store import SupabaseEnrichmentStore
+from app.enrichment.worker import ProductEnrichmentWorker
 from app.inference_gate import InferenceGate, InferenceQueueFull, InferenceQueueTimeout
 from app.model_manager import ModelManager
 from app.pipeline.analyzer_pipeline import AnalyzerPipeline
@@ -73,6 +77,14 @@ inference_gate = InferenceGate(
     settings.inference_queue_size,
     settings.inference_queue_timeout_seconds,
 )
+enrichment_store = SupabaseEnrichmentStore(settings)
+enrichment_service = ProductEnrichmentService(settings, models, enrichment_store)
+enrichment_worker = ProductEnrichmentWorker(
+    settings,
+    enrichment_store,
+    enrichment_service,
+    inference_gate,
+)
 startup_state: dict[str, object] = {"ready": False, "error": None}
 
 
@@ -98,13 +110,27 @@ async def _initialize_models() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialization_task = asyncio.create_task(_initialize_models())
+    worker_task: asyncio.Task | None = None
+    if settings.enrichment_worker_enabled and enrichment_store.enabled:
+        async def start_worker_after_initialization() -> None:
+            await initialization_task
+            if startup_state["ready"]:
+                await enrichment_worker.run()
+
+        worker_task = asyncio.create_task(start_worker_after_initialization())
     yield
+    enrichment_worker.stop()
+    if worker_task is not None:
+        worker_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker_task
     if not initialization_task.done():
         initialization_task.cancel()
     analysis_store.close()
     visual_search.close()
     visual_store.close()
     jwt_verifier.close()
+    enrichment_store.close()
     models.close()
 
 
@@ -151,7 +177,21 @@ async def ready() -> dict[str, object]:
         "models": ["rembg/u2netp", settings.fashion_model_id],
         "supabase": True,
         "queue_pending": inference_gate.pending,
+        "enrichment_worker": bool(
+            settings.enrichment_worker_enabled and enrichment_store.enabled
+        ),
     }
+
+
+@app.post("/v1/enrichment/wakeup", status_code=202)
+async def wake_enrichment_worker(
+    authorization: str | None = Header(default=None),
+) -> dict[str, bool]:
+    # The durable DB row is created before this hint. If this request is lost,
+    # polling still claims it; waking only removes the normal poll delay.
+    await _authenticated_user(authorization)
+    enrichment_worker.wake()
+    return {"accepted": True}
 
 
 @app.post("/warmup")

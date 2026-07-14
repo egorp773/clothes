@@ -52,8 +52,8 @@ class ListingPublishController extends ChangeNotifier {
   int get visibleStepNumber => switch (draft.currentStep) {
     ListingPublishStep.photos => 1,
     ListingPublishStep.basics => 2,
-    ListingPublishStep.attributes => 3,
-    ListingPublishStep.delivery => 4,
+    ListingPublishStep.delivery => 3,
+    ListingPublishStep.attributes => 4,
     ListingPublishStep.preview || ListingPublishStep.success => 5,
   };
 
@@ -68,6 +68,8 @@ class ListingPublishController extends ChangeNotifier {
       draft = _newDraft();
       await repository.saveLocalDraft(draft);
     }
+    _normalizeRecoveredDraft();
+    _syncPhotoOrder();
     isInitialized = true;
     _safeNotify();
     await _recoverLostPickerData();
@@ -177,10 +179,14 @@ class ListingPublishController extends ChangeNotifier {
   @visibleForTesting
   Future<void> addPickedPhotos(Iterable<XFile> files) async {
     final wasEmpty = draft.photos.isEmpty;
+    final initialPhotoCount = draft.photos.length;
     for (final source in files) {
       if (draft.photos.length >= 8) break;
       try {
         final photo = await repository.stagePhoto(draft: draft, source: source);
+        photo
+          ..position = draft.photos.length
+          ..role = draft.photos.isEmpty ? 'main' : 'gallery';
         draft.photos.add(photo);
         if (draft.mainPhotoId.isEmpty) draft.mainPhotoId = photo.id;
         await repository.saveLocalDraft(draft);
@@ -193,6 +199,8 @@ class ListingPublishController extends ChangeNotifier {
     if (wasEmpty && draft.photos.isNotEmpty) {
       unawaited(repository.ensureRemoteDraft(draft));
       _startAnalysis();
+    } else if (draft.photos.length > initialPhotoCount) {
+      _requestAnalysisRestart();
     }
     _markChanged();
   }
@@ -247,6 +255,7 @@ class ListingPublishController extends ChangeNotifier {
     if (removedMainPhoto) {
       draft.mainPhotoId = draft.photos.firstOrNull?.id ?? '';
     }
+    _syncPhotoOrder();
     _safeNotify();
     await repository.deletePhoto(draft, photo);
     _markChanged();
@@ -258,6 +267,7 @@ class ListingPublishController extends ChangeNotifier {
     final photo = draft.photos.removeAt(oldIndex);
     draft.photos.insert(newIndex, photo);
     draft.mainPhotoId = draft.photos.firstOrNull?.id ?? '';
+    _syncPhotoOrder();
     _markChanged();
   }
 
@@ -268,6 +278,7 @@ class ListingPublishController extends ChangeNotifier {
     final photo = draft.photos.removeAt(index);
     draft.photos.insert(0, photo);
     draft.mainPhotoId = photoId;
+    _syncPhotoOrder();
     _markChanged();
     _requestAnalysisRestart();
   }
@@ -291,11 +302,13 @@ class ListingPublishController extends ChangeNotifier {
 
   void setSize(String value) {
     draft.size = value;
+    _setManualPrediction('size', value);
     _markChanged();
   }
 
   void setCondition(String value) {
     draft.condition = value;
+    _setManualPrediction('condition', value);
     _markChanged();
   }
 
@@ -316,6 +329,19 @@ class ListingPublishController extends ChangeNotifier {
         }
       case 'item_type':
         draft.itemType = value;
+      case 'normalized_category':
+        final normalized = ListingCatalogs.normalizeCategory(value);
+        if (normalized.isEmpty) return;
+        if (draft.normalizedCategory != normalized) {
+          draft.normalizedCategory = normalized;
+          _applyLegacyCategory(normalized);
+          final allowed = ListingCatalogs.attributesFor(
+            normalized,
+          ).map((definition) => definition.id).toSet();
+          draft.categoryAttributes.removeWhere(
+            (key, _) => !allowed.contains(key),
+          );
+        }
       case 'gender':
         draft.gender = value;
         draft.section = switch (value) {
@@ -343,8 +369,29 @@ class ListingPublishController extends ChangeNotifier {
         draft.sleeveLength = value;
       case 'closure':
         draft.closure = value;
+      case 'collar':
+        draft.collar = value;
+      case 'rise':
+        draft.rise = value;
       default:
         return;
+    }
+    if (const {
+      'material',
+      'pattern',
+      'season',
+      'style',
+      'fit',
+      'sleeve_length',
+      'closure',
+      'collar',
+      'rise',
+    }.contains(field)) {
+      if (value.isEmpty) {
+        draft.categoryAttributes.remove(field);
+      } else {
+        draft.categoryAttributes[field] = value;
+      }
     }
     final prediction = draft.predictions.putIfAbsent(
       field,
@@ -352,6 +399,9 @@ class ListingPublishController extends ChangeNotifier {
     );
     prediction.confirmedValue = value;
     prediction.wasEdited = true;
+    prediction.userConfirmed = true;
+    prediction.source = 'user';
+    prediction.updatedAt = DateTime.now().toUtc();
     _markChanged();
   }
 
@@ -365,6 +415,43 @@ class ListingPublishController extends ChangeNotifier {
     );
     prediction.confirmedValue = draft.secondaryColors.join(',');
     prediction.wasEdited = true;
+    prediction.userConfirmed = true;
+    prediction.source = 'user';
+    prediction.updatedAt = DateTime.now().toUtc();
+    _markChanged();
+  }
+
+  void setHasDefects(bool value) {
+    draft.hasDefects = value;
+    if (!value) draft.defectDescription = '';
+    _markChanged();
+  }
+
+  void setDefectDescription(String value) {
+    draft.defectDescription = value;
+    _markChanged();
+  }
+
+  void confirmRelevantAttributes() {
+    for (final definition in ListingCatalogs.attributesFor(
+      draft.normalizedCategory,
+    )) {
+      final value = _attributeValue(definition.id);
+      if (value.isEmpty) continue;
+      final prediction = draft.predictions.putIfAbsent(
+        definition.id,
+        () => ListingFieldPrediction(
+          fieldName: definition.id,
+          confirmedValue: value,
+          source: 'user',
+          userConfirmed: true,
+        ),
+      );
+      prediction
+        ..confirmedValue = value
+        ..userConfirmed = true
+        ..updatedAt = DateTime.now().toUtc();
+    }
     _markChanged();
   }
 
@@ -526,6 +613,30 @@ class ListingPublishController extends ChangeNotifier {
   }
 
   void _applyAnalysis(ProductAnalysisResult result) {
+    final normalizedFromAnalysis = ListingCatalogs.normalizeCategory(
+      result.normalizedCategory.value ?? result.itemType.value ?? '',
+    );
+    if (normalizedFromAnalysis.isNotEmpty) {
+      _mergePrediction(
+        'normalized_category',
+        AnalyzedField<String>(
+          value: normalizedFromAnalysis,
+          confidence: result.normalizedCategory.hasValue
+              ? result.normalizedCategory.confidence
+              : result.itemType.confidence,
+          source: result.normalizedCategory.hasValue
+              ? result.normalizedCategory.source
+              : result.itemType.source,
+          modelVersion: result.normalizedCategory.hasValue
+              ? result.normalizedCategory.modelVersion
+              : result.itemType.modelVersion,
+        ),
+        (value) {
+          draft.normalizedCategory = value;
+          _applyLegacyCategory(value);
+        },
+      );
+    }
     _mergePrediction(
       'section',
       result.section,
@@ -570,7 +681,11 @@ class ListingPublishController extends ChangeNotifier {
       result.primaryColor,
       (value) => draft.primaryColor = value,
     );
-    _mergePrediction('brand', result.brand, (value) => draft.brand = value);
+    if (result.brand.value == 'other_brand') {
+      _recordPredictionOnly('brand', result.brand);
+    } else {
+      _mergePrediction('brand', result.brand, (value) => draft.brand = value);
+    }
     _mergePrediction(
       'material',
       result.material,
@@ -594,6 +709,15 @@ class ListingPublishController extends ChangeNotifier {
       result.closure,
       (value) => draft.closure = value,
     );
+    _mergePrediction('collar', result.collar, (value) => draft.collar = value);
+    _mergePrediction('rise', result.rise, (value) => draft.rise = value);
+
+    for (final definition in ListingCatalogs.attributesFor(
+      draft.normalizedCategory,
+    )) {
+      final value = _attributeValue(definition.id);
+      if (value.isNotEmpty) draft.categoryAttributes[definition.id] = value;
+    }
 
     final secondaryEntry = draft.predictions['secondary_colors'];
     final predictedSecondary = result.secondaryColors
@@ -606,7 +730,8 @@ class ListingPublishController extends ChangeNotifier {
         ..confidence = result.secondaryColors
             .map((field) => field.confidence)
             .fold<double>(1, (a, b) => a < b ? a : b)
-        ..source = result.secondaryColors.first.source;
+        ..modelVersion = result.secondaryColors.first.modelVersion
+        ..updatedAt = DateTime.now().toUtc();
     } else if (predictedSecondary.isNotEmpty) {
       draft.secondaryColors
         ..clear()
@@ -616,11 +741,11 @@ class ListingPublishController extends ChangeNotifier {
       draft.predictions['secondary_colors'] = ListingFieldPrediction(
         fieldName: 'secondary_colors',
         predictedValue: predictedSecondary.join(','),
-        confirmedValue: predictedSecondary.join(','),
         confidence: result.secondaryColors
             .map((field) => field.confidence)
             .fold<double>(1, (a, b) => a < b ? a : b),
         source: result.secondaryColors.first.source,
+        modelVersion: result.secondaryColors.first.modelVersion,
       );
     }
 
@@ -659,30 +784,32 @@ class ListingPublishController extends ChangeNotifier {
   ) {
     final previous = draft.predictions[field];
     final value = analyzed.value;
-    if (previous?.wasEdited == true) {
+    if (previous?.isProtected == true) {
       previous!
         ..predictedValue = value
         ..confidence = analyzed.confidence
-        ..source = analyzed.source;
+        ..modelVersion = analyzed.modelVersion
+        ..updatedAt = DateTime.now().toUtc();
       return;
     }
     draft.predictions[field] = ListingFieldPrediction(
       fieldName: field,
       predictedValue: value,
-      confirmedValue: value,
       confidence: analyzed.confidence,
       source: analyzed.source,
+      modelVersion: analyzed.modelVersion,
     );
     if (value != null && value.isNotEmpty) apply(value);
   }
 
   void _recordPredictionOnly(String field, AnalyzedField<String> analyzed) {
     final previous = draft.predictions[field];
-    if (previous?.wasEdited == true) {
+    if (previous?.isProtected == true) {
       previous!
         ..predictedValue = analyzed.value
         ..confidence = analyzed.confidence
-        ..source = analyzed.source;
+        ..modelVersion = analyzed.modelVersion
+        ..updatedAt = DateTime.now().toUtc();
       return;
     }
     draft.predictions[field] = ListingFieldPrediction(
@@ -690,11 +817,83 @@ class ListingPublishController extends ChangeNotifier {
       predictedValue: analyzed.value,
       confidence: analyzed.confidence,
       source: analyzed.source,
+      modelVersion: analyzed.modelVersion,
     );
   }
 
   ListingFieldPrediction? predictionFor(String field) =>
       draft.predictions[field];
+
+  void _setManualPrediction(String field, String value) {
+    final prediction = draft.predictions.putIfAbsent(
+      field,
+      () => ListingFieldPrediction(fieldName: field),
+    );
+    prediction
+      ..confirmedValue = value
+      ..source = 'user'
+      ..wasEdited = true
+      ..userConfirmed = true
+      ..updatedAt = DateTime.now().toUtc();
+  }
+
+  void _syncPhotoOrder() {
+    for (var index = 0; index < draft.photos.length; index++) {
+      draft.photos[index]
+        ..position = index
+        ..role = index == 0 ? 'main' : 'gallery';
+    }
+  }
+
+  void _normalizeRecoveredDraft() {
+    final normalized = ListingCatalogs.normalizeCategory(
+      draft.normalizedCategory.isNotEmpty
+          ? draft.normalizedCategory
+          : draft.itemType,
+    );
+    if (normalized.isEmpty) return;
+    draft.normalizedCategory = normalized;
+    _applyLegacyCategory(normalized);
+    for (final definition in ListingCatalogs.attributesFor(normalized)) {
+      final value = _attributeValue(definition.id);
+      if (value.isNotEmpty) draft.categoryAttributes[definition.id] = value;
+    }
+  }
+
+  void _applyLegacyCategory(String normalized) {
+    final legacy = switch (normalized) {
+      't_shirt' => ('clothing', 'tops', 'tshirt'),
+      'hoodie' => ('clothing', 'tops', 'hoodie'),
+      'shirt' => ('clothing', 'tops', 'shirt'),
+      'jacket' => ('clothing', 'outerwear', 'jacket'),
+      'jeans' => ('clothing', 'bottoms', 'jeans'),
+      'trousers' => ('clothing', 'bottoms', 'trousers'),
+      'dress' => ('clothing', 'dresses', 'dress'),
+      'skirt' => ('clothing', 'bottoms', 'skirt'),
+      'sneakers' => ('shoes', 'shoes_all', 'sneakers'),
+      'boots' => ('shoes', 'shoes_all', 'boots'),
+      'bag' => ('accessories', 'accessories_all', 'bag'),
+      'accessory' => ('accessories', 'accessories_all', 'accessory'),
+      _ => ('', '', ''),
+    };
+    draft
+      ..category = legacy.$1
+      ..subcategory = legacy.$2
+      ..itemType = legacy.$3;
+  }
+
+  String _attributeValue(String field) => switch (field) {
+    'material' => draft.material,
+    'pattern' => draft.pattern,
+    'season' => draft.season,
+    'style' => draft.style,
+    'fit' => draft.fit,
+    'sleeve_length' => draft.sleeveLength,
+    'closure' => draft.closure,
+    'collar' => draft.collar,
+    'rise' => draft.rise,
+    _ => draft.categoryAttributes[field] ?? '',
+  };
 
   Future<Product> publish() {
     final inFlight = _publishFuture;
@@ -747,7 +946,7 @@ class ListingPublishController extends ChangeNotifier {
       priceValue: draft.price,
       image: image,
       images: urls,
-      category: ListingCatalogs.nameOf(draft.category),
+      category: ListingCatalogs.nameOf(draft.normalizedCategory),
       categoryId: draft.category,
       brand: ListingCatalogs.nameOf(draft.brand),
       size: ListingCatalogs.nameOf(draft.size),
@@ -783,6 +982,15 @@ class ListingPublishController extends ChangeNotifier {
       mainImage: image,
       publishedAt: DateTime.now().toUtc(),
       analysisStatus: draft.analysisStatus.value,
+      normalizedCategory: draft.normalizedCategory,
+      normalizedBrand: draft.brand,
+      audience: draft.gender,
+      hasDefects: draft.hasDefects,
+      defectsDescription: draft.defectDescription.trim(),
+      categoryAttributes: Map.unmodifiable(draft.categoryAttributes),
+      enrichmentStatus: draft.analysisStatus == ListingAnalysisStatus.completed
+          ? 'pending'
+          : 'enrichment_pending',
     );
   }
 

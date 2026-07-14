@@ -282,8 +282,11 @@ class AppRepository extends ChangeNotifier {
           .select()
           .eq('seller_id', sellerId)
           .order('created_at', ascending: false);
-      final remoteProducts = (response as List<dynamic>)
-          .map((item) => Product.fromSupabase(item as Map<String, dynamic>))
+      final productRows = await _attachPublicAttributes(
+        (response as List<dynamic>).whereType<Map>().toList(),
+      );
+      final remoteProducts = productRows
+          .map(Product.fromSupabase)
           .where((product) => product.status == 'published')
           .toList();
       if (remoteProducts.isEmpty) return localProducts;
@@ -1242,8 +1245,10 @@ class AppRepository extends ChangeNotifier {
           .from('products')
           .select()
           .order('created_at', ascending: false);
-
-      final fetched = (response as List<dynamic>)
+      final productRows = await _attachPublicAttributes(
+        (response as List<dynamic>).whereType<Map>().toList(),
+      );
+      final fetched = productRows
           .map((e) => Product.fromSupabase(e))
           .where((product) => product.status == 'published')
           .toList();
@@ -1264,6 +1269,39 @@ class AppRepository extends ChangeNotifier {
     } catch (e) {
       debugPrint('Supabase sync error: $e');
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _attachPublicAttributes(
+    List<Map<dynamic, dynamic>> rows,
+  ) async {
+    final result = <Map<String, dynamic>>[];
+    for (var start = 0; start < rows.length; start += 8) {
+      final end = (start + 8).clamp(0, rows.length).toInt();
+      final batch = rows.sublist(start, end);
+      result.addAll(
+        await Future.wait(
+          batch.map((row) async {
+            final product = Map<String, dynamic>.from(row);
+            final productId = product['id'] as String? ?? '';
+            if (productId.isEmpty) return product;
+            try {
+              final attributes = await _client.rpc(
+                'get_product_public_attributes',
+                params: {'p_product_id': productId},
+              );
+              if (attributes is List) {
+                product['product_attributes'] = attributes;
+              }
+            } catch (_) {
+              // Additive rollout: legacy scalar fields remain readable before
+              // the public-attributes RPC is available.
+            }
+            return product;
+          }),
+        ),
+      );
+    }
+    return result;
   }
 
   void _subscribeToMessages() {

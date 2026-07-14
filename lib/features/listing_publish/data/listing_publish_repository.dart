@@ -11,7 +11,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/supabase_config.dart';
-import '../../visual_search/visual_search_service.dart';
+import 'listing_catalogs.dart';
 import '../models/listing_draft.dart';
 
 class ListingPublishException implements Exception {
@@ -221,12 +221,41 @@ class ListingPublishRepository {
           .upsert(_remotePayload(draft, user.id), onConflict: 'id');
       if (draft.predictions.isNotEmpty) {
         final analysisRows = draft.predictions.values
-            .map((entry) => {'listing_id': draft.id, ...entry.toJson()})
+            .map(
+              (entry) => {
+                'listing_id': draft.id,
+                'field_name': entry.fieldName,
+                'predicted_value': entry.predictedValue,
+                'confirmed_value': entry.confirmedValue,
+                'confidence': entry.confidence,
+                'source': entry.source,
+                'was_edited': entry.wasEdited,
+                'user_confirmed': entry.userConfirmed,
+                'model_version': entry.modelVersion,
+              },
+            )
             .toList();
         await client
             .from('listing_analysis')
             .upsert(analysisRows, onConflict: 'listing_id,field_name');
       }
+      final attributes = _confirmedProductAttributes(draft);
+      await Future.wait(
+        attributes.map(
+          (attribute) => client.rpc(
+            'set_product_attribute',
+            params: {
+              'p_product_id': draft.id,
+              'p_attribute_key': attribute.key,
+              'p_value': attribute.value,
+              'p_confirmed': true,
+              'p_source': 'manual',
+              'p_confidence': 1.0,
+              'p_model_version': 'seller-publication-v1',
+            },
+          ),
+        ),
+      );
     } catch (error, stackTrace) {
       // The local copy remains authoritative while offline or before migration.
       debugPrint('Listing draft sync error: $error\n$stackTrace');
@@ -410,21 +439,7 @@ class ListingPublishRepository {
   }
 
   Future<void> _preparePublishedProduct(String productId) async {
-    try {
-      await _indexPublishedProduct(productId);
-    } catch (error, stackTrace) {
-      debugPrint('Product indexing error: $error\n$stackTrace');
-    }
     await _queueBackgroundRemoval(productId);
-  }
-
-  Future<void> _indexPublishedProduct(String productId) async {
-    final service = VisualSearchService();
-    try {
-      await service.indexProduct(productId);
-    } finally {
-      service.close();
-    }
   }
 
   Future<void> _queueBackgroundRemoval(String productId) async {
@@ -457,11 +472,14 @@ class ListingPublishRepository {
     'category': draft.category,
     'subcategory': draft.subcategory,
     'item_type': draft.itemType,
+    'normalized_category': draft.normalizedCategory,
     'gender': draft.gender,
+    'audience': draft.gender,
     'primary_color': draft.primaryColor,
     'secondary_colors': draft.secondaryColors,
     'color': draft.primaryColor,
     'brand': draft.brand,
+    'normalized_brand': draft.brand,
     'material': draft.material,
     'pattern': draft.pattern,
     'season': draft.season,
@@ -469,6 +487,8 @@ class ListingPublishRepository {
     'fit': draft.fit,
     'sleeve_length': draft.sleeveLength,
     'closure': draft.closure,
+    'has_defects': draft.hasDefects,
+    'defects_description': draft.defectDescription.trim(),
     'city': draft.city,
     'location': draft.city,
     'shipping_address_id': draft.shippingAddressId.isEmpty
@@ -480,6 +500,7 @@ class ListingPublishRepository {
     'main_image': draft.mainPhoto?.remoteUrl ?? '',
     'original_image': draft.mainPhoto?.remoteUrl ?? '',
     'analysis_status': draft.analysisStatus.value,
+    'enrichment_status': 'enrichment_pending',
     'analysis_job_id': draft.analysisId.isEmpty ? null : draft.analysisId,
     'analysis_completed_at':
         draft.analysisStatus == ListingAnalysisStatus.completed
@@ -489,6 +510,23 @@ class ListingPublishRepository {
     'is_hidden': draft.status != ListingStatus.published,
     'updated_at': DateTime.now().toUtc().toIso8601String(),
   };
+
+  List<MapEntry<String, String>> _confirmedProductAttributes(
+    ListingDraft draft,
+  ) {
+    final result = <MapEntry<String, String>>[];
+    for (final definition in ListingCatalogs.attributesFor(
+      draft.normalizedCategory,
+    )) {
+      final value = draft.categoryAttributes[definition.id] ?? '';
+      final prediction = draft.predictions[definition.id];
+      if (prediction?.userConfirmed != true && prediction?.wasEdited != true) {
+        continue;
+      }
+      result.add(MapEntry(definition.id, value));
+    }
+    return result;
+  }
 
   Future<List<ListingAddress>> _loadLocalAddresses() async {
     try {
