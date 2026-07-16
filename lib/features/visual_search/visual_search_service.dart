@@ -319,12 +319,26 @@ List<Product> _parseVisualSearchProducts(Object? rawRows) {
       .whereType<Map>()
       .map((raw) {
         final row = Map<String, dynamic>.from(raw);
-        final matchedImage = row['matched_image_url'] as String?;
+        final images = (row['images'] as List<dynamic>? ?? const [])
+            .whereType<String>()
+            .where((image) => image.trim().isNotEmpty)
+            .toList(growable: false);
+        final mainImage =
+            <Object?>[
+                  row['main_image'],
+                  row['image'],
+                  row['original_image'],
+                  if (images.isNotEmpty) images.first,
+                  row['matched_image_url'],
+                ]
+                .map((value) => value?.toString().trim() ?? '')
+                .firstWhere((value) => value.isNotEmpty, orElse: () => '');
         return Product.fromSupabase({
           ...row,
           'id': row['product_id'],
-          'image': matchedImage ?? row['main_image'],
-          'main_image': matchedImage ?? row['main_image'],
+          'image': mainImage,
+          'main_image': mainImage,
+          if (images.isEmpty && mainImage.isNotEmpty) 'images': [mainImage],
         });
       })
       .toList(growable: false);

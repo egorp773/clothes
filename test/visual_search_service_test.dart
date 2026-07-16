@@ -120,7 +120,10 @@ void main() {
 
     expect(result.products, isEmpty);
     expect(result.similarProducts.single.id, 'similar-1');
-    expect(result.similarProducts.single.image, 'https://example.com/side.jpg');
+    expect(result.similarProducts.single.image, 'https://example.com/main.jpg');
+    expect(result.similarProducts.single.images, [
+      'https://example.com/main.jpg',
+    ]);
     expect(result.matchStatus, 'similar_only');
     expect(result.bestSimilarity, 0.64);
   });

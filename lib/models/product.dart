@@ -235,15 +235,22 @@ class Product {
       detailPrice: json['detail_price'] as String? ?? priceValue.toString(),
       priceValue: priceValue,
       image: image,
-      category: _displayName(
+      category: ListingCatalogs.categoryName(
         normalizedCategory.isNotEmpty
             ? normalizedCategory
             : (itemType.isNotEmpty ? itemType : categoryId),
+        fallback: categoryId,
       ),
-      brand: _displayName(brandId.isEmpty ? normalizedBrand : brandId),
-      size: _displayName(sizeId),
-      color: _displayName(primaryColor),
-      condition: _displayName(conditionId),
+      brand: ListingCatalogs.brandName(
+        brandId.isEmpty ? normalizedBrand : brandId,
+        fallback: brandId.isEmpty ? normalizedBrand : brandId,
+      ),
+      size: ListingCatalogs.sizeName(sizeId, fallback: sizeId),
+      color: ListingCatalogs.colorName(primaryColor, fallback: primaryColor),
+      condition: ListingCatalogs.conditionName(
+        conditionId,
+        fallback: conditionId,
+      ),
       location: city,
       ownerId:
           json['seller_id'] as String? ?? json['owner_id'] as String? ?? '',
@@ -363,11 +370,15 @@ class Product {
       'description': description,
       'price': priceValue,
       'images': images.isNotEmpty ? images : [image],
-      'category': categoryId.isEmpty ? category : categoryId,
-      'brand': brand,
-      'size': size,
+      'category': categoryId.isNotEmpty
+          ? categoryId
+          : (ListingCatalogs.legacyPathFor(normalizedCategory).category.isEmpty
+                ? category
+                : ListingCatalogs.legacyPathFor(normalizedCategory).category),
+      'brand': normalizedBrand.isEmpty ? brand : normalizedBrand,
+      'size': ListingCatalogs.sizeIdOf(size),
       'color': primaryColor.isEmpty ? color : primaryColor,
-      'condition': condition,
+      'condition': ListingCatalogs.conditionIdOf(condition),
       'location': location,
       'is_hidden': isHidden,
       'original_image': image,
@@ -537,9 +548,6 @@ class Product {
     }
     return Map.unmodifiable(result);
   }
-
-  static String _displayName(String id) =>
-      ListingCatalogs.nameOf(id, fallback: id);
 
   static String _formatPrice(int value) {
     final raw = value.toString();

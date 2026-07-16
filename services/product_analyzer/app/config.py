@@ -106,8 +106,9 @@ class Settings(BaseSettings):
     grounded_sam_repo: Path = SERVICE_ROOT / "vendor" / "Grounded-SAM-2"
     grounded_sam_commit: str = "b7a9c29f196edff0eb54dbe14588d7ae5e3dde28"
     grounded_sam_prompt: str = (
-        "clothing. garment. shirt. t-shirt. hoodie. sweater. jacket. coat. "
-        "pants. jeans. skirt. dress. shoes. sneakers. bag. accessory."
+        "clothing. garment. shirt. blouse. t-shirt. hoodie. sweater. cardigan. "
+        "jacket. coat. pants. jeans. skirt. dress. swimwear. shoes. sneakers. "
+        "boots. bag. backpack. headwear. gloves. watch. jewelry. accessory."
     )
     grounding_dino_box_threshold: float = 0.28
     grounding_dino_text_threshold: float = 0.22

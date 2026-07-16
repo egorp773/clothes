@@ -7,7 +7,12 @@ from dataclasses import dataclass
 
 from PIL import Image
 
-from app.catalog import ALLOWED_ATTRIBUTES
+from app.catalog import (
+    ALLOWED_ATTRIBUTES,
+    CATEGORY_ATTRIBUTES,
+    attribute_options_for,
+    normalize_category,
+)
 from app.config import Settings
 
 
@@ -121,12 +126,17 @@ class QwenAdapter:
             ]
             if cutout is not None:
                 content.append({"type": "image", "image": cutout.convert("RGB")})
-            schema = {key: list(values) for key, values in ALLOWED_ATTRIBUTES.items()}
+            normalized_category = normalize_category(category) or category
+            relevant_keys = CATEGORY_ATTRIBUTES.get(normalized_category, ())
+            schema = {
+                key: list(attribute_options_for(normalized_category, key))
+                for key, values in ALLOWED_ATTRIBUTES.items()
+                if key in relevant_keys or key == "gender"
+            }
             prompt = (
-                "Analyze only visible properties of the clothing item. "
+                "Analyze only visible properties of the fashion item. "
                 f"Known item type: {category}. Allowed values: {json.dumps(schema, ensure_ascii=False)}. "
-                "Return one strict JSON object with exactly these keys: "
-                "gender, material, pattern, season, style, fit, sleeve_length, closure. "
+                f"Return one strict JSON object with exactly these keys: {', '.join(schema)}. "
                 "Each value must be one allowed identifier or null. Never guess an invisible property."
             )
             content.append({"type": "text", "text": prompt})
@@ -153,7 +163,12 @@ class QwenAdapter:
             values: dict[str, str | None] = {}
             for key, allowed in ALLOWED_ATTRIBUTES.items():
                 value = payload.get(key)
-                values[key] = value if isinstance(value, str) and value in allowed else None
+                category_allowed = schema.get(key, allowed)
+                values[key] = (
+                    value
+                    if isinstance(value, str) and value in category_allowed
+                    else None
+                )
             return VlmAttributes(values=values, confidence=0.68, model=self._model_id)
 
     def _parse_json(self, text: str) -> dict[str, object]:

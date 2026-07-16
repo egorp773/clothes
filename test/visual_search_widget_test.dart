@@ -153,6 +153,52 @@ void main() {
     expect(find.text('Выбрать фото'), findsNothing);
   });
 
+  testWidgets('search results reuse the complete catalog product by id', (
+    tester,
+  ) async {
+    final image = XFile.fromData(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+      mimeType: 'image/png',
+      name: 'query.png',
+    );
+    final catalogProduct = Product.fromSupabase({
+      'id': 'product',
+      'title': 'Complete catalog product',
+      'description': 'Complete catalog description',
+      'price': 4700,
+      'main_image': 'assets/products/try_photo.png',
+      'images': <String>['assets/products/try_photo.png'],
+      'category': 'clothing',
+      'seller_id': 'seller-42',
+      'seller_name': 'Catalog seller',
+      'seller_handle': '@catalog_seller',
+      'location': 'Moscow',
+    });
+    Product? openedProduct;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisualSearchScreen(
+          initialImage: image,
+          service: _FakeVisualSearchService(),
+          catalogProducts: [catalogProduct],
+          onProductTap: (product) => openedProduct = product,
+          onToggleLike: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Complete catalog product'), findsOneWidget);
+
+    await tester.tap(find.text('Complete catalog product'));
+    expect(openedProduct, same(catalogProduct));
+    expect(openedProduct?.sellerName, 'Catalog seller');
+    expect(openedProduct?.ownerId, 'seller-42');
+  });
+
   testWidgets('shows empty state when relevance filtering returns no items', (
     tester,
   ) async {

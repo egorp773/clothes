@@ -5,6 +5,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
+from app.catalog import CATEGORIES
 from app.config import Settings
 from app.visual_search.schemas import VisualSearchProduct
 
@@ -12,60 +13,55 @@ from app.visual_search.schemas import VisualSearchProduct
 LOGGER = logging.getLogger(__name__)
 
 
-_ITEM_GROUPS = (
-    frozenset({"hoodie", "sweatshirt", "sweater"}),
-    frozenset({"shirt", "tshirt", "top"}),
-    frozenset({"jacket", "coat", "vest"}),
-    frozenset({"jeans", "trousers", "shorts"}),
-    frozenset({"skirt", "dress", "jumpsuit"}),
-    frozenset({"sneakers", "boots", "shoes", "sandals"}),
-    frozenset({"bag", "backpack", "belt", "scarf", "headwear"}),
-    frozenset({"necklace", "ring", "bracelet", "earrings"}),
+# Only genuinely adjacent apparel types are eligible for a sparse-catalog
+# fallback.  Bags, jewelry, shoes and one-piece garments stay exact: treating
+# a wallet as a handbag or earrings as a bracelet makes a larger taxonomy
+# pointless and was a major source of visually plausible but wrong results.
+_RELATED_ITEM_FALLBACK_GROUPS = (
+    frozenset({"hoodie", "sweatshirt", "sweater", "cardigan", "turtleneck"}),
+    frozenset({"shirt", "blouse", "tshirt", "tank_top", "top", "long_sleeve", "polo"}),
+    frozenset({"jacket", "blazer", "puffer", "coat", "trench", "vest"}),
+    frozenset({"jeans", "trousers", "joggers", "leggings", "shorts"}),
+    frozenset({"cap", "beanie", "hat", "headwear"}),
 )
 
 _ITEM_SUBCATEGORY = {
-    "hoodie": "tops",
-    "sweatshirt": "tops",
-    "sweater": "tops",
-    "shirt": "tops",
-    "tshirt": "tops",
-    "top": "tops",
-    "jacket": "outerwear",
-    "coat": "outerwear",
-    "vest": "outerwear",
-    "jeans": "bottoms",
-    "trousers": "bottoms",
-    "shorts": "bottoms",
-    "skirt": "bottoms",
-    "dress": "dresses",
-    "jumpsuit": "dresses",
-    "sneakers": "shoes_all",
-    "boots": "shoes_all",
-    "shoes": "shoes_all",
-    "sandals": "shoes_all",
-    "bag": "accessories_all",
-    "backpack": "accessories_all",
-    "belt": "accessories_all",
-    "scarf": "accessories_all",
-    "headwear": "accessories_all",
+    definition.item_type: definition.subcategory for definition in CATEGORIES
 }
 
 _TITLE_ITEM_HINTS = (
-    (("пухов", "куртк"), "jacket"),
+    (("пухов",), "puffer"),
+    (("пиджак", "блейзер"), "blazer"),
+    (("куртк",), "jacket"),
     (("пальто",), "coat"),
-    (("кардиган", "свитер"), "sweater"),
+    (("тренч", "плащ"), "trench"),
+    (("кардиган",), "cardigan"),
+    (("водолаз",), "turtleneck"),
+    (("свитер", "джемпер", "пуловер"), "sweater"),
     (("свитшот",), "sweatshirt"),
     (("худи", "толстов"), "hoodie"),
-    (("лонгслив",), "top"),
+    (("лонгслив",), "long_sleeve"),
+    (("поло",), "polo"),
+    (("майк",), "tank_top"),
     (("футбол",), "tshirt"),
+    (("блуз",), "blouse"),
     (("рубаш",), "shirt"),
     (("джинс",), "jeans"),
+    (("джог", "спортивн"), "joggers"),
+    (("легин", "лосин"), "leggings"),
     (("брюк",), "trousers"),
     (("шорт",), "shorts"),
     (("юбк",), "skirt"),
     (("кед", "крос", "sneaker"), "sneakers"),
     (("ботин", "сапог"), "boots"),
-    (("кошел", "косметич", "сумк"), "bag"),
+    (("лофер", "мокас"), "loafers"),
+    (("каблук", "лодочк"), "heels"),
+    (("сандал", "босонож"), "sandals"),
+    (("кошел", "портмоне"), "wallet"),
+    (("рюкзак",), "backpack"),
+    (("сумк", "клатч", "косметич"), "bag"),
+    (("браслет",), "bracelet"),
+    (("час",), "watch"),
 )
 
 
@@ -163,7 +159,28 @@ class VisualSearchReranker:
             )
         if not scored:
             return []
-        reference = [
+        exact_reference = [
+            entry
+            for entry in scored
+            if entry[1]["item_type_match"] == 1.0
+            and self._passes_absolute_thresholds(entry)
+            and (
+                not confident_category
+                or entry[1]["category_match"]
+                or entry[0].visual_similarity
+                >= self.settings.visual_search_taxonomy_override_similarity
+            )
+        ]
+        exact_target = min(
+            max(1, limit),
+            max(1, self.settings.visual_search_focused_min_results),
+        )
+        exact_first = bool(
+            confident_item_type
+            and query_item_type
+            and len(exact_reference) >= exact_target
+        )
+        reference = exact_reference if exact_first else [
             entry
             for entry in scored
             if (not confident_category or entry[1]["category_match"])
@@ -177,7 +194,7 @@ class VisualSearchReranker:
             reference = scored
         best_similarity = max(entry[0].visual_similarity for entry in reference)
         best_score = max(entry[0].score for entry in reference)
-        included: list[VisualSearchProduct] = []
+        included: list[tuple[VisualSearchProduct, dict[str, Any]]] = []
         for product, metadata in scored:
             reasons: list[str] = []
             taxonomy_override = (
@@ -207,6 +224,12 @@ class VisualSearchReranker:
             ):
                 reasons.append("category_mismatch")
             if (
+                exact_first
+                and metadata["item_type_match"] < 1.0
+                and not taxonomy_override
+            ):
+                reasons.append("non_exact_item_type")
+            elif (
                 confident_item_type
                 and query_item_type
                 and metadata["item_type_match"] <= 0
@@ -230,9 +253,20 @@ class VisualSearchReranker:
                 reason,
             )
             if not reasons:
-                included.append(product)
-        included.sort(key=lambda item: (item.score, item.visual_similarity), reverse=True)
-        return included[:limit]
+                included.append((product, metadata))
+        included.sort(
+            key=lambda entry: (
+                1.0
+                if confident_item_type
+                and query_item_type
+                and entry[1]["item_type_match"] == 1.0
+                else 0.0,
+                entry[0].score,
+                entry[0].visual_similarity,
+            ),
+            reverse=True,
+        )
+        return [product for product, _ in included[:limit]]
 
     @staticmethod
     def _candidate_item_type(row: dict[str, Any]) -> str | None:
@@ -253,7 +287,29 @@ class VisualSearchReranker:
             return 1.0
         if not actual:
             return 0.0
-        return 0.75 if any(expected in group and actual in group for group in _ITEM_GROUPS) else 0.0
+        return (
+            0.75
+            if any(
+                expected in group and actual in group
+                for group in _RELATED_ITEM_FALLBACK_GROUPS
+            )
+            else 0.0
+        )
+
+    def _passes_absolute_thresholds(
+        self,
+        entry: tuple[VisualSearchProduct, dict[str, Any]],
+    ) -> bool:
+        product, metadata = entry
+        minimum_similarity = (
+            self.settings.visual_search_fallback_min_similarity
+            if metadata["pool"] == "fallback"
+            else self.settings.visual_search_min_similarity
+        )
+        return (
+            product.visual_similarity >= minimum_similarity
+            and product.score >= self.settings.visual_search_min_rerank_score
+        )
 
     @staticmethod
     def _category_match(

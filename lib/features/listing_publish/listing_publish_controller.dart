@@ -366,6 +366,7 @@ class ListingPublishController extends ChangeNotifier {
         if (draft.normalizedCategory != normalized) {
           draft.normalizedCategory = normalized;
           _applyLegacyCategory(normalized);
+          _normalizeSizeForCategory(normalized);
           final allowed = ListingCatalogs.attributesFor(
             normalized,
           ).map((definition) => definition.id).toSet();
@@ -405,19 +406,15 @@ class ListingPublishController extends ChangeNotifier {
       case 'rise':
         draft.rise = value;
       default:
-        return;
+        final isCategoryAttribute = ListingCatalogs.attributesFor(
+          draft.normalizedCategory,
+        ).any((definition) => definition.id == field);
+        if (!isCategoryAttribute) return;
     }
-    if (const {
-      'material',
-      'pattern',
-      'season',
-      'style',
-      'fit',
-      'sleeve_length',
-      'closure',
-      'collar',
-      'rise',
-    }.contains(field)) {
+    final isCategoryAttribute = ListingCatalogs.attributesFor(
+      draft.normalizedCategory,
+    ).any((definition) => definition.id == field);
+    if (isCategoryAttribute) {
       if (value.isEmpty) {
         draft.categoryAttributes.remove(field);
       } else {
@@ -493,6 +490,11 @@ class ListingPublishController extends ChangeNotifier {
         setAttribute(field, '');
         return;
       default:
+        if (ListingCatalogs.attributesFor(
+          draft.normalizedCategory,
+        ).any((definition) => definition.id == field)) {
+          setAttribute(field, '');
+        }
         return;
     }
   }
@@ -686,23 +688,27 @@ class ListingPublishController extends ChangeNotifier {
   }
 
   void _applyAnalysis(ProductAnalysisResult result) {
-    final normalizedFromAnalysis = ListingCatalogs.normalizeCategory(
-      result.normalizedCategory.value ?? result.itemType.value ?? '',
+    // Prefer the classifier's fine-grained item type over an older collapsed
+    // normalized value (for example sweater + legacy hoodie).
+    final normalizedFromItemType = ListingCatalogs.normalizeCategory(
+      result.itemType.value ?? '',
     );
+    final normalizedFromAnalysis = normalizedFromItemType.isNotEmpty
+        ? normalizedFromItemType
+        : ListingCatalogs.normalizeCategory(
+            result.normalizedCategory.value ?? '',
+          );
+    final categorySource = normalizedFromItemType.isNotEmpty
+        ? result.itemType
+        : result.normalizedCategory;
     if (normalizedFromAnalysis.isNotEmpty) {
       _mergePrediction(
         'normalized_category',
         AnalyzedField<String>(
           value: normalizedFromAnalysis,
-          confidence: result.normalizedCategory.hasValue
-              ? result.normalizedCategory.confidence
-              : result.itemType.confidence,
-          source: result.normalizedCategory.hasValue
-              ? result.normalizedCategory.source
-              : result.itemType.source,
-          modelVersion: result.normalizedCategory.hasValue
-              ? result.normalizedCategory.modelVersion
-              : result.itemType.modelVersion,
+          confidence: categorySource.confidence,
+          source: categorySource.source,
+          modelVersion: categorySource.modelVersion,
         ),
         (value) {
           draft.normalizedCategory = value;
@@ -710,44 +716,20 @@ class ListingPublishController extends ChangeNotifier {
         },
       );
     }
-    _mergePrediction(
-      'section',
-      result.section,
-      (value) => draft.section = value,
-    );
-    _mergePrediction(
-      'category',
-      result.category,
-      (value) => draft.category = value,
-    );
-    final predictedSubcategory = result.subcategory.value;
-    final subcategoryIsCompatible =
-        predictedSubcategory != null &&
-        (ListingCatalogs.subcategoriesByCategory[draft.category] ?? const [])
-            .any((option) => option.id == predictedSubcategory);
-    if (subcategoryIsCompatible) {
-      _mergePrediction(
-        'subcategory',
-        result.subcategory,
-        (value) => draft.subcategory = value,
-      );
-    } else {
-      _recordPredictionOnly('subcategory', result.subcategory);
+    // Legacy hierarchy is a projection of the effective canonical category.
+    // Keep analyzer legacy fields as diagnostics, but never let them drift from
+    // a seller-protected normalized category on a later analysis pass.
+    _recordPredictionOnly('section', result.section);
+    _recordPredictionOnly('category', result.category);
+    _recordPredictionOnly('subcategory', result.subcategory);
+    _recordPredictionOnly('item_type', result.itemType);
+    if (draft.normalizedCategory.isNotEmpty) {
+      _applyLegacyCategory(draft.normalizedCategory);
     }
-    final predictedItemType = result.itemType.value;
-    final itemTypeIsCompatible =
-        predictedItemType != null &&
-        (ListingCatalogs.itemTypesBySubcategory[draft.subcategory] ?? const [])
-            .any((option) => option.id == predictedItemType);
-    if (itemTypeIsCompatible) {
-      _mergePrediction(
-        'item_type',
-        result.itemType,
-        (value) => draft.itemType = value,
-      );
-    } else {
-      _recordPredictionOnly('item_type', result.itemType);
-    }
+    final analysisCategoryConflicts =
+        normalizedFromAnalysis.isNotEmpty &&
+        draft.normalizedCategory.isNotEmpty &&
+        normalizedFromAnalysis != draft.normalizedCategory;
     // These are mandatory seller fields. Analysis may retain a private hint,
     // but it must never satisfy the form on the seller's behalf.
     _recordPredictionOnly('gender', result.gender);
@@ -823,6 +805,7 @@ class ListingPublishController extends ChangeNotifier {
     final suggestedTitle = result.suggestedTitle.value?.trim() ?? '';
     if (!draft.titleWasEdited &&
         draft.title.trim().isEmpty &&
+        !analysisCategoryConflicts &&
         result.suggestedTitle.confidence >= 0.45 &&
         suggestedTitle.isNotEmpty) {
       _mergePrediction(
@@ -973,25 +956,44 @@ class ListingPublishController extends ChangeNotifier {
   }
 
   void _applyLegacyCategory(String normalized) {
-    final legacy = switch (normalized) {
-      't_shirt' => ('clothing', 'tops', 'tshirt'),
-      'hoodie' => ('clothing', 'tops', 'hoodie'),
-      'shirt' => ('clothing', 'tops', 'shirt'),
-      'jacket' => ('clothing', 'outerwear', 'jacket'),
-      'jeans' => ('clothing', 'bottoms', 'jeans'),
-      'trousers' => ('clothing', 'bottoms', 'trousers'),
-      'dress' => ('clothing', 'dresses', 'dress'),
-      'skirt' => ('clothing', 'bottoms', 'skirt'),
-      'sneakers' => ('shoes', 'shoes_all', 'sneakers'),
-      'boots' => ('shoes', 'shoes_all', 'boots'),
-      'bag' => ('accessories', 'accessories_all', 'bag'),
-      'accessory' => ('accessories', 'accessories_all', 'accessory'),
-      _ => ('', '', ''),
-    };
+    final legacy = ListingCatalogs.legacyPathFor(normalized);
     draft
-      ..category = legacy.$1
-      ..subcategory = legacy.$2
-      ..itemType = legacy.$3;
+      ..category = legacy.category
+      ..subcategory = legacy.subcategory
+      ..itemType = legacy.itemType;
+  }
+
+  void _normalizeSizeForCategory(String normalized) {
+    final current = draft.size.trim();
+    if (current.isEmpty) return;
+    final isUniversal = ListingCatalogs.universalSizes.any(
+      (option) => option.id == current,
+    );
+    final isShoeSize = ListingCatalogs.shoeSizes.any(
+      (option) => option.id == current,
+    );
+    String next = current;
+    if (ListingCatalogs.usesOneSize(normalized)) {
+      if (isUniversal || isShoeSize) next = 'one_size';
+    } else if (ListingCatalogs.isShoeCategory(normalized)) {
+      if (isUniversal && !isShoeSize) next = '';
+    } else if (isShoeSize && !isUniversal) {
+      next = '';
+    }
+    if (next == current) return;
+    draft.size = next;
+    if (next.isNotEmpty) {
+      _setManualPrediction('size', next);
+    } else {
+      final prediction = draft.predictions['size'];
+      if (prediction != null) {
+        prediction
+          ..confirmedValue = ''
+          ..userConfirmed = false
+          ..wasEdited = true
+          ..updatedAt = DateTime.now().toUtc();
+      }
+    }
   }
 
   String _attributeValue(String field) => switch (field) {
@@ -1047,7 +1049,7 @@ class ListingPublishController extends ChangeNotifier {
         : (mainPhoto?.remoteUrl.isNotEmpty == true
               ? mainPhoto!.remoteUrl
               : (urls.firstOrNull ?? ''));
-    final colorName = ListingCatalogs.nameOf(draft.primaryColor);
+    final colorName = ListingCatalogs.colorName(draft.primaryColor);
     final confirmedAttributes = draft.confirmedCategoryAttributes;
     final confirmedSecondaryColors = draft.confirmedSecondaryColors;
     return Product(
@@ -1060,13 +1062,13 @@ class ListingPublishController extends ChangeNotifier {
       priceValue: draft.price,
       image: image,
       images: urls,
-      category: ListingCatalogs.nameOf(draft.normalizedCategory),
+      category: ListingCatalogs.categoryName(draft.normalizedCategory),
       categoryId: draft.category,
-      brand: ListingCatalogs.nameOf(draft.brand),
-      size: ListingCatalogs.nameOf(draft.size),
+      brand: ListingCatalogs.brandName(draft.brand),
+      size: ListingCatalogs.sizeName(draft.size),
       color: colorName,
       primaryColor: draft.primaryColor,
-      condition: ListingCatalogs.nameOf(draft.condition),
+      condition: ListingCatalogs.conditionName(draft.condition),
       location: draft.city,
       city: draft.city,
       ownerId: repository.sellerId,

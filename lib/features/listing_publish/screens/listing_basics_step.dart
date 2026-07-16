@@ -182,7 +182,10 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
               isRequired: true,
               value: draft.brand.isEmpty
                   ? null
-                  : ListingCatalogs.nameOf(draft.brand, fallback: draft.brand),
+                  : ListingCatalogs.brandName(
+                      draft.brand,
+                      fallback: draft.brand,
+                    ),
               placeholder: 'Бренд или «Без бренда»',
               onTap: _showBrandPicker,
             ),
@@ -200,7 +203,7 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
               isRequired: true,
               value: draft.condition.isEmpty
                   ? null
-                  : ListingCatalogs.nameOf(draft.condition),
+                  : ListingCatalogs.conditionName(draft.condition),
               placeholder: 'Выберите состояние',
               onTap: _showConditionPicker,
             ),
@@ -210,7 +213,7 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
               isRequired: true,
               value: draft.gender.isEmpty
                   ? null
-                  : ListingCatalogs.nameOf(draft.gender),
+                  : ListingCatalogs.genderName(draft.gender),
               onTap: () => _selectAttribute(
                 title: 'Для кого вещь',
                 options: ListingCatalogs.genders,
@@ -347,15 +350,8 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
     widget.controller.setSize(selected.trim());
   }
 
-  String _sizeDisplayName(String id) {
-    for (final option in [
-      ...ListingCatalogs.universalSizes,
-      ...ListingCatalogs.shoeSizes,
-    ]) {
-      if (option.id == id) return option.name;
-    }
-    return id;
-  }
+  String _sizeDisplayName(String id) =>
+      ListingCatalogs.sizeName(id, fallback: id);
 
   Future<void> _showConditionPicker() async {
     FocusScope.of(context).unfocus();
@@ -507,7 +503,8 @@ class _SizePickerSheetState extends State<_SizePickerSheet> {
   @override
   Widget build(BuildContext context) {
     final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
-    final isShoes = const {'sneakers', 'boots'}.contains(widget.category);
+    final isShoes = ListingCatalogs.isShoeCategory(widget.category);
+    final usesOneSize = ListingCatalogs.usesOneSize(widget.category);
     return AnimatedPadding(
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
@@ -540,13 +537,19 @@ class _SizePickerSheetState extends State<_SizePickerSheet> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                if (!isShoes) const _SheetSectionTitle('Универсальные размеры'),
+                if (!isShoes)
+                  _SheetSectionTitle(
+                    usesOneSize ? 'Размер аксессуара' : 'Универсальные размеры',
+                  ),
                 const SizedBox(height: 10),
                 if (!isShoes)
                   _SizeOptionsWrap(
-                    options: ListingCatalogs.universalSizes
-                        .where((option) => option.id != 'custom')
-                        .toList(growable: false),
+                    options:
+                        (usesOneSize
+                                ? ListingCatalogs.oneSizeOptions
+                                : ListingCatalogs.universalSizes)
+                            .where((option) => option.id != 'custom')
+                            .toList(growable: false),
                     selectedValue: widget.selectedValue,
                   ),
                 const SizedBox(height: 22),

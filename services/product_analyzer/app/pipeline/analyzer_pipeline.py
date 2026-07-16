@@ -468,8 +468,12 @@ class AnalyzerPipeline:
             "paddleocr_brand_matcher" if brand else "not_detected",
         )
         if brand and result.item_type.value:
+            item_title = ITEM_TYPE_TITLES.get(
+                result.item_type.value,
+                result.item_type.value,
+            )
             result.suggested_title = self._field(
-                f"{BRANDS.get(brand.brand_id, brand.brand_id)} {result.item_type.value}",
+                f"{BRANDS.get(brand.brand_id, brand.brand_id)} {item_title}",
                 min(0.72, result.item_type.confidence),
                 "pipeline_derived",
             )
@@ -492,7 +496,6 @@ class AnalyzerPipeline:
             suggestions = self.visual_attributes.suggest(
                 visual_embedding,
                 result.normalized_category.value,
-                all_attributes=True,
             )
             for suggestion in suggestions:
                 current = getattr(result, suggestion.key)
@@ -694,8 +697,12 @@ class AnalyzerPipeline:
             "paddleocr_brand_matcher" if brand else "not_detected",
         )
         if brand and result.item_type.value:
+            item_title = ITEM_TYPE_TITLES.get(
+                result.item_type.value,
+                result.item_type.value,
+            )
             result.suggested_title = self._field(
-                f"{BRANDS.get(brand.brand_id, brand.brand_id)} {result.item_type.value}",
+                f"{BRANDS.get(brand.brand_id, brand.brand_id)} {item_title}",
                 min(0.72, result.item_type.confidence),
                 "pipeline_derived",
             )
@@ -786,7 +793,6 @@ class AnalyzerPipeline:
                 embeddings,
                 category,
                 weights,
-                all_attributes=True,
             ):
                 current = getattr(result, suggestion.key)
                 if current.source in {
@@ -811,13 +817,13 @@ class AnalyzerPipeline:
             result.primary_color = self._field(
                 consensus[0].color_id,
                 consensus[0].confidence,
-                "opencv_masked_multiview_v1",
+                "opencv_masked_multiview_v2",
             )
             result.secondary_colors = [
                 self._field(
                     candidate.color_id,
                     candidate.confidence,
-                    "opencv_masked_multiview_v1",
+                    "opencv_masked_multiview_v2",
                 )
                 for candidate in consensus[1:5]
                 if candidate.share >= 0.08

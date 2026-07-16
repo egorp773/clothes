@@ -160,7 +160,8 @@ class _CatalogScreenState extends State<CatalogScreen>
     if (_filters.category.isNotEmpty && category != _filters.category) {
       return false;
     }
-    if (_filters.size.isNotEmpty && !_sameOption(product.size, _filters.size)) {
+    if (_filters.size.isNotEmpty &&
+        !_sameOption(product.size, _filters.size, field: 'size')) {
       return false;
     }
     if (_filters.minPrice != null && product.priceValue < _filters.minPrice!) {
@@ -179,7 +180,11 @@ class _CatalogScreenState extends State<CatalogScreen>
       return false;
     }
     if (_filters.condition.isNotEmpty &&
-        !_sameOption(product.condition, _filters.condition)) {
+        !_sameOption(
+          product.condition,
+          _filters.condition,
+          field: 'condition',
+        )) {
       return false;
     }
     final audience = product.audience.isNotEmpty
@@ -198,7 +203,7 @@ class _CatalogScreenState extends State<CatalogScreen>
   bool _matchesSearch(Product product) {
     final query = _normalizedText(_searchQuery);
     if (query.isEmpty) return true;
-    final categoryName = ListingCatalogs.nameOf(
+    final categoryName = ListingCatalogs.categoryName(
       product.normalizedCategory,
       fallback: product.category,
     );
@@ -223,8 +228,8 @@ class _CatalogScreenState extends State<CatalogScreen>
       2 => audience == 'female',
       3 => audience == 'male',
       4 => category == 'jeans' || product.material == 'denim',
-      5 => const {'t_shirt', 'hoodie', 'shirt'}.contains(category),
-      6 => const {'jeans', 'trousers', 'skirt'}.contains(category),
+      5 => ListingCatalogs.isTopCategory(category),
+      6 => ListingCatalogs.isBottomCategory(category),
       _ => true,
     };
   }
@@ -235,31 +240,45 @@ class _CatalogScreenState extends State<CatalogScreen>
         _sameOption(
           product.primaryColor.isEmpty ? product.color : product.primaryColor,
           _filters.color,
+          field: 'color',
         )) {
       score += 5;
     }
     if (_filters.material.isNotEmpty &&
-        _sameOption(product.material, _filters.material)) {
+        _sameOption(product.material, _filters.material, field: 'material')) {
       score += 4;
     }
     if (_filters.pattern.isNotEmpty &&
-        _sameOption(product.pattern, _filters.pattern)) {
+        _sameOption(product.pattern, _filters.pattern, field: 'pattern')) {
       score += 3;
     }
-    if (_filters.fit.isNotEmpty && _sameOption(product.fit, _filters.fit)) {
+    if (_filters.fit.isNotEmpty &&
+        _sameOption(product.fit, _filters.fit, field: 'fit')) {
       score += 3;
     }
     if (_filters.style.isNotEmpty &&
-        _sameOption(product.style, _filters.style)) {
+        _sameOption(product.style, _filters.style, field: 'style')) {
       score += 2;
     }
     return score;
   }
 
-  bool _sameOption(String actual, String selected) {
+  bool _sameOption(String actual, String selected, {required String field}) {
     if (_normalizedText(actual) == _normalizedText(selected)) return true;
-    return _normalizedText(actual) ==
-        _normalizedText(ListingCatalogs.nameOf(selected, fallback: selected));
+    final display = switch (field) {
+      'size' => ListingCatalogs.sizeName(selected, fallback: selected),
+      'condition' => ListingCatalogs.conditionName(
+        selected,
+        fallback: selected,
+      ),
+      'color' => ListingCatalogs.colorName(selected, fallback: selected),
+      _ => ListingCatalogs.attributeValueName(
+        field,
+        selected,
+        fallback: selected,
+      ),
+    };
+    return _normalizedText(actual) == _normalizedText(display);
   }
 
   String _normalizedText(String value) => value
@@ -600,6 +619,7 @@ class _CatalogScreenState extends State<CatalogScreen>
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
         builder: (context) => VisualSearchCameraScreen(
+          catalogProducts: widget.products,
           onProductTap: _showProductDetails,
           onToggleLike: widget.onToggleLike,
           onShareProduct: widget.onShareProduct,

@@ -36,19 +36,23 @@ class ColorCandidate:
 
 
 class MaskedColorAnalyzer:
-    source = "opencv_masked_lab_hsv_v1"
+    source = "opencv_masked_lab_hsv_v2"
 
     def __init__(self, clusters: int = 6, min_secondary_share: float = 0.12) -> None:
         self.clusters = clusters
         self.min_secondary_share = min_secondary_share
         palette_rgb = np.array(list(COLORS.values()), dtype=np.uint8).reshape(-1, 1, 3)
         self._palette_ids = list(COLORS)
-        self._palette_lab = cv2.cvtColor(palette_rgb, cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
+        self._palette_lab = (
+            cv2.cvtColor(palette_rgb, cv2.COLOR_RGB2LAB)
+            .reshape(-1, 3)
+            .astype(np.float32)
+        )
 
     def analyze(self, image_rgb: np.ndarray, mask: np.ndarray) -> list[ColorCandidate]:
         if image_rgb.shape[:2] != mask.shape[:2]:
             raise ValueError("Mask and image dimensions differ")
-        mask = mask.astype(bool)
+        mask = self._sampling_mask(mask.astype(bool))
         if int(mask.sum()) < 64:
             return []
 
@@ -100,10 +104,17 @@ class MaskedColorAnalyzer:
                 confidence=min(0.97, 0.58 + (count / total) * 0.40),
             )
             for color_id, count in ranked
-            if count / total >= (0.04 if not ranked or color_id == ranked[0][0] else self.min_secondary_share)
+            if count / total
+            >= (
+                0.04
+                if not ranked or color_id == ranked[0][0]
+                else self.min_secondary_share
+            )
         ]
         prominent = [item for item in merged if item.share >= 0.12]
-        families = {COLOR_FAMILIES.get(item.color_id, item.color_id) for item in prominent}
+        families = {
+            COLOR_FAMILIES.get(item.color_id, item.color_id) for item in prominent
+        }
         # Shadows and highlights often map one fabric to black/gray/white or
         # several blue/red shades. Treat those as one family. "Multicolor" is
         # reserved for at least three genuinely distinct, visible families.
@@ -127,11 +138,30 @@ class MaskedColorAnalyzer:
         median_h, median_s, median_v = np.median(cluster_hsv, axis=0)
         if median_v <= 42 and median_s <= 75:
             return "black"
-        if median_s <= 24:
-            if median_v >= 232:
+        # The old V>=232 rule described monitor white, not photographed white
+        # fabric. Neutral garments routinely land around V=210..230 because of
+        # exposure and folds, while the catalog's real gray reference is much
+        # darker. Keep cream/beige and pale chromatic colors out by requiring
+        # low saturation, then use the midpoint between catalog gray and white
+        # with a small safety margin for a stable neutral decision.
+        if median_s <= 32:
+            if median_v >= 210:
                 return "white"
             if median_v <= 55:
                 return "black"
             return "gray"
         distances = np.linalg.norm(self._palette_lab - center_lab[None, :], axis=1)
         return self._palette_ids[int(np.argmin(distances))]
+
+    @staticmethod
+    def _sampling_mask(mask: np.ndarray) -> np.ndarray:
+        """Prefer the mask interior so a bright backdrop cannot become fabric."""
+        height, width = mask.shape
+        kernel_size = max(3, min(7, min(height, width) // 120 * 2 + 1))
+        kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+        interior = cv2.erode(mask.astype(np.uint8), kernel, iterations=1).astype(bool)
+        # Thin straps and small accessories may disappear after erosion. In
+        # that case the original segmentation is safer than losing the item.
+        if int(interior.sum()) >= max(64, int(mask.sum() * 0.60)):
+            return interior
+        return mask

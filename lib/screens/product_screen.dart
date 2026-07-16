@@ -1,12 +1,22 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../core/app_typography.dart';
 import '../models/app_profile.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
 import '../services/image_download_service.dart';
 import '../features/listing_publish/data/listing_catalogs.dart';
 import '../widgets/app_image.dart';
+
+const _productInfoBodyTextStyle = TextStyle(
+  fontFamily: AppTypography.fontFamily,
+  fontSize: 15,
+  height: 1.24,
+  fontWeight: AppTypography.medium,
+  letterSpacing: 0,
+  color: Colors.black,
+);
 
 class ProductDetailData {
   const ProductDetailData({
@@ -1301,19 +1311,29 @@ class _ProductDatabaseDescriptionState
     final category = _categoryName(product, source);
     final brand = product.brand.trim().isNotEmpty
         ? product.brand.trim()
-        : ListingCatalogs.nameOf(source?.normalizedBrand ?? '', fallback: '');
+        : ListingCatalogs.brandName(
+            source?.normalizedBrand ?? '',
+            fallback: '',
+          );
     final audienceId = source?.audience.trim().isNotEmpty == true
         ? source!.audience.trim()
         : source?.gender.trim() ?? '';
-    final audience = ListingCatalogs.nameOf(audienceId, fallback: audienceId);
+    final audience = ListingCatalogs.genderName(
+      audienceId,
+      fallback: audienceId,
+    );
     final primaryColorId = source?.primaryColor.trim() ?? '';
     final primaryColor = primaryColorId.isNotEmpty
-        ? ListingCatalogs.nameOf(primaryColorId, fallback: product.color.trim())
+        ? ListingCatalogs.colorName(
+            primaryColorId,
+            fallback: product.color.trim(),
+          )
         : product.color.trim();
     final additionalColors =
         source?.secondaryColors
             .map(
-              (color) => ListingCatalogs.nameOf(color.trim(), fallback: color),
+              (color) =>
+                  ListingCatalogs.colorName(color.trim(), fallback: color),
             )
             .where(
               (color) =>
@@ -1348,8 +1368,10 @@ class _ProductDatabaseDescriptionState
               for (final definition in relevantAttributes)
                 _CharacteristicLine(
                   label: definition.label,
-                  value: ListingCatalogs.nameOf(
+                  value: ListingCatalogs.attributeValueName(
+                    definition.id,
                     _attributeValue(source!, definition.id),
+                    category: source.normalizedCategory,
                     fallback: _attributeValue(source, definition.id),
                   ),
                 ),
@@ -1362,16 +1384,7 @@ class _ProductDatabaseDescriptionState
             hairline: widget.hairline,
             showTopBorder: false,
             compact: true,
-            child: Text(
-              description,
-              style: const TextStyle(
-                fontSize: 15,
-                height: 1.24,
-                fontWeight: FontWeight.w500,
-                letterSpacing: 0,
-                color: Colors.black,
-              ),
-            ),
+            child: Text(description, style: _productInfoBodyTextStyle),
           ),
         if (source?.hasDefects == true &&
             source!.defectsDescription.trim().isNotEmpty)
@@ -1382,12 +1395,7 @@ class _ProductDatabaseDescriptionState
             compact: true,
             child: Text(
               source.defectsDescription.trim(),
-              style: const TextStyle(
-                fontSize: 15,
-                height: 1.24,
-                fontWeight: FontWeight.w500,
-                color: Colors.black,
-              ),
+              style: _productInfoBodyTextStyle,
             ),
           ),
       ],
@@ -1397,7 +1405,7 @@ class _ProductDatabaseDescriptionState
   String _categoryName(ProductDetailData product, Product? source) {
     final normalizedCategory = source?.normalizedCategory.trim() ?? '';
     if (normalizedCategory.isNotEmpty) {
-      return ListingCatalogs.nameOf(
+      return ListingCatalogs.categoryName(
         normalizedCategory,
         fallback: normalizedCategory,
       );
@@ -1407,7 +1415,10 @@ class _ProductDatabaseDescriptionState
       source?.itemType ?? '',
     );
     if (legacyCategory.isNotEmpty) {
-      return ListingCatalogs.nameOf(legacyCategory, fallback: product.category);
+      return ListingCatalogs.categoryName(
+        legacyCategory,
+        fallback: product.category,
+      );
     }
     return product.category.trim();
   }
@@ -1713,24 +1724,17 @@ class _CharacteristicLine extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: RichText(
-        text: TextSpan(
-          style: const TextStyle(
-            fontSize: 15,
-            height: 1.24,
-            fontWeight: FontWeight.w500,
-            letterSpacing: 0,
-            color: Color(0xFF77777C),
-          ),
+      child: Text.rich(
+        TextSpan(
           children: [
-            TextSpan(text: '$label:'),
-            if (normalized.isNotEmpty)
-              TextSpan(
-                text: ' $normalized',
-                style: const TextStyle(color: Colors.black),
-              ),
+            TextSpan(
+              text: '$label:',
+              style: const TextStyle(color: Color(0xFF77777C)),
+            ),
+            if (normalized.isNotEmpty) TextSpan(text: ' $normalized'),
           ],
         ),
+        style: _productInfoBodyTextStyle,
       ),
     );
   }

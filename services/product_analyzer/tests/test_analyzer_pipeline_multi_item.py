@@ -8,6 +8,7 @@ from PIL import Image
 
 from app.catalog import CATEGORIES
 from app.classification.fashion_siglip_adapter import FashionCandidate
+from app.color.masked_color_analyzer import ColorCandidate
 from app.config import Settings
 from app.pipeline.analyzer_pipeline import AnalyzerPipeline
 from app.segmentation.grounded_sam_adapter import SegmentedGarment
@@ -114,6 +115,47 @@ class _Models:
         return future.result(timeout=timeout_seconds)
 
 
+def test_multiview_color_consensus_keeps_shadowed_white_primary():
+    consensus = AnalyzerPipeline._color_consensus(
+        [
+            (
+                1.0,
+                [
+                    ColorCandidate("white", 0.68, 0.85),
+                    ColorCandidate("gray", 0.32, 0.70),
+                ],
+            ),
+            (
+                0.85,
+                [
+                    ColorCandidate("white", 0.76, 0.88),
+                    ColorCandidate("gray", 0.24, 0.68),
+                ],
+            ),
+        ]
+    )
+
+    assert consensus[0].color_id == "white"
+    assert consensus[0].confidence >= 0.75
+
+
+def test_multiview_color_consensus_does_not_promote_background_white_over_gray():
+    consensus = AnalyzerPipeline._color_consensus(
+        [
+            (
+                1.0,
+                [
+                    ColorCandidate("gray", 0.88, 0.90),
+                    ColorCandidate("white", 0.12, 0.63),
+                ],
+            ),
+            (0.8, [ColorCandidate("gray", 1.0, 0.95)]),
+        ]
+    )
+
+    assert consensus[0].color_id == "gray"
+
+
 def test_multi_item_pipeline_batches_classification_and_skips_sam():
     first_mask = np.zeros((100, 100), dtype=bool)
     first_mask[10:90, 5:45] = True
@@ -152,7 +194,9 @@ def test_multi_item_pipeline_batches_classification_and_skips_sam():
     assert "multiple_items_detected:2" in result.warnings
     assert models.classification.batch_calls == 1
     assert models.classification.single_calls == 0
-    assert models.classification.attribute_calls == 9
+    # Jeans expose only material, fit, rise and closure; unrelated visual
+    # attributes must not be inferred and later leak into another category.
+    assert models.classification.attribute_calls == 4
     assert models.segmentation.calls == 0
     assert result.material.value == "cotton"
     assert result.material.confidence == 0.20
@@ -168,5 +212,5 @@ def test_multi_item_pipeline_batches_classification_and_skips_sam():
     assert enriched is not None
     assert enriched.enrichment_status == "completed"
     assert enriched.primary_color.value == "red"
-    assert enriched.primary_color.source == "opencv_masked_multiview_v1"
+    assert enriched.primary_color.source == "opencv_masked_multiview_v2"
     assert models.classification.batch_calls == 2

@@ -21,6 +21,97 @@ void main() {
     expect(jeansFields, isNot(contains('sleeve_length')));
   });
 
+  test('publication taxonomy is grouped, complete and uses unique IDs', () {
+    final grouped = ListingCatalogs.finalCategoryGroups
+        .expand((group) => group.options)
+        .map((option) => option.id)
+        .toList();
+    final flat = ListingCatalogs.finalCategories
+        .map((option) => option.id)
+        .toList();
+
+    expect(grouped, flat);
+    expect(flat.toSet(), hasLength(flat.length));
+    for (final category in flat) {
+      final attributes = ListingCatalogs.attributesFor(category);
+      expect(attributes, isNotEmpty, reason: '$category has no schema');
+      for (final attribute in attributes) {
+        expect(
+          attribute.options,
+          isNotEmpty,
+          reason: '$category.${attribute.id} has no options',
+        );
+      }
+      final path = ListingCatalogs.legacyPathFor(category);
+      expect(path.category, isNotEmpty, reason: '$category has no legacy path');
+      expect(path.itemType, isNotEmpty, reason: '$category has no item type');
+    }
+  });
+
+  test('knitwear and frequent garment aliases stay distinct', () {
+    expect(ListingCatalogs.normalizeCategory('свитер'), 'sweater');
+    expect(ListingCatalogs.normalizeCategory('sweater'), 'sweater');
+    expect(ListingCatalogs.normalizeCategory('худи'), 'hoodie');
+    expect(ListingCatalogs.normalizeCategory('блузка'), 'blouse');
+    expect(ListingCatalogs.normalizeCategory('пуховик'), 'puffer');
+    expect(ListingCatalogs.legacyPathFor('sweater').itemType, 'sweater');
+  });
+
+  test('jewelry receives relevant materials without clothing-only choices', () {
+    final bracelet = ListingCatalogs.attributesFor('bracelet');
+    final fields = bracelet.map((attribute) => attribute.id).toList();
+    final materialIds = bracelet
+        .singleWhere((attribute) => attribute.id == 'material')
+        .options
+        .map((option) => option.id)
+        .toSet();
+
+    expect(fields, ['material', 'style']);
+    expect(materialIds, containsAll(['metal', 'steel', 'silver', 'gold']));
+    expect(materialIds, isNot(contains('denim')));
+    expect(materialIds, isNot(contains('cotton')));
+  });
+
+  test('all footwear categories use shoe sizes', () {
+    for (final category in ['sneakers', 'boots', 'shoes', 'sandals', 'heels']) {
+      expect(ListingCatalogs.isShoeCategory(category), isTrue);
+      expect(
+        ListingCatalogs.sizeOptionsFor(category),
+        ListingCatalogs.shoeSizes,
+      );
+      expect(
+        ListingCatalogs.sizeOptionsFor(category).map((option) => option.id),
+        isNot(contains('m')),
+      );
+    }
+    expect(
+      ListingCatalogs.sizeOptionsFor('bracelet'),
+      containsAll(ListingCatalogs.oneSizeOptions),
+    );
+  });
+
+  test('typed display names do not collide across catalogs', () {
+    expect(ListingCatalogs.categoryName('shoes'), 'Туфли');
+    expect(ListingCatalogs.genderName('kids'), 'Детский');
+    expect(
+      ListingCatalogs.attributeValueName('collar', 'none'),
+      'Без воротника',
+    );
+    expect(ListingCatalogs.attributeValueName('collar', 'shirt'), 'Рубашечный');
+  });
+
+  test(
+    'catalog top and bottom helpers follow the expanded legacy hierarchy',
+    () {
+      expect(ListingCatalogs.isTopCategory('blouse'), isTrue);
+      expect(ListingCatalogs.isTopCategory('sweater'), isTrue);
+      expect(ListingCatalogs.isTopCategory('cardigan'), isTrue);
+      expect(ListingCatalogs.isBottomCategory('joggers'), isTrue);
+      expect(ListingCatalogs.isBottomCategory('leggings'), isTrue);
+      expect(ListingCatalogs.isBottomCategory('shorts'), isTrue);
+    },
+  );
+
   group('ListingDraft', () {
     test('first step requires only seller-entered essentials', () {
       final draft = ListingDraft.empty(sellerId: 'seller')
@@ -73,6 +164,26 @@ void main() {
   });
 
   group('ListingPublishController', () {
+    test('keeps analyzer white as the canonical publication color', () {
+      final controller = _controller();
+      controller.draft = ListingDraft.empty(sellerId: 'seller');
+
+      controller.applyAnalysisResult(
+        _analysis(
+          primaryColor: 'white',
+          secondaryColors: const ['gray', 'white'],
+        ),
+      );
+
+      expect(controller.draft.primaryColor, 'white');
+      expect(controller.draft.secondaryColors, ['gray']);
+      expect(
+        controller.draft.predictions['primary_color']?.predictedValue,
+        'white',
+      );
+      controller.dispose();
+    });
+
     test('never overwrites a manually edited analyzed field', () {
       final controller = _controller();
       controller.draft = ListingDraft.empty(sellerId: 'seller');
@@ -236,6 +347,79 @@ void main() {
       controller.dispose();
     });
 
+    test('changing category clears or normalizes incompatible sizes', () {
+      final controller = _controller();
+      controller.draft = ListingDraft.empty(sellerId: 'seller')
+        ..normalizedCategory = 't_shirt'
+        ..size = 'm';
+
+      controller.setAttribute('normalized_category', 'bracelet');
+      expect(controller.draft.size, 'one_size');
+      expect(controller.draft.category, 'jewelry');
+      expect(controller.draft.itemType, 'bracelet');
+
+      controller.setAttribute('normalized_category', 'sandals');
+      expect(controller.draft.size, isEmpty);
+      expect(controller.draft.category, 'shoes');
+
+      controller.draft.size = '40';
+      controller.setAttribute('normalized_category', 'sweater');
+      expect(controller.draft.size, isEmpty);
+      expect(controller.draft.itemType, 'sweater');
+
+      controller.draft.size = '17 см';
+      controller.setAttribute('normalized_category', 'bracelet');
+      expect(controller.draft.size, '17 см');
+      controller.dispose();
+    });
+
+    test(
+      'protected canonical category keeps legacy path and title coherent',
+      () {
+        final controller = _controller();
+        controller.draft = ListingDraft.empty(sellerId: 'seller');
+        controller.setAttribute('normalized_category', 'sweater');
+
+        controller.applyAnalysisResult(
+          _analysis(
+            primaryColor: 'black',
+            itemType: 'hoodie',
+            normalizedCategory: 'hoodie',
+            suggestedTitle: 'Худи',
+          ),
+        );
+
+        expect(controller.draft.normalizedCategory, 'sweater');
+        expect(controller.draft.itemType, 'sweater');
+        expect(controller.draft.subcategory, 'tops');
+        expect(controller.draft.title, isEmpty);
+        expect(
+          controller.buildProduct(preview: true).category,
+          contains('Свитер'),
+        );
+        controller.dispose();
+      },
+    );
+
+    test('specific item type repairs a legacy collapsed category', () {
+      final controller = _controller();
+      controller.draft = ListingDraft.empty(sellerId: 'seller');
+
+      controller.applyAnalysisResult(
+        _analysis(
+          primaryColor: 'white',
+          itemType: 'sweater',
+          normalizedCategory: 'hoodie',
+          suggestedTitle: 'Свитер',
+        ),
+      );
+
+      expect(controller.draft.normalizedCategory, 'sweater');
+      expect(controller.draft.itemType, 'sweater');
+      expect(controller.draft.title, 'Свитер');
+      controller.dispose();
+    });
+
     test('defect disclosure requires an explicit seller choice', () {
       final draft = _validDraft()
         ..defectsReviewed = false
@@ -325,6 +509,8 @@ ProductAnalysisResult _analysis({
   String? gender,
   String? suggestedSize,
   String? suggestedTitle,
+  String? itemType,
+  String? normalizedCategory,
 }) {
   const empty = AnalyzedField<String>(
     value: null,
@@ -335,7 +521,11 @@ ProductAnalysisResult _analysis({
     section: empty,
     category: empty,
     subcategory: empty,
-    itemType: empty,
+    itemType: AnalyzedField<String>(
+      value: itemType,
+      confidence: itemType == null ? 0 : 0.9,
+      source: 'test',
+    ),
     gender: AnalyzedField<String>(
       value: gender,
       confidence: gender == null ? 0 : 0.9,
@@ -381,6 +571,11 @@ ProductAnalysisResult _analysis({
     suggestedSize: AnalyzedField<String>(
       value: suggestedSize,
       confidence: suggestedSize == null ? 0 : 0.9,
+      source: 'test',
+    ),
+    normalizedCategory: AnalyzedField<String>(
+      value: normalizedCategory,
+      confidence: normalizedCategory == null ? 0 : 0.9,
       source: 'test',
     ),
   );

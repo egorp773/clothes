@@ -70,7 +70,7 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
     final definitions = ListingCatalogs.attributesFor(draft.normalizedCategory);
     final categoryName = draft.normalizedCategory.isEmpty
         ? ''
-        : ListingCatalogs.nameOf(draft.normalizedCategory);
+        : ListingCatalogs.categoryName(draft.normalizedCategory);
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
@@ -121,12 +121,7 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
             value: categoryName.isEmpty ? null : categoryName,
             placeholder: 'Выберите тип вещи',
             status: _predictionStatus('normalized_category'),
-            onTap: () => _chooseCore(
-              title: 'Категория вещи',
-              options: ListingCatalogs.finalCategories,
-              selected: draft.normalizedCategory,
-              field: 'normalized_category',
-            ),
+            onTap: _chooseCategory,
           ),
           ListingSelectionRow(
             key: const ValueKey('detail_primary_color'),
@@ -134,7 +129,7 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
             isRequired: true,
             value: draft.primaryColor.isEmpty
                 ? null
-                : ListingCatalogs.nameOf(draft.primaryColor),
+                : ListingCatalogs.colorName(draft.primaryColor),
             placeholder: 'Выберите основной цвет',
             status: _predictionStatus('primary_color'),
             onTap: () => _chooseCore(
@@ -149,7 +144,9 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
             label: 'Дополнительные цвета',
             value: draft.secondaryColors.isEmpty
                 ? null
-                : draft.secondaryColors.map(ListingCatalogs.nameOf).join(', '),
+                : draft.secondaryColors
+                      .map(ListingCatalogs.colorName)
+                      .join(', '),
             placeholder: 'Не указаны',
             status: _predictionStatus('secondary_colors'),
             onTap: _chooseSecondaryColors,
@@ -319,7 +316,12 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
     final value = _value(field);
     return value.isEmpty
         ? null
-        : ListingCatalogs.nameOf(value, fallback: value);
+        : ListingCatalogs.attributeValueName(
+            field,
+            value,
+            category: controller.draft.normalizedCategory,
+            fallback: value,
+          );
   }
 
   String _value(String field) => switch (field) {
@@ -370,6 +372,20 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
     controller.setAttribute(field, value);
   }
 
+  Future<void> _chooseCategory() async {
+    FocusScope.of(context).unfocus();
+    final value = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.35),
+      builder: (context) =>
+          _CategoryOptionsSheet(selected: controller.draft.normalizedCategory),
+    );
+    if (!mounted || value == null) return;
+    controller.setAttribute('normalized_category', value);
+  }
+
   Future<void> _chooseAttribute(ListingAttributeDefinition definition) async {
     final value = await showModalBottomSheet<String>(
       context: context,
@@ -400,6 +416,88 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
     if (!mounted || value == null) return;
     controller.setSecondaryColors(value);
   }
+}
+
+class _CategoryOptionsSheet extends StatelessWidget {
+  const _CategoryOptionsSheet({required this.selected});
+
+  final String selected;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+    clipBehavior: Clip.antiAlias,
+    child: ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Категория вещи',
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 16,
+                  fontWeight: AppTypography.semiBold,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (final group
+                        in ListingCatalogs.finalCategoryGroups) ...[
+                      Padding(
+                        key: ValueKey('category_group_${group.id}'),
+                        padding: const EdgeInsets.only(top: 12, bottom: 4),
+                        child: Text(
+                          group.name.toUpperCase(),
+                          style: const TextStyle(
+                            fontFamily: AppTypography.fontFamily,
+                            fontSize: 11,
+                            fontWeight: AppTypography.semiBold,
+                            letterSpacing: 0.5,
+                            color: _secondaryText,
+                          ),
+                        ),
+                      ),
+                      for (final option in group.options) ...[
+                        ListTile(
+                          key: ValueKey('category_option_${option.id}'),
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            option.name,
+                            style: const TextStyle(
+                              fontFamily: AppTypography.fontFamily,
+                              fontSize: 14,
+                              fontWeight: AppTypography.medium,
+                            ),
+                          ),
+                          trailing: option.id == selected
+                              ? const Icon(Icons.check_rounded, size: 20)
+                              : null,
+                          onTap: () => Navigator.pop(context, option.id),
+                        ),
+                        const Divider(height: 1),
+                      ],
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 class _AttributeOptionsSheet extends StatelessWidget {

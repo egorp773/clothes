@@ -103,6 +103,73 @@ def test_small_catalog_is_not_returned_whole_when_candidate_limit_is_larger(capl
     assert "title='Пуховик'" in debug_output and "decision=exclude" in debug_output
 
 
+def test_confident_item_type_uses_related_types_only_for_sparse_fallback():
+    reranker = VisualSearchReranker(Settings())
+    candidates = [
+        _row(f"exact-{index}", 0.75 - index * 0.01, item_type="sweater")
+        for index in range(4)
+    ]
+    candidates.extend(
+        [
+            _row("hoodie", 0.79, item_type="hoodie"),
+            _row("sweatshirt", 0.78, item_type="sweatshirt"),
+        ]
+    )
+
+    results = reranker.collapse_and_rerank(
+        candidates,
+        query_category="clothing",
+        query_subcategory="tops",
+        query_item_type="sweater",
+        limit=30,
+        confident_category=True,
+        confident_item_type=True,
+    )
+
+    assert [item.product_id for item in results] == [
+        "exact-0",
+        "exact-1",
+        "exact-2",
+        "exact-3",
+    ]
+
+
+def test_confident_item_type_does_not_merge_distinct_marketplace_types():
+    reranker = VisualSearchReranker(Settings())
+    cases = (
+        ("bracelet", "earrings", "jewelry"),
+        ("bag", "wallet", "accessories"),
+        ("skirt", "dress", "clothing"),
+        ("sneakers", "boots", "shoes"),
+    )
+
+    for expected, wrong, category in cases:
+        results = reranker.collapse_and_rerank(
+            [
+                _row(
+                    f"{expected}-exact",
+                    0.72,
+                    item_type=expected,
+                    category=category,
+                ),
+                _row(
+                    f"{expected}-wrong-{wrong}",
+                    0.79,
+                    item_type=wrong,
+                    category=category,
+                ),
+            ],
+            query_category=category,
+            query_subcategory=None,
+            query_item_type=expected,
+            limit=30,
+            confident_category=True,
+            confident_item_type=True,
+        )
+
+        assert [item.product_id for item in results] == [f"{expected}-exact"]
+
+
 def test_returns_empty_when_every_candidate_is_below_relevance_threshold():
     reranker = VisualSearchReranker(Settings())
     results = reranker.collapse_and_rerank(

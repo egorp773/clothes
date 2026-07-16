@@ -5,6 +5,8 @@ class SupabaseConfig {
   static const String anonKey =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhid3p4dHdjamxzZmxkamNxdWR0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3NzMxOTAsImV4cCI6MjA5NDM0OTE5MH0.zsT_O_08sQWvAaKcj9P8qzgTLg_2KvRsvM6qfibwQAw';
   static const String authRedirectUri = 'com.example.clothes://login-callback/';
+  static const String oauthRedirectUri =
+      'com.example.clothes://oauth-callback/';
   static const String yandexProvider = 'custom:yandex';
   static const String yandexAuthUrl = '$url/functions/v1/yandex-auth';
   static const String vkAuthUrl = '$url/functions/v1/vk-auth';

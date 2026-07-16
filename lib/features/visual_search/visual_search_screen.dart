@@ -15,6 +15,7 @@ class VisualSearchScreen extends StatefulWidget {
     required this.initialImage,
     required this.onProductTap,
     required this.onToggleLike,
+    this.catalogProducts = const [],
     this.onShareProduct,
     this.service,
     this.initialResult,
@@ -24,6 +25,7 @@ class VisualSearchScreen extends StatefulWidget {
   final XFile initialImage;
   final ValueChanged<Product> onProductTap;
   final Future<void> Function(String productId) onToggleLike;
+  final List<Product> catalogProducts;
   final ValueChanged<Product>? onShareProduct;
   final VisualSearchService? service;
   final VisualSearchResult? initialResult;
@@ -267,8 +269,12 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
   );
 
   Widget _buildResults() {
-    final exactProducts = _result?.products ?? const <Product>[];
-    final similarProducts = _result?.similarProducts ?? const <Product>[];
+    final exactProducts = _catalogProductsFor(
+      _result?.products ?? const <Product>[],
+    );
+    final similarProducts = _catalogProductsFor(
+      _result?.similarProducts ?? const <Product>[],
+    );
     final similarOnly = exactProducts.isEmpty && similarProducts.isNotEmpty;
     final products = similarOnly ? similarProducts : exactProducts;
     return CustomScrollView(
@@ -414,6 +420,18 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
         ],
       ],
     );
+  }
+
+  List<Product> _catalogProductsFor(List<Product> searchProducts) {
+    if (searchProducts.isEmpty || widget.catalogProducts.isEmpty) {
+      return searchProducts;
+    }
+    final catalogById = <String, Product>{
+      for (final product in widget.catalogProducts) product.id: product,
+    };
+    return searchProducts
+        .map((product) => catalogById[product.id] ?? product)
+        .toList(growable: false);
   }
 
   String _productsCountLabel(int count) {

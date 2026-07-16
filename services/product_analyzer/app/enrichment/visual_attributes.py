@@ -4,16 +4,46 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from app.catalog import CATEGORY_ATTRIBUTES, attribute_options_for
+
 
 ATTRIBUTE_PROMPTS: dict[str, dict[str, tuple[str, ...]]] = {
     "material": {
         "cotton": ("cotton fabric clothing",),
         "wool": ("wool fabric clothing", "knitted wool garment"),
+        "cashmere": ("soft cashmere knit material",),
         "linen": ("linen fabric clothing",),
+        "silk": ("silk fabric fashion item",),
+        "viscose": ("viscose rayon fabric",),
         "denim": ("denim fabric clothing",),
         "leather": ("leather clothing or accessory",),
+        "faux_leather": ("faux leather fashion item",),
+        "suede": ("suede leather fashion item",),
         "polyester": ("synthetic polyester sportswear",),
+        "acrylic": ("acrylic knit fabric",),
+        "elastane": ("stretch elastane fabric",),
+        "nylon": ("nylon technical fabric",),
+        "textile": ("woven textile accessory or shoe",),
+        "canvas": ("canvas fabric bag or shoe",),
+        "rubber": ("rubber footwear material",),
+        "synthetic": ("synthetic footwear material",),
+        "down": ("down filled puffer material",),
+        "fur": ("fur fashion material",),
+        "metal": ("metal fashion accessory",),
+        "steel": ("stainless steel watch or jewelry",),
+        "titanium": ("titanium watch or jewelry",),
+        "gold": ("gold jewelry material",),
+        "silver": ("silver jewelry material",),
+        "platinum": ("platinum jewelry material",),
+        "ceramic": ("ceramic watch or jewelry",),
+        "plastic": ("plastic fashion accessory",),
+        "acetate": ("acetate eyeglass frame",),
+        "wood": ("wood fashion accessory",),
+        "glass": ("glass jewelry or accessory",),
+        "gemstone": ("natural gemstone jewelry",),
+        "pearls": ("pearl jewelry",),
         "mixed": ("mixed fabric clothing",),
+        "unknown": ("fashion item whose material cannot be determined",),
     },
     "pattern": {
         "solid": ("plain solid color clothing",),
@@ -37,6 +67,12 @@ ATTRIBUTE_PROMPTS: dict[str, dict[str, tuple[str, ...]]] = {
         "streetwear": ("streetwear fashion",),
         "business": ("business formal fashion",),
         "evening": ("evening occasion fashion",),
+        "minimalist": ("minimalist fashion accessory",),
+        "vintage": ("vintage style fashion item",),
+        "statement": ("bold statement jewelry or accessory",),
+        "everyday": ("everyday wearable accessory",),
+        "smart": ("smart watch",),
+        "luxury": ("luxury premium fashion accessory",),
     },
     "season": {
         "summer": ("lightweight clothing for warm summer weather",),
@@ -57,6 +93,10 @@ ATTRIBUTE_PROMPTS: dict[str, dict[str, tuple[str, ...]]] = {
         "laces": ("shoes or clothing with laces",),
         "velcro": ("shoes or clothing with velcro",),
         "buckle": ("accessory or clothing with a buckle",),
+        "snap": ("fashion item with a snap closure",),
+        "magnetic": ("bag with a magnetic closure",),
+        "drawstring": ("bag or clothing with a drawstring closure",),
+        "hook": ("fashion item with a hook closure",),
     },
     "collar": {
         "round": ("round crew neck garment",),
@@ -72,22 +112,6 @@ ATTRIBUTE_PROMPTS: dict[str, dict[str, tuple[str, ...]]] = {
         "mid": ("mid rise trousers or skirt",),
         "high": ("high waist trousers or skirt",),
     },
-}
-
-
-CATEGORY_ATTRIBUTES: dict[str, tuple[str, ...]] = {
-    "t_shirt": ("material", "pattern", "fit", "sleeve_length", "collar"),
-    "hoodie": ("material", "pattern", "fit", "closure"),
-    "shirt": ("material", "pattern", "fit", "sleeve_length", "collar", "closure"),
-    "jacket": ("material", "fit", "collar", "closure", "season"),
-    "jeans": ("material", "fit", "rise", "closure"),
-    "trousers": ("material", "pattern", "fit", "rise", "closure"),
-    "dress": ("material", "pattern", "fit", "sleeve_length", "collar", "closure"),
-    "skirt": ("material", "pattern", "fit", "rise", "closure"),
-    "sneakers": ("material", "pattern", "closure", "style"),
-    "boots": ("material", "closure", "season", "style"),
-    "bag": ("material", "pattern", "closure", "style"),
-    "accessory": ("material", "pattern", "style"),
 }
 
 
@@ -150,12 +174,20 @@ class VisualAttributeSuggester:
             else CATEGORY_ATTRIBUTES.get(normalized_category, ())
         )
         for key in attribute_keys:
-            combined = {value: 0.0 for value in ATTRIBUTE_PROMPTS[key]}
+            prompts = ATTRIBUTE_PROMPTS[key]
+            allowed_values = attribute_options_for(normalized_category, key)
+            if allowed_values:
+                prompts = {
+                    value: prompt
+                    for value, prompt in prompts.items()
+                    if value in allowed_values
+                }
+            combined = {value: 0.0 for value in prompts}
             has_scores = False
             for embedding, weight in zip(embeddings, view_weights, strict=True):
                 scores = self.classifier.score_text_options(
                     embedding,
-                    ATTRIBUTE_PROMPTS[key],
+                    prompts,
                 )
                 has_scores = has_scores or bool(scores)
                 for value, confidence in scores.items():

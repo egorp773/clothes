@@ -16,6 +16,7 @@ class VisualSearchCameraScreen extends StatefulWidget {
     super.key,
     required this.onProductTap,
     required this.onToggleLike,
+    this.catalogProducts = const [],
     this.onShareProduct,
     this.service,
     this.initializeHardware = true,
@@ -24,6 +25,7 @@ class VisualSearchCameraScreen extends StatefulWidget {
 
   final ValueChanged<Product> onProductTap;
   final Future<void> Function(String productId) onToggleLike;
+  final List<Product> catalogProducts;
   final ValueChanged<Product>? onShareProduct;
   final VisualSearchService? service;
   final bool initializeHardware;
@@ -427,6 +429,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
             initialResult: result,
             initialPreviewBytes: previewBytes,
             service: _service,
+            catalogProducts: widget.catalogProducts,
             onProductTap: widget.onProductTap,
             onToggleLike: widget.onToggleLike,
             onShareProduct: widget.onShareProduct,

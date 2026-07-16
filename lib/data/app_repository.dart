@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as path;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,6 +12,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/oauth_callback.dart';
 import '../core/supabase_config.dart';
 import '../models/app_profile.dart';
 import '../models/created_outfit.dart';
@@ -600,44 +603,24 @@ class AppRepository extends ChangeNotifier {
     return true;
   }
 
-  Future<void> signInWithYandex() async {
-    if (!_hasSupabase) {
-      _authError = 'Supabase не настроен';
-      notifyListeners();
-      return;
-    }
-
-    _isSigningIn = true;
-    _authError = null;
-    notifyListeners();
-
-    final redirectTo = kIsWeb
-        ? Uri.base.toString()
-        : SupabaseConfig.authRedirectUri;
-    final uri = Uri.parse(
-      SupabaseConfig.yandexAuthUrl,
-    ).replace(queryParameters: {'redirect_to': redirectTo});
-
-    try {
-      final didOpen = await launchUrl(
-        uri,
-        mode: kIsWeb
-            ? LaunchMode.platformDefault
-            : LaunchMode.externalApplication,
-        webOnlyWindowName: '_self',
-      );
-      if (!didOpen) {
-        _authError = 'Не удалось открыть вход через Яндекс ID';
-      }
-    } catch (e) {
-      _authError = 'Не удалось начать вход через Яндекс ID: $e';
-    } finally {
-      _isSigningIn = false;
-      notifyListeners();
-    }
+  Future<void> signInWithYandex() {
+    return _signInWithSocialOAuth(
+      authUrl: SupabaseConfig.yandexAuthUrl,
+      providerLabel: 'Яндекс ID',
+    );
   }
 
-  Future<void> signInWithVk() async {
+  Future<void> signInWithVk() {
+    return _signInWithSocialOAuth(
+      authUrl: SupabaseConfig.vkAuthUrl,
+      providerLabel: 'VK ID',
+    );
+  }
+
+  Future<void> _signInWithSocialOAuth({
+    required String authUrl,
+    required String providerLabel,
+  }) async {
     if (!_hasSupabase) {
       _authError = 'Supabase не настроен';
       notifyListeners();
@@ -649,25 +632,48 @@ class AppRepository extends ChangeNotifier {
     notifyListeners();
 
     final redirectTo = kIsWeb
-        ? Uri.base.toString()
-        : SupabaseConfig.authRedirectUri;
+        ? Uri.base
+        : Uri.parse(SupabaseConfig.oauthRedirectUri);
     final uri = Uri.parse(
-      SupabaseConfig.vkAuthUrl,
-    ).replace(queryParameters: {'redirect_to': redirectTo});
+      authUrl,
+    ).replace(queryParameters: {'redirect_to': redirectTo.toString()});
 
     try {
-      final didOpen = await launchUrl(
-        uri,
-        mode: kIsWeb
-            ? LaunchMode.platformDefault
-            : LaunchMode.externalApplication,
-        webOnlyWindowName: '_self',
+      if (kIsWeb) {
+        final didOpen = await launchUrl(
+          uri,
+          mode: LaunchMode.platformDefault,
+          webOnlyWindowName: '_self',
+        );
+        if (!didOpen) {
+          _authError = 'Не удалось открыть вход через $providerLabel';
+        }
+        return;
+      }
+
+      final callback = await FlutterWebAuth2.authenticate(
+        url: uri.toString(),
+        callbackUrlScheme: redirectTo.scheme,
       );
-      if (!didOpen) {
-        _authError = 'Не удалось открыть вход через VK ID';
+      final tokens = parseOAuthCallback(
+        Uri.parse(callback),
+        expectedRedirect: redirectTo,
+      );
+      await _client.auth.setSession(
+        tokens.refreshToken,
+        accessToken: tokens.accessToken,
+      );
+    } on OAuthCallbackException catch (e) {
+      _authError = 'Не удалось войти через $providerLabel: ${e.message}';
+    } on PlatformException catch (e) {
+      if (e.code.toUpperCase() == 'CANCELED') {
+        _authError = null;
+      } else {
+        _authError =
+            'Не удалось начать вход через $providerLabel: ${e.message ?? e.code}';
       }
     } catch (e) {
-      _authError = 'Не удалось начать вход через VK ID: $e';
+      _authError = 'Не удалось войти через $providerLabel: $e';
     } finally {
       _isSigningIn = false;
       notifyListeners();
