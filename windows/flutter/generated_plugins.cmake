@@ -6,12 +6,14 @@ list(APPEND FLUTTER_PLUGIN_LIST
   app_links
   desktop_webview_window
   file_selector_windows
+  firebase_core
   share_plus
   url_launcher_windows
   window_to_front
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
+  flutter_local_notifications_windows
   jni
 )
 

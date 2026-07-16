@@ -38,42 +38,134 @@ const _featureSmallStyle = TextStyle(
   color: _ink,
 );
 
-class ProfileNotificationsScreen extends StatelessWidget {
+class ProfileNotificationsScreen extends StatefulWidget {
   const ProfileNotificationsScreen({
     super.key,
     required this.notifications,
     required this.onMarkRead,
+    required this.onMarkAllRead,
+    required this.onNotificationTap,
   });
 
   final List<ProfileNotification> notifications;
   final Future<void> Function(String notificationId) onMarkRead;
+  final Future<void> Function() onMarkAllRead;
+  final Future<void> Function(ProfileNotification notification)
+  onNotificationTap;
+
+  @override
+  State<ProfileNotificationsScreen> createState() =>
+      _ProfileNotificationsScreenState();
+}
+
+class _ProfileNotificationsScreenState
+    extends State<ProfileNotificationsScreen> {
+  late List<ProfileNotification> _notifications = [...widget.notifications];
+
+  @override
+  void didUpdateWidget(covariant ProfileNotificationsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.notifications, widget.notifications)) {
+      _notifications = [...widget.notifications];
+    }
+  }
+
+  Future<void> _markRead(ProfileNotification notification) async {
+    if (!notification.isRead) {
+      setState(() {
+        _notifications = _notifications
+            .map(
+              (item) => item.id == notification.id
+                  ? item.copyWith(isRead: true)
+                  : item,
+            )
+            .toList();
+      });
+      await widget.onMarkRead(notification.id);
+    }
+    await widget.onNotificationTap(notification);
+  }
+
+  Future<void> _markAllRead() async {
+    setState(() {
+      _notifications = _notifications
+          .map((notification) => notification.copyWith(isRead: true))
+          .toList();
+    });
+    await widget.onMarkAllRead();
+  }
 
   @override
   Widget build(BuildContext context) {
     final sorted =
-        notifications
+        _notifications
             .where(
               (notification) =>
-                  notification.title.trim().isNotEmpty ||
-                  notification.body.trim().isNotEmpty,
+                  notification.kind != 'message' &&
+                  (notification.title.trim().isNotEmpty ||
+                      notification.body.trim().isNotEmpty),
             )
             .toList()
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final now = DateTime.now();
+    final today = <ProfileNotification>[];
+    final yesterday = <ProfileNotification>[];
+    final earlier = <ProfileNotification>[];
+    for (final notification in sorted) {
+      final created = notification.createdAt.toLocal();
+      final days = DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ).difference(DateTime(created.year, created.month, created.day)).inDays;
+      if (days <= 0) {
+        today.add(notification);
+      } else if (days == 1) {
+        yesterday.add(notification);
+      } else {
+        earlier.add(notification);
+      }
+    }
+    final hasUnread = sorted.any((notification) => !notification.isRead);
     return _PlainProfilePage(
       title: 'уведомления',
-      child: sorted.isEmpty
-          ? const _EmptyText(
-              'Здесь будут храниться все пуши. Пока новых уведомлений нет, '
-              'как только появятся - мы сохраним их здесь.',
+      action: hasUnread
+          ? TextButton(
+              onPressed: _markAllRead,
+              style: TextButton.styleFrom(
+                foregroundColor: _ink,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text(
+                'прочитать все',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+              ),
             )
+          : null,
+      child: sorted.isEmpty
+          ? const _NotificationEmptyState()
           : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (var i = 0; i < sorted.length; i++) ...[
-                  _NotificationTile(
-                    notification: sorted[i],
-                    onTap: () => onMarkRead(sorted[i].id),
+                if (today.isNotEmpty)
+                  _NotificationSection(
+                    title: 'сегодня',
+                    notifications: today,
+                    onMarkRead: _markRead,
                   ),
-                ],
+                if (yesterday.isNotEmpty)
+                  _NotificationSection(
+                    title: 'вчера',
+                    notifications: yesterday,
+                    onMarkRead: _markRead,
+                  ),
+                if (earlier.isNotEmpty)
+                  _NotificationSection(
+                    title: 'раньше',
+                    notifications: earlier,
+                    onMarkRead: _markRead,
+                  ),
               ],
             ),
     );
@@ -112,22 +204,28 @@ class _NotificationSettingsScreenState
   Widget build(BuildContext context) {
     return _PlainProfilePage(
       title: 'настройки уведомлений',
-      child: SizedBox(
-        height:
-            MediaQuery.sizeOf(context).height -
-            MediaQuery.of(context).viewPadding.top -
-            142,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 24),
-            const Text(
-              'Вы уже получаете сообщения о заказах.\nЗдесь можно выбрать, как получать\nуведомления о скидках и акциях:',
-              style: _featureBodyStyle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 20),
+          Text(
+            'Получайте только важное. Настройки можно изменить в любой момент.',
+            style: _featureBodyStyle.copyWith(
+              color: _muted,
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(height: 26),
-            _PreferenceRow(
-              title: 'push-уведомления',
+          ),
+          const SizedBox(height: 22),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F5F7),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: _PreferenceRow(
+              title: 'Push-уведомления',
+              subtitle: 'Главный переключатель',
+              icon: Icons.notifications_none_rounded,
               value: _preferences.pushEnabled,
               onChanged: (value) {
                 setState(() {
@@ -135,49 +233,100 @@ class _NotificationSettingsScreenState
                 });
               },
             ),
-            _PreferenceRow(
-              title: 'email',
-              value: _preferences.emailEnabled,
-              onChanged: (value) {
-                setState(() {
-                  _preferences = _preferences.copyWith(emailEnabled: value);
-                });
-              },
-            ),
-            _PreferenceRow(
-              title: 'sms и мессенджеры',
-              value: _preferences.smsEnabled,
-              onChanged: (value) {
-                setState(() {
-                  _preferences = _preferences.copyWith(smsEnabled: value);
-                });
-              },
-            ),
-            const Spacer(),
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton(
-                onPressed: _isSaving ? null : _save,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.black,
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  disabledBackgroundColor: Colors.black,
-                  shape: const RoundedRectangleBorder(),
+          ),
+          const SizedBox(height: 26),
+          const Text('что присылать', style: _featureTitleStyle),
+          const SizedBox(height: 10),
+          _PreferenceRow(
+            title: 'Сообщения',
+            subtitle: 'Новые сообщения от покупателей и продавцов',
+            icon: Icons.chat_bubble_outline_rounded,
+            value: _preferences.pushEnabled && _preferences.messagesEnabled,
+            enabled: _preferences.pushEnabled,
+            onChanged: (value) {
+              setState(() {
+                _preferences = _preferences.copyWith(messagesEnabled: value);
+              });
+            },
+          ),
+          _PreferenceRow(
+            title: 'Заказы и доставка',
+            subtitle: 'Статусы сделок и важные действия',
+            icon: Icons.local_shipping_outlined,
+            value: _preferences.pushEnabled && _preferences.ordersEnabled,
+            enabled: _preferences.pushEnabled,
+            onChanged: (value) {
+              setState(() {
+                _preferences = _preferences.copyWith(ordersEnabled: value);
+              });
+            },
+          ),
+          _PreferenceRow(
+            title: 'Избранное',
+            subtitle: 'Лайки, снижение цены и интерес к вещам',
+            icon: Icons.favorite_border_rounded,
+            value: _preferences.pushEnabled && _preferences.favoritesEnabled,
+            enabled: _preferences.pushEnabled,
+            onChanged: (value) {
+              setState(() {
+                _preferences = _preferences.copyWith(favoritesEnabled: value);
+              });
+            },
+          ),
+          _PreferenceRow(
+            title: 'Скидки и новости',
+            subtitle: 'Редкие полезные предложения',
+            icon: Icons.local_offer_outlined,
+            value: _preferences.pushEnabled && _preferences.promotionsEnabled,
+            enabled: _preferences.pushEnabled,
+            onChanged: (value) {
+              setState(() {
+                _preferences = _preferences.copyWith(promotionsEnabled: value);
+              });
+            },
+          ),
+          const SizedBox(height: 20),
+          const Text('как присылать', style: _featureTitleStyle),
+          const SizedBox(height: 10),
+          _PreferenceRow(
+            title: 'Звук уведомлений',
+            subtitle: 'Для важных событий и сообщений',
+            icon: Icons.volume_up_outlined,
+            value: _preferences.pushEnabled && _preferences.soundEnabled,
+            enabled: _preferences.pushEnabled,
+            onChanged: (value) {
+              setState(() {
+                _preferences = _preferences.copyWith(soundEnabled: value);
+              });
+            },
+          ),
+          const SizedBox(height: 28),
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton(
+              onPressed: _isSaving ? null : _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                disabledBackgroundColor: Colors.black,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                child: Text(
-                  _isSaving ? 'СОХРАНЯЕМ' : 'СОХРАНИТЬ',
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0,
-                  ),
+              ),
+              child: Text(
+                _isSaving ? 'СОХРАНЯЕМ' : 'СОХРАНИТЬ',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 10),
+        ],
       ),
     );
   }
@@ -265,8 +414,19 @@ class _ProfileOrdersScreenState extends State<ProfileOrdersScreen> {
   AppOrderRole? _role;
   final Set<AppOrderStatus> _statuses = {};
 
+  List<AppOrder> get _ownedOrders {
+    final currentUserId = widget.currentUserId.trim();
+    if (currentUserId.isEmpty) return const [];
+    return widget.orders
+        .where(
+          (order) =>
+              order.buyerId == currentUserId || order.sellerId == currentUserId,
+        )
+        .toList();
+  }
+
   List<AppOrder> get _orders {
-    final orders = widget.orders.where((order) {
+    final orders = _ownedOrders.where((order) {
       if (_role == AppOrderRole.seller &&
           order.sellerId != widget.currentUserId) {
         return false;
@@ -280,16 +440,26 @@ class _ProfileOrdersScreenState extends State<ProfileOrdersScreen> {
       }
       return true;
     }).toList();
-    orders.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    orders.sort((a, b) {
+      final activityOrder = (_isOrderActive(a.status) ? 0 : 1).compareTo(
+        _isOrderActive(b.status) ? 0 : 1,
+      );
+      if (activityOrder != 0) return activityOrder;
+      return b.updatedAt.compareTo(a.updatedAt);
+    });
     return orders;
   }
 
+  bool get _hasFilters => _role != null || _statuses.isNotEmpty;
+
   @override
   Widget build(BuildContext context) {
+    final ownedOrders = _ownedOrders;
+    final filteredOrders = _orders;
     return _OrdersShell(
       title: 'мои заказы',
-      showSearch: _orders.isNotEmpty,
-      header: _orders.isEmpty
+      showSearch: false,
+      header: ownedOrders.isEmpty
           ? null
           : _OrderFilters(
               role: _role,
@@ -297,14 +467,39 @@ class _ProfileOrdersScreenState extends State<ProfileOrdersScreen> {
               onRoleChanged: (role) => setState(() => _role = role),
               onStatusTap: _showStatusSheet,
             ),
-      child: _orders.isEmpty
+      child: ownedOrders.isEmpty
           ? _EmptyOrders(
               products: widget.recommendedProducts,
               onOpenCatalog: widget.onOpenCatalog,
               onProductTap: widget.onProductTap,
               onToggleLike: widget.onToggleProductLike,
             )
-          : _OrdersList(orders: _orders),
+          : filteredOrders.isEmpty
+          ? _NoFilteredOrders(onReset: _resetFilters)
+          : _OrdersList(
+              orders: filteredOrders,
+              currentUserId: widget.currentUserId,
+              onOrderTap: _showOrderDetails,
+            ),
+    );
+  }
+
+  void _resetFilters() {
+    if (!_hasFilters) return;
+    setState(() {
+      _role = null;
+      _statuses.clear();
+    });
+  }
+
+  void _showOrderDetails(AppOrder order) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.28),
+      builder: (context) =>
+          _OrderDetailsSheet(order: order, currentUserId: widget.currentUserId),
     );
   }
 
@@ -418,10 +613,15 @@ class _SellerDashboardScreenState extends State<SellerDashboardScreen> {
 }
 
 class _PlainProfilePage extends StatelessWidget {
-  const _PlainProfilePage({required this.title, required this.child});
+  const _PlainProfilePage({
+    required this.title,
+    required this.child,
+    this.action,
+  });
 
   final String title;
   final Widget child;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -445,6 +645,7 @@ class _PlainProfilePage extends StatelessWidget {
                 child: _TopProfileBar(
                   title: title,
                   onBack: () => Navigator.maybePop(context),
+                  trailing: action,
                 ),
               ),
             ),
@@ -592,51 +793,163 @@ class _NotificationTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final title = notification.title.trim();
     final body = notification.body.trim();
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: notification.isRead ? const Color(0xFFF7F7F8) : Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _line),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title.isEmpty ? body : title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: _featureBodyStyle.copyWith(height: 1.15),
-                  ),
+    return Material(
+      color: notification.isRead ? Colors.white : const Color(0xFFF5F7F1),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: _notificationKindColor(notification.kind),
+                  borderRadius: BorderRadius.circular(13),
                 ),
-                Text(
-                  _notificationTime(notification.createdAt),
-                  style: _featureSmallStyle.copyWith(
-                    fontSize: 11,
-                    color: _muted,
+                child: Icon(
+                  _notificationKindIcon(notification.kind),
+                  size: 20,
+                  color: _ink,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title.isEmpty ? body : title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: _featureBodyStyle.copyWith(height: 1.2),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          _notificationTime(notification.createdAt),
+                          style: _featureSmallStyle.copyWith(
+                            fontSize: 10.5,
+                            color: _muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (body.isNotEmpty && body != title) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        body,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: _featureBodyStyle.copyWith(
+                          fontSize: 12.5,
+                          height: 1.38,
+                          fontWeight: FontWeight.w600,
+                          color: _muted,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (!notification.isRead) ...[
+                const SizedBox(width: 8),
+                Container(
+                  width: 7,
+                  height: 7,
+                  margin: const EdgeInsets.only(top: 5),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFF69A800),
+                    shape: BoxShape.circle,
                   ),
                 ),
               ],
-            ),
-            if (body.isNotEmpty && body != title) ...[
-              const SizedBox(height: 8),
-              Text(
-                body,
-                style: _featureBodyStyle.copyWith(
-                  fontSize: 13,
-                  height: 1.4,
-                  color: _muted,
-                ),
-              ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NotificationSection extends StatelessWidget {
+  const _NotificationSection({
+    required this.title,
+    required this.notifications,
+    required this.onMarkRead,
+  });
+
+  final String title;
+  final List<ProfileNotification> notifications;
+  final Future<void> Function(ProfileNotification notification) onMarkRead;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: _featureSmallStyle.copyWith(color: _muted, fontSize: 11.5),
+          ),
+          const SizedBox(height: 10),
+          for (final notification in notifications) ...[
+            _NotificationTile(
+              notification: notification,
+              onTap: () => onMarkRead(notification),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationEmptyState extends StatelessWidget {
+  const _NotificationEmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 56),
+      child: Center(
+        child: Column(
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: const BoxDecoration(
+                color: Color(0xFFF3F3F5),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.notifications_none_rounded,
+                size: 31,
+                color: _ink,
+              ),
+            ),
+            const SizedBox(height: 18),
+            const Text('Пока всё спокойно', style: _featureTitleStyle),
+            const SizedBox(height: 8),
+            Text(
+              'Изменения заказов, избранного и другие важные события появятся здесь.',
+              textAlign: TextAlign.center,
+              style: _featureBodyStyle.copyWith(
+                color: _muted,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       ),
@@ -649,24 +962,56 @@ class _PreferenceRow extends StatelessWidget {
     required this.title,
     required this.value,
     required this.onChanged,
+    this.subtitle,
+    this.icon,
+    this.enabled = true,
   });
 
   final String title;
+  final String? subtitle;
+  final IconData? icon;
   final bool value;
+  final bool enabled;
   final ValueChanged<bool> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 50,
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 160),
+      opacity: enabled ? 1 : 0.46,
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          if (icon != null) ...[
+            Icon(icon, size: 21, color: _ink),
+            const SizedBox(width: 12),
+          ],
           Expanded(
-            child: Text(title, style: _featureBodyStyle.copyWith(height: 1)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: _featureBodyStyle.copyWith(height: 1.1)),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle!,
+                      style: _featureSmallStyle.copyWith(
+                        color: _muted,
+                        height: 1.3,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
+          const SizedBox(width: 12),
           GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => onChanged(!value),
+            onTap: enabled ? () => onChanged(!value) : null,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 160),
               width: 46,
@@ -720,7 +1065,7 @@ class _EmptyOrders extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(_pagePadding, 30, _pagePadding, 110),
       children: [
         const Text(
-          'Вы ещё ничего не покупали. Самое время\nсделать заказ!',
+          'У вас пока нет покупок и продаж.\nСамое время начать!',
           style: _featureBodyStyle,
         ),
         const SizedBox(height: 20),
@@ -775,6 +1120,65 @@ class _EmptyOrders extends StatelessWidget {
   }
 }
 
+class _NoFilteredOrders extends StatelessWidget {
+  const _NoFilteredOrders({required this.onReset});
+
+  final VoidCallback onReset;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(30, 30, 30, 110),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.receipt_long_outlined,
+              size: 42,
+              color: Color(0xFFB0B0B5),
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              'Заказов по этим фильтрам нет',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 7),
+            const Text(
+              'Попробуйте выбрать другую роль или статус.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 12,
+                height: 1.35,
+                fontWeight: FontWeight.w500,
+                color: _muted,
+              ),
+            ),
+            const SizedBox(height: 18),
+            OutlinedButton(
+              onPressed: onReset,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _ink,
+                side: const BorderSide(color: _line),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text('Сбросить фильтры'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _OrderFilters extends StatelessWidget {
   const _OrderFilters({
     required this.role,
@@ -816,7 +1220,6 @@ class _OrderFilters extends StatelessWidget {
             selected: hasStatusFilter,
             onTap: onStatusTap,
           ),
-          _FilterChip(label: 'служба доставки', selected: false, onTap: () {}),
         ],
       ),
     );
@@ -861,121 +1264,475 @@ class _FilterChip extends StatelessWidget {
 }
 
 class _OrdersList extends StatelessWidget {
-  const _OrdersList({required this.orders});
+  const _OrdersList({
+    required this.orders,
+    required this.currentUserId,
+    required this.onOrderTap,
+  });
 
   final List<AppOrder> orders;
+  final String currentUserId;
+  final ValueChanged<AppOrder> onOrderTap;
 
   @override
   Widget build(BuildContext context) {
-    final grouped = <AppOrderStatus, List<AppOrder>>{};
-    for (final order in orders) {
-      grouped.putIfAbsent(order.status, () => []).add(order);
-    }
+    final active = orders
+        .where((order) => _isOrderActive(order.status))
+        .toList();
+    final finished = orders
+        .where((order) => !_isOrderActive(order.status))
+        .toList();
     return ListView(
       physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(_pagePadding, 14, _pagePadding, 120),
+      padding: const EdgeInsets.fromLTRB(_pagePadding, 10, _pagePadding, 120),
       children: [
-        for (final entry in grouped.entries) ...[
-          Padding(
-            padding: const EdgeInsets.only(top: 8, bottom: 10),
-            child: Text(
-              _statusGroupTitle(entry.key),
-              style: _featureTitleStyle.copyWith(fontSize: 18),
+        if (active.isNotEmpty) ...[
+          const _OrderListTitle('Активные'),
+          for (final order in active)
+            _OrderRow(
+              order: order,
+              currentUserId: currentUserId,
+              onTap: () => onOrderTap(order),
             ),
+        ],
+        if (finished.isNotEmpty) ...[
+          Padding(
+            padding: EdgeInsets.only(top: active.isEmpty ? 0 : 14),
+            child: const _OrderListTitle('Завершённые'),
           ),
-          for (final order in entry.value) _OrderRow(order: order),
+          for (final order in finished)
+            _OrderRow(
+              order: order,
+              currentUserId: currentUserId,
+              onTap: () => onOrderTap(order),
+            ),
         ],
       ],
     );
   }
 }
 
-class _OrderRow extends StatelessWidget {
-  const _OrderRow({required this.order});
+class _OrderListTitle extends StatelessWidget {
+  const _OrderListTitle(this.title);
 
-  final AppOrder order;
+  final String title;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${order.deliveryService} ${order.trackingNumber}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: _featureSmallStyle.copyWith(fontSize: 11.5, height: 1),
-                ),
-              ),
-              GestureDetector(
-                onTap: () {
-                  Clipboard.setData(ClipboardData(text: order.trackingNumber));
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Трек-номер скопирован')),
-                  );
-                },
-                child: const SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: Icon(Icons.copy, size: 15, color: _ink),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 58,
-                height: 58,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: AppImage(
-                    imageUrl: order.productImage,
-                    fit: BoxFit.fill,
-                    placeholderColor: const Color(0xFFF1F1F2),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.only(top: 8, bottom: 11),
+      child: Text(title, style: _featureTitleStyle.copyWith(fontSize: 17)),
+    );
+  }
+}
+
+class _OrderRow extends StatelessWidget {
+  const _OrderRow({
+    required this.order,
+    required this.currentUserId,
+    required this.onTap,
+  });
+
+  final AppOrder order;
+  final String currentUserId;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final trackingNumber = order.trackingNumber.trim();
+    final role = order.sellerId == currentUserId
+        ? AppOrderRole.seller
+        : AppOrderRole.buyer;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(17),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: Key('order-row-${order.id}'),
+          onTap: onTap,
+          child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(17),
+              border: Border.all(color: const Color(0xFFE6E6E9)),
+            ),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 11),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
+                    _OrderRoleBadge(role: role),
+                    const Spacer(),
                     Text(
-                      order.productTitle.split(' ').take(2).join(' '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      _formatOrderDate(order.createdAt),
                       style: _featureSmallStyle.copyWith(
-                        fontSize: 9.5,
-                        height: 1,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      order.productTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: _featureBodyStyle.copyWith(
-                        fontSize: 13,
-                        height: 1.1,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w600,
+                        color: _muted,
                       ),
                     ),
                   ],
                 ),
+                const SizedBox(height: 11),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 72,
+                      height: 82,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: AppImage(
+                          imageUrl: order.productImage,
+                          fit: BoxFit.cover,
+                          placeholderColor: const Color(0xFFF1F1F2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            order.productTitle.trim().isEmpty
+                                ? 'Товар'
+                                : order.productTitle.trim(),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: _featureBodyStyle.copyWith(
+                              fontSize: 13.5,
+                              height: 1.2,
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          _OrderStatusBadge(status: order.status),
+                          const SizedBox(height: 8),
+                          Text(
+                            _orderTotalLabel(order),
+                            style: _featureBodyStyle.copyWith(
+                              fontSize: 13,
+                              height: 1,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            _orderDeliveryLabel(order),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: _featureSmallStyle.copyWith(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w600,
+                              color: _muted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 30),
+                      child: Icon(
+                        Icons.chevron_right_rounded,
+                        size: 21,
+                        color: Color(0xFF8A8A8F),
+                      ),
+                    ),
+                  ],
+                ),
+                if (trackingNumber.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  const Divider(height: 1, color: Color(0xFFE8E8EA)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.local_shipping_outlined,
+                        size: 17,
+                        color: _muted,
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          'Трек $trackingNumber',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: _featureSmallStyle.copyWith(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        key: Key('order-tracking-copy-${order.id}'),
+                        tooltip: 'Скопировать трек-номер',
+                        onPressed: () =>
+                            _copyTrackingNumber(context, trackingNumber),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 34,
+                          height: 30,
+                        ),
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(
+                          Icons.copy_rounded,
+                          size: 16,
+                          color: _ink,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OrderRoleBadge extends StatelessWidget {
+  const _OrderRoleBadge({required this.role});
+
+  final AppOrderRole role;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F1F3),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        role == AppOrderRole.buyer ? 'Покупка' : 'Продажа',
+        style: _featureSmallStyle.copyWith(fontSize: 10.5),
+      ),
+    );
+  }
+}
+
+class _OrderStatusBadge extends StatelessWidget {
+  const _OrderStatusBadge({required this.status});
+
+  final AppOrderStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = _orderStatusColors(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: colors.background,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        _orderStatusTitle(status),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: _featureSmallStyle.copyWith(
+          fontSize: 10,
+          color: colors.foreground,
+        ),
+      ),
+    );
+  }
+}
+
+class _OrderDetailsSheet extends StatelessWidget {
+  const _OrderDetailsSheet({required this.order, required this.currentUserId});
+
+  final AppOrder order;
+  final String currentUserId;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+    final trackingNumber = order.trackingNumber.trim();
+    final role = order.sellerId == currentUserId
+        ? AppOrderRole.seller
+        : AppOrderRole.buyer;
+    return SafeArea(
+      top: false,
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.84,
+        ),
+        padding: EdgeInsets.fromLTRB(18, 10, 18, 18 + bottomInset),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD5D5D8),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
               ),
+              const SizedBox(height: 15),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text('Заказ', style: _featureTitleStyle),
+                  ),
+                  IconButton(
+                    tooltip: 'Закрыть',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  _OrderRoleBadge(role: role),
+                  const SizedBox(width: 8),
+                  Flexible(child: _OrderStatusBadge(status: order.status)),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 82,
+                    height: 96,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(11),
+                      child: AppImage(
+                        imageUrl: order.productImage,
+                        fit: BoxFit.cover,
+                        placeholderColor: const Color(0xFFF1F1F2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 13),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          order.productTitle.trim().isEmpty
+                              ? 'Товар'
+                              : order.productTitle.trim(),
+                          style: _featureBodyStyle.copyWith(fontSize: 15),
+                        ),
+                        const SizedBox(height: 9),
+                        Text(
+                          _orderTotalLabel(order),
+                          style: _featureBodyStyle.copyWith(fontSize: 14),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _formatOrderDate(order.createdAt),
+                          style: _featureSmallStyle.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: _muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              const Divider(height: 1, color: Color(0xFFE8E8EA)),
+              const SizedBox(height: 14),
+              _OrderDetailValue(
+                label: 'Доставка',
+                value: _orderDeliveryLabel(order),
+              ),
+              if (order.deliveryAddress.trim().isNotEmpty)
+                _OrderDetailValue(
+                  label: 'Адрес',
+                  value: order.deliveryAddress.trim(),
+                ),
+              if (trackingNumber.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 13),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(
+                        width: 100,
+                        child: Text(
+                          'Трек-номер',
+                          style: TextStyle(
+                            fontFamily: 'Montserrat',
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: _muted,
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          trackingNumber,
+                          style: _featureSmallStyle.copyWith(fontSize: 11.5),
+                        ),
+                      ),
+                      IconButton(
+                        key: Key('order-detail-tracking-copy-${order.id}'),
+                        tooltip: 'Скопировать трек-номер',
+                        onPressed: () =>
+                            _copyTrackingNumber(context, trackingNumber),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 34,
+                          height: 30,
+                        ),
+                        padding: EdgeInsets.zero,
+                        icon: const Icon(Icons.copy_rounded, size: 16),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            order.productPrice,
-            style: _featureBodyStyle.copyWith(fontSize: 13, height: 1),
+        ),
+      ),
+    );
+  }
+}
+
+class _OrderDetailValue extends StatelessWidget {
+  const _OrderDetailValue({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 13),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: _muted,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: _featureSmallStyle.copyWith(fontSize: 11.5),
+            ),
           ),
         ],
       ),
@@ -1400,20 +2157,135 @@ String _notificationTime(DateTime value) {
   if (local.year == now.year &&
       local.month == now.month &&
       local.day == now.day) {
-    return 'Сегодня в ${local.hour}:${local.minute.toString().padLeft(2, '0')}';
+    return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   }
   return '${local.day.toString().padLeft(2, '0')}.${local.month.toString().padLeft(2, '0')}';
 }
 
-String _statusGroupTitle(AppOrderStatus status) {
-  switch (status) {
-    case AppOrderStatus.completed:
-      return 'завершён';
-    case AppOrderStatus.canceled:
-      return 'отменён';
+IconData _notificationKindIcon(String kind) {
+  switch (kind) {
+    case 'message':
+      return Icons.chat_bubble_outline_rounded;
+    case 'order':
+    case 'delivery':
+      return Icons.local_shipping_outlined;
+    case 'favorite':
+    case 'like':
+      return Icons.favorite_border_rounded;
+    case 'promotion':
+    case 'price_drop':
+      return Icons.local_offer_outlined;
     default:
-      return _statusFilterTitle(status);
+      return Icons.notifications_none_rounded;
   }
+}
+
+Color _notificationKindColor(String kind) {
+  switch (kind) {
+    case 'message':
+      return const Color(0xFFE8F1FF);
+    case 'order':
+    case 'delivery':
+      return const Color(0xFFE9F7E8);
+    case 'favorite':
+    case 'like':
+      return const Color(0xFFFFECEA);
+    case 'promotion':
+    case 'price_drop':
+      return const Color(0xFFFFF2C9);
+    default:
+      return const Color(0xFFF0F0F2);
+  }
+}
+
+bool _isOrderActive(AppOrderStatus status) =>
+    status != AppOrderStatus.completed && status != AppOrderStatus.canceled;
+
+String _orderStatusTitle(AppOrderStatus status) => switch (status) {
+  AppOrderStatus.pendingConfirmation => 'Ждёт подтверждения',
+  AppOrderStatus.pendingShipment => 'Ждёт отправки',
+  AppOrderStatus.inTransit => 'В пути',
+  AppOrderStatus.deliveredToPickup => 'Можно забирать',
+  AppOrderStatus.awaitingPayment => 'Ожидается выплата',
+  AppOrderStatus.returning => 'Возврат',
+  AppOrderStatus.disputed => 'Открыт спор',
+  AppOrderStatus.completed => 'Завершён',
+  AppOrderStatus.canceled => 'Отменён',
+};
+
+({Color background, Color foreground}) _orderStatusColors(
+  AppOrderStatus status,
+) => switch (status) {
+  AppOrderStatus.pendingConfirmation || AppOrderStatus.pendingShipment => (
+    background: const Color(0xFFFFF1D6),
+    foreground: const Color(0xFF8A5700),
+  ),
+  AppOrderStatus.inTransit || AppOrderStatus.deliveredToPickup => (
+    background: const Color(0xFFE8F1FF),
+    foreground: const Color(0xFF245EA8),
+  ),
+  AppOrderStatus.awaitingPayment || AppOrderStatus.completed => (
+    background: const Color(0xFFE9F7E8),
+    foreground: const Color(0xFF28752D),
+  ),
+  AppOrderStatus.returning || AppOrderStatus.disputed => (
+    background: const Color(0xFFFFECEA),
+    foreground: const Color(0xFFA9342C),
+  ),
+  AppOrderStatus.canceled => (
+    background: const Color(0xFFF0F0F2),
+    foreground: const Color(0xFF66666C),
+  ),
+};
+
+String _orderTotalLabel(AppOrder order) {
+  final total = order.productPriceValue + order.deliveryPrice;
+  if (total > 0) return 'Итого ${_formatMoney(total)} ₽';
+  final price = order.productPrice.trim();
+  return price.isEmpty ? 'Итог уточняется' : 'Итого $price';
+}
+
+String _orderDeliveryLabel(AppOrder order) {
+  final parts = <String>[];
+  if (order.deliveryPrice > 0) {
+    parts.add('${_formatMoney(order.deliveryPrice)} ₽');
+  }
+  if (order.deliveryService.trim().isNotEmpty) {
+    parts.add(order.deliveryService.trim());
+  }
+  return parts.isEmpty
+      ? 'Доставка уточняется'
+      : 'Доставка ${parts.join(' · ')}';
+}
+
+String _formatOrderDate(DateTime value) {
+  const months = [
+    'января',
+    'февраля',
+    'марта',
+    'апреля',
+    'мая',
+    'июня',
+    'июля',
+    'августа',
+    'сентября',
+    'октября',
+    'ноября',
+    'декабря',
+  ];
+  final date = value.toLocal();
+  final hour = date.hour.toString().padLeft(2, '0');
+  final minute = date.minute.toString().padLeft(2, '0');
+  return '${date.day} ${months[date.month - 1]} ${date.year}, $hour:$minute';
+}
+
+void _copyTrackingNumber(BuildContext context, String value) {
+  final trackingNumber = value.trim();
+  if (trackingNumber.isEmpty) return;
+  Clipboard.setData(ClipboardData(text: trackingNumber));
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(const SnackBar(content: Text('Трек-номер скопирован')));
 }
 
 String _statusFilterTitle(AppOrderStatus status) {

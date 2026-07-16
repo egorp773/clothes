@@ -11,6 +11,7 @@ class EditProfileScreen extends StatefulWidget {
     required this.profile,
     required this.accountEmail,
     required this.isSignedIn,
+    this.onUpdateIdentity,
     required this.onSave,
     required this.onConfirmEmail,
     required this.onDeleteAccount,
@@ -19,6 +20,11 @@ class EditProfileScreen extends StatefulWidget {
   final AppProfile profile;
   final String accountEmail;
   final bool isSignedIn;
+  final Future<String?> Function({
+    required String name,
+    required String handle,
+  })?
+  onUpdateIdentity;
   final Future<String?> Function(AppProfile profile, XFile? avatarFile) onSave;
   final Future<String?> Function(String email) onConfirmEmail;
   final Future<String?> Function() onDeleteAccount;
@@ -46,6 +52,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late final TextEditingController _lastNameController;
   late final TextEditingController _firstNameController;
   late final TextEditingController _middleNameController;
+  late final TextEditingController _handleController;
   late final TextEditingController _phoneController;
   late final TextEditingController _emailController;
   late String _gender;
@@ -60,12 +67,26 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
-    _lastNameController = TextEditingController(text: widget.profile.lastName);
+    final nameParts = widget.profile.name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    _lastNameController = TextEditingController(
+      text: widget.profile.lastName.trim().isNotEmpty
+          ? widget.profile.lastName
+          : nameParts.skip(1).join(' '),
+    );
     _firstNameController = TextEditingController(
-      text: widget.profile.firstName,
+      text: widget.profile.firstName.trim().isNotEmpty
+          ? widget.profile.firstName
+          : (nameParts.isEmpty ? '' : nameParts.first),
     );
     _middleNameController = TextEditingController(
       text: widget.profile.middleName,
+    );
+    _handleController = TextEditingController(
+      text: widget.profile.handle.trim().replaceFirst(RegExp(r'^@'), ''),
     );
     _phoneController = TextEditingController(
       text: _nationalPhone(widget.profile.phone),
@@ -85,6 +106,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _lastNameController.dispose();
     _firstNameController.dispose();
     _middleNameController.dispose();
+    _handleController.dispose();
     _phoneController.dispose();
     _emailController.dispose();
     super.dispose();
@@ -98,17 +120,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         elevation: 0,
-        centerTitle: true,
+        centerTitle: false,
+        toolbarHeight: 58,
         leading: IconButton(
           tooltip: 'Назад',
           onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.arrow_back_ios_new, size: 18),
+          icon: const Icon(Icons.arrow_back_ios_new, size: 19),
         ),
         title: const Text(
-          'профиль',
+          'Редактировать профиль',
           style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
+            fontFamily: 'Montserrat',
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.25,
             color: Colors.black,
           ),
         ),
@@ -119,20 +144,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           key: _formKey,
           child: ListView(
             physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
+            padding: const EdgeInsets.fromLTRB(18, 10, 18, 32),
             children: [
-              Align(alignment: Alignment.centerLeft, child: _buildAvatar()),
-              const SizedBox(height: 28),
-              const Text(
-                'личная информация',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              Center(child: _buildAvatar()),
+              const SizedBox(height: 30),
+              const _SectionLabel(
+                'Основная информация',
+                description: 'Эти данные будут видны в вашем профиле',
               ),
-              const SizedBox(height: 3),
-              const Text(
-                'Не забудьте сохранить данные',
-                style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               _UnderlineField(
                 controller: _lastNameController,
                 label: 'Фамилия',
@@ -140,6 +160,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 textCapitalization: TextCapitalization.words,
                 validator: _requiredValidator,
               ),
+              const SizedBox(height: 10),
               _UnderlineField(
                 controller: _firstNameController,
                 label: 'Имя',
@@ -147,86 +168,110 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 textCapitalization: TextCapitalization.words,
                 validator: _requiredValidator,
               ),
+              const SizedBox(height: 10),
               _UnderlineField(
                 controller: _middleNameController,
                 label: 'Отчество',
                 textCapitalization: TextCapitalization.words,
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 10),
+              _UnderlineField(
+                controller: _handleController,
+                label: 'Имя пользователя',
+                required: true,
+                prefixText: '@',
+                validator: _handleValidator,
+              ),
+              const SizedBox(height: 20),
+              const _SectionLabel('Пол'),
+              const SizedBox(height: 10),
               Row(
                 children: [
-                  _GenderChoice(
-                    label: 'женщина',
-                    selected: _gender == 'female',
-                    onTap: () => setState(() => _gender = 'female'),
+                  Expanded(
+                    child: _GenderChoice(
+                      label: 'Женский',
+                      selected: _gender == 'female',
+                      onTap: () => setState(() => _gender = 'female'),
+                    ),
                   ),
-                  const SizedBox(width: 22),
-                  _GenderChoice(
-                    label: 'мужчина',
-                    selected: _gender == 'male',
-                    onTap: () => setState(() => _gender = 'male'),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _GenderChoice(
+                      label: 'Мужской',
+                      selected: _gender == 'male',
+                      onTap: () => setState(() => _gender = 'male'),
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 15),
-              const _SectionLabel('дата рождения'),
+              const SizedBox(height: 20),
+              const _SectionLabel('Дата рождения'),
+              const SizedBox(height: 10),
               _TapValueField(
                 value: _birthDate == null
-                    ? '00/00/0000'
+                    ? 'Не указана'
                     : _formatDate(_birthDate!),
-                required: true,
                 trailing: const Icon(Icons.keyboard_arrow_down, size: 17),
                 onTap: _pickBirthDate,
               ),
-              if (_birthDate == null)
-                const Padding(
-                  padding: EdgeInsets.only(top: 5),
-                  child: Text(
-                    'Укажите дату рождения',
-                    style: TextStyle(fontSize: 10, color: Color(0xFFD60000)),
-                  ),
-                ),
-              const SizedBox(height: 38),
-              const _SectionLabel('город'),
+              const SizedBox(height: 26),
+              const _SectionLabel(
+                'Город',
+                description: 'Поможет показывать предложения рядом',
+              ),
+              const SizedBox(height: 10),
               _TapValueField(
                 value: _city.trim().isEmpty ? 'Выберите город' : _city,
                 trailing: const Icon(Icons.keyboard_arrow_down, size: 17),
                 onTap: _selectCity,
               ),
-              const SizedBox(height: 34),
-              const _SectionLabel('контакты'),
-              const SizedBox(height: 3),
+              const SizedBox(height: 28),
+              const _SectionLabel(
+                'Контакты',
+                description: 'Не отображаются в публичном профиле',
+              ),
+              const SizedBox(height: 14),
               _PhoneField(controller: _phoneController),
+              const SizedBox(height: 10),
               _UnderlineField(
                 controller: _emailController,
                 label: 'Email',
-                required: true,
                 keyboardType: TextInputType.emailAddress,
                 validator: _emailValidator,
               ),
-              const SizedBox(height: 29),
+              const SizedBox(height: 12),
               _OutlineActionButton(
-                label: 'ПОДТВЕРДИТЬ EMAIL',
+                label: 'Подтвердить email',
                 loading: _confirmingEmail,
                 onPressed: _confirmEmail,
               ),
-              const SizedBox(height: 7),
+              const SizedBox(height: 26),
               _BlackActionButton(
-                label: 'СОХРАНИТЬ',
+                label: 'Сохранить изменения',
                 loading: _saving,
                 onPressed: _save,
               ),
-              const SizedBox(height: 58),
+              const SizedBox(height: 42),
+              const Divider(height: 1, color: Color(0xFFE7E7EA)),
+              const SizedBox(height: 22),
+              const _SectionLabel('Управление аккаунтом'),
+              const SizedBox(height: 12),
               _OutlineActionButton(
-                label: 'УДАЛИТЬ АККАУНТ',
+                label: 'Удалить аккаунт',
                 loading: _deleting,
                 onPressed: _askToDelete,
+                destructive: true,
               ),
-              const SizedBox(height: 9),
+              const SizedBox(height: 10),
               const Text(
-                'После удаления аккаунта восстановить его будет\nневозможно.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 8.5, height: 1.35),
+                'После удаления восстановить профиль и связанные с ним данные не получится.',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w500,
+                  height: 1.4,
+                  color: Color(0xFF7A7A80),
+                ),
               ),
             ],
           ),
@@ -243,42 +288,70 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return Semantics(
       button: true,
       label: 'Изменить фото профиля',
-      child: GestureDetector(
+      child: InkWell(
         onTap: _showAvatarActions,
-        child: SizedBox(
-          width: 84,
-          height: 78,
-          child: Stack(
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFF1F1F1),
-                  shape: BoxShape.circle,
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: source.isEmpty
-                    ? const Icon(Icons.person_outline, size: 38)
-                    : AppImage(
-                        imageUrl: source,
-                        width: 72,
-                        height: 72,
-                        fit: BoxFit.cover,
+              SizedBox(
+                width: 92,
+                height: 88,
+                child: Stack(
+                  children: [
+                    Container(
+                      width: 84,
+                      height: 84,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF1F1F3),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: const Color(0xFFE3E3E6)),
                       ),
+                      clipBehavior: Clip.antiAlias,
+                      child: source.isEmpty
+                          ? const Icon(
+                              Icons.person_outline_rounded,
+                              size: 40,
+                              color: Color(0xFF77777E),
+                            )
+                          : AppImage(
+                              imageUrl: source,
+                              width: 84,
+                              height: 84,
+                              fit: BoxFit.cover,
+                            ),
+                    ),
+                    Positioned(
+                      right: 2,
+                      bottom: 2,
+                      child: Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2.5),
+                        ),
+                        child: const Icon(
+                          Icons.photo_camera_outlined,
+                          size: 15,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              Positioned(
-                right: 4,
-                bottom: 5,
-                child: Container(
-                  width: 25,
-                  height: 25,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.black, width: 1.2),
-                  ),
-                  child: const Icon(Icons.photo_camera_outlined, size: 15),
+              const SizedBox(height: 7),
+              const Text(
+                'Изменить фото',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black,
                 ),
               ),
             ],
@@ -391,26 +464,39 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   Future<void> _save() async {
     final valid = _formKey.currentState?.validate() ?? false;
-    if (!valid || _birthDate == null) {
+    if (!valid) {
       _showMessage('Заполните обязательные поля');
       return;
     }
     setState(() => _saving = true);
     final firstName = _firstNameController.text.trim();
     final lastName = _lastNameController.text.trim();
+    final displayName = '$firstName $lastName'.trim();
+    final handle = '@${_handleController.text.trim().replaceFirst('@', '')}';
     final phoneDigits = _phoneController.text.replaceAll(RegExp(r'\D'), '');
     final updated = widget.profile.copyWith(
-      name: '$firstName $lastName'.trim(),
+      name: displayName,
+      handle: handle,
       firstName: firstName,
       lastName: lastName,
       middleName: _middleNameController.text.trim(),
       gender: _gender,
-      birthDate: _birthDate!.toIso8601String().split('T').first,
+      birthDate: _birthDate?.toIso8601String().split('T').first ?? '',
       city: _city.trim(),
       phone: phoneDigits.isEmpty ? '' : '+7$phoneDigits',
       email: _emailController.text.trim().toLowerCase(),
       avatarUrl: _removeAvatar ? '' : widget.profile.avatarUrl,
     );
+    final identityError = await widget.onUpdateIdentity?.call(
+      name: displayName,
+      handle: handle,
+    );
+    if (!mounted) return;
+    if (identityError != null) {
+      setState(() => _saving = false);
+      _showMessage(identityError);
+      return;
+    }
     final error = await widget.onSave(updated, _pickedAvatar);
     if (!mounted) return;
     setState(() => _saving = false);
@@ -423,6 +509,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _confirmEmail() async {
+    if (_emailController.text.trim().isEmpty) {
+      _showMessage('Укажите email');
+      return;
+    }
     final emailError = _emailValidator(_emailController.text);
     if (emailError != null) {
       _showMessage(emailError);
@@ -477,9 +567,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   String? _emailValidator(String? value) {
     final email = value?.trim() ?? '';
-    if (email.isEmpty) return 'Укажите email';
+    if (email.isEmpty) return null;
     if (!RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
       return 'Проверьте формат email';
+    }
+    return null;
+  }
+
+  String? _handleValidator(String? value) {
+    final handle = (value ?? '').trim().replaceFirst('@', '');
+    if (handle.isEmpty) return 'Укажите имя пользователя';
+    if (!RegExp(r'^[A-Za-z0-9_]{3,24}$').hasMatch(handle)) {
+      return '3–24 символа: латиница, цифры и _';
     }
     return null;
   }
@@ -507,18 +606,39 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 }
 
 class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
+  const _SectionLabel(this.text, {this.description});
 
   final String text;
+  final String? description;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          text,
+          style: const TextStyle(
+            fontFamily: 'Montserrat',
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.15,
+          ),
+        ),
+        if (description != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            description!,
+            style: const TextStyle(
+              fontFamily: 'Montserrat',
+              fontSize: 10.5,
+              fontWeight: FontWeight.w500,
+              height: 1.3,
+              color: Color(0xFF85858B),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -531,6 +651,7 @@ class _UnderlineField extends StatelessWidget {
     this.keyboardType,
     this.textCapitalization = TextCapitalization.none,
     this.validator,
+    this.prefixText,
   });
 
   final TextEditingController controller;
@@ -539,6 +660,7 @@ class _UnderlineField extends StatelessWidget {
   final TextInputType? keyboardType;
   final TextCapitalization textCapitalization;
   final String? Function(String?)? validator;
+  final String? prefixText;
 
   @override
   Widget build(BuildContext context) {
@@ -547,7 +669,11 @@ class _UnderlineField extends StatelessWidget {
       keyboardType: keyboardType,
       textCapitalization: textCapitalization,
       validator: validator,
-      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+      style: const TextStyle(
+        fontFamily: 'Montserrat',
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+      ),
       decoration: InputDecoration(
         label: Row(
           mainAxisSize: MainAxisSize.min,
@@ -566,14 +692,38 @@ class _UnderlineField extends StatelessWidget {
             Text(label),
           ],
         ),
-        labelStyle: const TextStyle(fontSize: 11, color: Colors.black),
-        floatingLabelBehavior: FloatingLabelBehavior.auto,
-        contentPadding: const EdgeInsets.only(top: 12, bottom: 8),
-        enabledBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Color(0xFFD5D5D5)),
+        prefixText: prefixText,
+        prefixStyle: const TextStyle(
+          fontFamily: 'Montserrat',
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: Colors.black,
         ),
-        focusedBorder: const UnderlineInputBorder(
-          borderSide: BorderSide(color: Colors.black),
+        labelStyle: const TextStyle(
+          fontFamily: 'Montserrat',
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          color: Color(0xFF67676D),
+        ),
+        floatingLabelBehavior: FloatingLabelBehavior.auto,
+        filled: true,
+        fillColor: const Color(0xFFF5F5F7),
+        contentPadding: const EdgeInsets.fromLTRB(15, 16, 15, 14),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: const BorderSide(color: Colors.black, width: 1.2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: const BorderSide(color: Color(0xFFD60000)),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: const BorderSide(color: Color(0xFFD60000), width: 1.2),
         ),
       ),
     );
@@ -587,44 +737,46 @@ class _PhoneField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        const SizedBox(
-          height: 48,
-          width: 47,
-          child: Row(
-            children: [
-              Text('+7', style: TextStyle(fontSize: 11)),
-              Spacer(),
-              Icon(Icons.keyboard_arrow_down, size: 14),
-              SizedBox(width: 8),
-            ],
-          ),
-        ),
-        Expanded(
-          child: TextFormField(
-            controller: controller,
-            keyboardType: TextInputType.phone,
-            inputFormatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(10),
-              _PhoneInputFormatter(),
-            ],
-            style: const TextStyle(fontSize: 11),
-            decoration: const InputDecoration(
-              hintText: '900-000-00-00',
-              contentPadding: EdgeInsets.only(bottom: 8),
-              enabledBorder: UnderlineInputBorder(
-                borderSide: BorderSide(color: Color(0xFFD5D5D5)),
-              ),
-              focusedBorder: UnderlineInputBorder(
-                borderSide: BorderSide(color: Colors.black),
-              ),
-            ),
-          ),
-        ),
+    return TextFormField(
+      controller: controller,
+      keyboardType: TextInputType.phone,
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(10),
+        _PhoneInputFormatter(),
       ],
+      style: const TextStyle(
+        fontFamily: 'Montserrat',
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+      ),
+      decoration: InputDecoration(
+        labelText: 'Телефон',
+        hintText: '900-000-00-00',
+        prefixText: '+7  ',
+        labelStyle: const TextStyle(
+          fontFamily: 'Montserrat',
+          fontSize: 12,
+          color: Color(0xFF67676D),
+        ),
+        prefixStyle: const TextStyle(
+          fontFamily: 'Montserrat',
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: Colors.black,
+        ),
+        filled: true,
+        fillColor: const Color(0xFFF5F5F7),
+        contentPadding: const EdgeInsets.fromLTRB(15, 16, 15, 14),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(13),
+          borderSide: const BorderSide(color: Colors.black, width: 1.2),
+        ),
+      ),
     );
   }
 }
@@ -664,14 +816,23 @@ class _GenderChoice extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(20),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5),
+      borderRadius: BorderRadius.circular(13),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFFEEEEF0) : const Color(0xFFF7F7F8),
+          borderRadius: BorderRadius.circular(13),
+          border: Border.all(
+            color: selected ? Colors.black : const Color(0xFFE8E8EB),
+          ),
+        ),
         child: Row(
           children: [
             Container(
-              width: 14,
-              height: 14,
+              width: 17,
+              height: 17,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: selected ? Colors.black : Colors.white,
@@ -690,8 +851,15 @@ class _GenderChoice extends StatelessWidget {
                     )
                   : null,
             ),
-            const SizedBox(width: 7),
-            Text(label, style: const TextStyle(fontSize: 11)),
+            const SizedBox(width: 9),
+            Text(
+              label,
+              style: const TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       ),
@@ -716,10 +884,13 @@ class _TapValueField extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      child: Container(
-        height: 39,
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: Color(0xFFD5D5D5))),
+      borderRadius: BorderRadius.circular(13),
+      child: Ink(
+        height: 52,
+        padding: const EdgeInsets.symmetric(horizontal: 15),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF5F5F7),
+          borderRadius: BorderRadius.circular(13),
         ),
         child: Row(
           children: [
@@ -734,7 +905,16 @@ class _TapValueField extends StatelessWidget {
               ),
               const SizedBox(width: 5),
             ],
-            Expanded(child: Text(value, style: const TextStyle(fontSize: 11))),
+            Expanded(
+              child: Text(
+                value,
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
             trailing,
           ],
         ),
@@ -748,22 +928,31 @@ class _OutlineActionButton extends StatelessWidget {
     required this.label,
     required this.loading,
     required this.onPressed,
+    this.destructive = false,
   });
 
   final String label;
   final bool loading;
   final VoidCallback onPressed;
+  final bool destructive;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 40,
+      height: 50,
       child: OutlinedButton(
         onPressed: loading ? null : onPressed,
         style: OutlinedButton.styleFrom(
-          shape: const RoundedRectangleBorder(),
-          side: const BorderSide(color: Colors.black),
-          foregroundColor: Colors.black,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          side: BorderSide(
+            color: destructive
+                ? const Color(0xFFFFD4D1)
+                : const Color(0xFFDADADF),
+          ),
+          foregroundColor: destructive ? const Color(0xFFD92D20) : Colors.black,
+          backgroundColor: destructive ? const Color(0xFFFFF7F6) : Colors.white,
         ),
         child: loading
             ? const SizedBox(
@@ -774,8 +963,9 @@ class _OutlineActionButton extends StatelessWidget {
             : Text(
                 label,
                 style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
+                  fontFamily: 'Montserrat',
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
       ),
@@ -797,11 +987,13 @@ class _BlackActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 40,
+      height: 52,
       child: FilledButton(
         onPressed: loading ? null : onPressed,
         style: FilledButton.styleFrom(
-          shape: const RoundedRectangleBorder(),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           backgroundColor: Colors.black,
           foregroundColor: Colors.white,
         ),
@@ -817,8 +1009,9 @@ class _BlackActionButton extends StatelessWidget {
             : Text(
                 label,
                 style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
+                  fontFamily: 'Montserrat',
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
       ),

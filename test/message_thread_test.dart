@@ -82,4 +82,45 @@ void main() {
     expect(restored.messages.single.sharedProduct?.price, '12 000 ₽');
     expect(restored.toSupabaseJson()['member_ids'], hasLength(3));
   });
+
+  test('serializes chat timestamps as UTC and preserves remote instants', () {
+    final localCreatedAt = DateTime(2026, 7, 16, 12, 30);
+    final message = ChatMessage(
+      id: 'message-local',
+      text: 'Привет',
+      createdAt: localCreatedAt,
+      isMine: true,
+      senderId: 'buyer-1',
+    );
+
+    expect(
+      message.toSupabaseJson()['created_at'],
+      localCreatedAt.toUtc().toIso8601String(),
+    );
+    expect(
+      message.toSupabaseJson()['created_at'] as String,
+      endsWith('Z'),
+    );
+
+    final thread = MessageThread.fromSupabase({
+      'id': 'thread-timezone',
+      'buyer_id': 'buyer-1',
+      'seller_id': 'seller-1',
+      'updated_at': '2026-07-16T17:00:00+05:00',
+      'messages': [
+        {
+          'id': 'message-offset',
+          'text': 'Полдень по Москве',
+          'created_at': '2026-07-16T15:00:00+03:00',
+          'sender_id': 'seller-1',
+        },
+      ],
+    }, currentUserId: 'buyer-1');
+
+    expect(thread.updatedAt.toUtc(), DateTime.utc(2026, 7, 16, 12));
+    expect(
+      thread.messages.single.createdAt.toUtc(),
+      DateTime.utc(2026, 7, 16, 12),
+    );
+  });
 }

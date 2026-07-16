@@ -16,6 +16,7 @@ class VisualSearchScreen extends StatefulWidget {
     required this.onProductTap,
     required this.onToggleLike,
     this.catalogProducts = const [],
+    this.onProductMenu,
     this.onShareProduct,
     this.service,
     this.initialResult,
@@ -26,6 +27,7 @@ class VisualSearchScreen extends StatefulWidget {
   final ValueChanged<Product> onProductTap;
   final Future<void> Function(String productId) onToggleLike;
   final List<Product> catalogProducts;
+  final ValueChanged<Product>? onProductMenu;
   final ValueChanged<Product>? onShareProduct;
   final VisualSearchService? service;
   final VisualSearchResult? initialResult;
@@ -411,7 +413,7 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
                   scale: 1,
                   onTap: () => widget.onProductTap(product),
                   onLike: () => widget.onToggleLike(product.id),
-                  onMenu: () {},
+                  onMenu: () => widget.onProductMenu?.call(product),
                   onShare: () => widget.onShareProduct?.call(product),
                 );
               },
@@ -423,15 +425,10 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
   }
 
   List<Product> _catalogProductsFor(List<Product> searchProducts) {
-    if (searchProducts.isEmpty || widget.catalogProducts.isEmpty) {
-      return searchProducts;
-    }
-    final catalogById = <String, Product>{
-      for (final product in widget.catalogProducts) product.id: product,
-    };
-    return searchProducts
-        .map((product) => catalogById[product.id] ?? product)
-        .toList(growable: false);
+    return resolveVisualSearchCatalogProducts(
+      searchProducts: searchProducts,
+      catalogProducts: widget.catalogProducts,
+    );
   }
 
   String _productsCountLabel(int count) {
@@ -442,6 +439,33 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
     if (mod10 >= 2 && mod10 <= 4) return '$count похожих товара';
     return '$count похожих товаров';
   }
+}
+
+/// Resolves search candidates to the current catalog snapshot by product ID.
+///
+/// Visual-search rows are intentionally treated as ranking references rather
+/// than display models: they can be sparse or stale and may contain a matched
+/// embedding image that is not the product's primary catalog image. Unknown
+/// IDs are omitted so they cannot open an incomplete product detail page.
+List<Product> resolveVisualSearchCatalogProducts({
+  required Iterable<Product> searchProducts,
+  required Iterable<Product> catalogProducts,
+}) {
+  final catalogById = <String, Product>{
+    for (final product in catalogProducts)
+      if (product.id.trim().isNotEmpty) product.id.trim(): product,
+  };
+  if (catalogById.isEmpty) return const [];
+
+  final resolved = <Product>[];
+  final seenIds = <String>{};
+  for (final candidate in searchProducts) {
+    final id = candidate.id.trim();
+    final product = catalogById[id];
+    if (product == null || !seenIds.add(id)) continue;
+    resolved.add(product);
+  }
+  return List.unmodifiable(resolved);
 }
 
 class _FilterChoiceSection extends StatelessWidget {

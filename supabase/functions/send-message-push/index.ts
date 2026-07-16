@@ -21,6 +21,32 @@ type ServiceAccount = {
   private_key: string;
 };
 
+type NotificationSettings = {
+  user_id: string;
+  push_enabled: boolean | null;
+  messages_enabled: boolean | null;
+  sound_enabled: boolean | null;
+};
+
+type RecipientPreferences = {
+  userId: string;
+  pushEnabled: boolean;
+  messagesEnabled: boolean;
+  soundEnabled: boolean;
+};
+
+type PushToken = {
+  user_id: string;
+  token: string;
+};
+
+type FcmSendResult = {
+  ok: boolean;
+  status: number;
+  invalidToken: boolean;
+  error: string;
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -31,8 +57,8 @@ Deno.serve(async (req) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const serviceAccount = loadFirebaseServiceAccount();
 
-  if (!supabaseUrl || !anonKey || !serviceRoleKey || !serviceAccount) {
-    return json({ error: "Missing Supabase or Firebase env vars" }, 500);
+  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+    return json({ error: "Missing Supabase env vars" }, 500);
   }
 
   let threadId = "";
@@ -98,20 +124,13 @@ Deno.serve(async (req) => {
     return json({ error: "Message not found" }, 404);
   }
 
-  const recipientIds = memberIds.filter((id: string) => id !== senderId);
+  const recipientIds = [
+    ...new Set(memberIds.filter((id: string) => id !== senderId)),
+  ];
   if (recipientIds.length === 0) {
     return json({ sent: 0, skipped: "empty_recipient" });
   }
 
-  const { data: tokens, error: tokensError } = await serviceClient
-    .from("device_push_tokens")
-    .select("token")
-    .in("user_id", recipientIds);
-
-  if (tokensError) return json({ error: tokensError.message }, 500);
-  if (!tokens || tokens.length === 0) return json({ sent: 0 });
-
-  const accessToken = await firebaseAccessToken(serviceAccount);
   const title = message.sender_name?.trim() ||
     (senderId === thread.buyer_id ? thread.buyer_name : thread.seller_name) ||
     "Новое сообщение";
@@ -119,30 +138,157 @@ Deno.serve(async (req) => {
     ? `Объявление: ${message.product?.title ?? "товар"}`
     : message.text?.trim() || "Новое сообщение";
 
-  const results = await Promise.all(
-    tokens.map(async ({ token }: { token: string }) => {
-      const response = await sendFcmMessage({
-        accessToken,
-        projectId: serviceAccount.project_id,
-        token,
-        title,
-        body,
-        threadId,
-        messageId,
-      });
+  const { data: settingsRows, error: settingsError } = await serviceClient
+    .from("notification_settings")
+    .select("user_id,push_enabled,messages_enabled,sound_enabled")
+    .in("user_id", recipientIds) as {
+      data: NotificationSettings[] | null;
+      error: { message: string } | null;
+    };
 
-      if (!response.ok && (response.status === 400 || response.status === 404)) {
-        await serviceClient.from("device_push_tokens").delete().eq(
-          "token",
-          token,
-        );
+  if (settingsError) return json({ error: settingsError.message }, 500);
+
+  const settingsByUser = new Map(
+    (settingsRows ?? []).map((settings) => [settings.user_id, settings]),
+  );
+  const recipients: RecipientPreferences[] = recipientIds.map((userId) => {
+    const settings = settingsByUser.get(userId);
+    return {
+      userId,
+      // A missing settings row (or a nullable legacy value) means enabled.
+      pushEnabled: settings?.push_enabled ?? true,
+      messagesEnabled: settings?.messages_enabled ?? true,
+      soundEnabled: settings?.sound_enabled ?? true,
+    };
+  });
+  const pushRecipients = recipients.filter(
+    (item) => item.messagesEnabled && item.pushEnabled,
+  );
+
+  if (pushRecipients.length === 0) {
+    return json({
+      sent: 0,
+      total: 0,
+      skipped: "messages_or_push_disabled",
+    });
+  }
+
+  const pushRecipientIds = pushRecipients.map((item) => item.userId);
+  const preferencesByUser = new Map(
+    pushRecipients.map((preferences) => [preferences.userId, preferences]),
+  );
+  const { data: tokenRows, error: tokensError } = await serviceClient
+    .from("device_push_tokens")
+    .select("user_id,token")
+    .in("user_id", pushRecipientIds) as {
+      data: PushToken[] | null;
+      error: { message: string } | null;
+    };
+
+  if (tokensError) return json({ error: tokensError.message }, 500);
+  const tokens = (tokenRows ?? []).filter((row) =>
+    row.token && preferencesByUser.has(row.user_id)
+  );
+  if (tokens.length === 0) {
+    return json({
+      sent: 0,
+      total: 0,
+      skipped: "no_tokens",
+    });
+  }
+
+  if (!serviceAccount) {
+    return json({
+      sent: 0,
+      total: tokens.length,
+      skipped: "firebase_not_configured",
+    });
+  }
+
+  const badgeByUser = new Map<string, number>();
+  await Promise.all(
+    pushRecipientIds.map(async (recipientId) => {
+      const { count, error } = await serviceClient
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", recipientId)
+        .eq("is_read", false)
+        .neq("kind", "message");
+      if (error) {
+        console.error(`Badge count failed for recipient: ${error.message}`);
+        badgeByUser.set(recipientId, 0);
+        return;
       }
-
-      return response.ok;
+      badgeByUser.set(recipientId, count ?? 0);
     }),
   );
 
-  return json({ sent: results.filter(Boolean).length, total: results.length });
+  let accessToken: string;
+  try {
+    accessToken = await firebaseAccessToken(serviceAccount);
+  } catch (error) {
+    console.error("Could not authorize Firebase push delivery", error);
+    return json({
+      error: "Could not authorize push delivery",
+    }, 502);
+  }
+
+  const results = await Promise.all(
+    tokens.map(async ({ user_id: recipientId, token }) => {
+      const preferences = preferencesByUser.get(recipientId);
+      if (!preferences) return { sent: false, invalidTokenRemoved: false };
+
+      try {
+        const result = await sendFcmMessage({
+          accessToken,
+          projectId: serviceAccount.project_id,
+          token,
+          title,
+          body,
+          threadId,
+          messageId,
+          badge: badgeByUser.get(recipientId) ?? 0,
+          soundEnabled: preferences.soundEnabled,
+        });
+
+        let invalidTokenRemoved = false;
+        if (result.invalidToken) {
+          const { error: deleteError } = await serviceClient
+            .from("device_push_tokens")
+            .delete()
+            .eq("token", token);
+          if (deleteError) {
+            console.error(
+              `Could not remove invalid push token: ${deleteError.message}`,
+            );
+          } else {
+            invalidTokenRemoved = true;
+          }
+        }
+
+        if (!result.ok) {
+          console.error(
+            `FCM delivery failed with status ${result.status}: ${result.error}`,
+          );
+        }
+        return { sent: result.ok, invalidTokenRemoved };
+      } catch (error) {
+        // A network or payload failure for one installation must not prevent
+        // delivery attempts to the recipient's other installations.
+        console.error("FCM delivery failed for one installation", error);
+        return { sent: false, invalidTokenRemoved: false };
+      }
+    }),
+  );
+
+  return json({
+    sent: results.filter((result) => result.sent).length,
+    failed: results.filter((result) => !result.sent).length,
+    total: results.length,
+    invalid_tokens_removed: results.filter((result) =>
+      result.invalidTokenRemoved
+    ).length,
+  });
 });
 
 function loadFirebaseServiceAccount(): ServiceAccount | null {
@@ -214,7 +360,7 @@ async function firebaseAccessToken(account: ServiceAccount): Promise<string> {
   return String(data.access_token);
 }
 
-function sendFcmMessage({
+async function sendFcmMessage({
   accessToken,
   projectId,
   token,
@@ -222,6 +368,8 @@ function sendFcmMessage({
   body,
   threadId,
   messageId,
+  badge,
+  soundEnabled,
 }: {
   accessToken: string;
   projectId: string;
@@ -230,8 +378,22 @@ function sendFcmMessage({
   body: string;
   threadId: string;
   messageId: string;
-}) {
-  return fetch(
+  badge: number;
+  soundEnabled: boolean;
+}): Promise<FcmSendResult> {
+  const androidNotification: Record<string, unknown> = {
+    channel_id: soundEnabled ? "messages" : "messages_silent",
+    click_action: "FLUTTER_NOTIFICATION_CLICK",
+  };
+  if (soundEnabled) androidNotification.sound = "default";
+
+  const aps: Record<string, unknown> = {
+    badge,
+    "thread-id": threadId,
+  };
+  if (soundEnabled) aps.sound = "default";
+
+  const response = await fetch(
     `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
     {
       method: "POST",
@@ -245,30 +407,67 @@ function sendFcmMessage({
           notification: { title, body },
           data: {
             type: "message",
+            kind: "message",
+            target_id: messageId,
             thread_id: threadId,
             message_id: messageId,
             title,
             body,
+            sound_enabled: String(soundEnabled),
           },
           android: {
             priority: "high",
-            notification: {
-              channel_id: "messages",
-              click_action: "FLUTTER_NOTIFICATION_CLICK",
-            },
+            notification: androidNotification,
           },
           apns: {
+            headers: {
+              "apns-priority": "10",
+              "apns-push-type": "alert",
+            },
             payload: {
-              aps: {
-                sound: "default",
-                badge: 1,
-              },
+              aps,
             },
           },
         },
       }),
     },
   );
+
+  const responseText = await response.text();
+  if (response.ok) {
+    return { ok: true, status: response.status, invalidToken: false, error: "" };
+  }
+
+  return {
+    ok: false,
+    status: response.status,
+    invalidToken: isUnregisteredFcmToken(responseText),
+    error: responseText.slice(0, 1000),
+  };
+}
+
+function isUnregisteredFcmToken(responseText: string): boolean {
+  if (
+    responseText.toLowerCase().includes("registration-token-not-registered")
+  ) {
+    return true;
+  }
+
+  try {
+    const payload = JSON.parse(responseText) as {
+      error?: {
+        details?: Array<{
+          errorCode?: string;
+          [key: string]: unknown;
+        }>;
+      };
+    };
+    return payload.error?.details?.some((detail) =>
+      detail.errorCode?.toUpperCase() === "UNREGISTERED"
+    ) ?? false;
+  } catch {
+    return false;
+  }
 }
 
 function pemToArrayBuffer(pem: string): ArrayBuffer {

@@ -47,6 +47,8 @@ class ProfileScreen extends StatelessWidget {
     required this.onProductTap,
     required this.onOutfitAuthorTap,
     required this.onMarkNotificationRead,
+    required this.onMarkAllNotificationsRead,
+    required this.onNotificationTap,
     required this.onUpdateNotificationPreferences,
     required this.onLoadReviews,
     required this.onOpenCatalog,
@@ -84,6 +86,9 @@ class ProfileScreen extends StatelessWidget {
   final ValueChanged<Product> onProductTap;
   final ValueChanged<CreatedOutfit> onOutfitAuthorTap;
   final Future<void> Function(String notificationId) onMarkNotificationRead;
+  final Future<void> Function() onMarkAllNotificationsRead;
+  final Future<void> Function(ProfileNotification notification)
+  onNotificationTap;
   final Future<void> Function(NotificationPreferences preferences)
   onUpdateNotificationPreferences;
   final Future<List<SellerReview>> Function(String sellerId) onLoadReviews;
@@ -92,6 +97,15 @@ class ProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final outfitCards = outfits.map(_ProfileOutfit.fromOutfit).toList();
+    final activeOrders = orders.where((order) {
+      final belongsToCurrentUser = currentUserId.isEmpty
+          ? true
+          : order.buyerId == currentUserId || order.sellerId == currentUserId;
+      return belongsToCurrentUser &&
+          order.status != AppOrderStatus.completed &&
+          order.status != AppOrderStatus.canceled;
+    }).toList()
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     final topInset = MediaQuery.of(context).viewPadding.top;
 
     return Scaffold(
@@ -115,6 +129,12 @@ class ProfileScreen extends StatelessWidget {
               onEditTap: () => _openEditProfile(context),
               onReviewsTap: () => _openReviews(context),
             ),
+            if (activeOrders.isNotEmpty)
+              _ActiveOrdersOverview(
+                orders: activeOrders,
+                currentUserId: currentUserId,
+                onTap: () => _openOrders(context),
+              ),
             _ProfileShortcutSection(
               favoritesCount: likedProducts.length + likedOutfits.length,
               recentCount:
@@ -200,6 +220,7 @@ class ProfileScreen extends StatelessWidget {
           profile: profile,
           accountEmail: accountLabel ?? '',
           isSignedIn: isSignedIn,
+          onUpdateIdentity: onUpdateProfile,
           onSave: onSavePersonalProfile,
           onConfirmEmail: onConfirmEmail,
           onDeleteAccount: onDeleteAccount,
@@ -338,6 +359,8 @@ class ProfileScreen extends StatelessWidget {
         builder: (context) => ProfileNotificationsScreen(
           notifications: notifications,
           onMarkRead: onMarkNotificationRead,
+          onMarkAllRead: onMarkAllNotificationsRead,
+          onNotificationTap: onNotificationTap,
         ),
       ),
     );
@@ -457,14 +480,13 @@ class _ProfileActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFF5F5F7),
-      borderRadius: BorderRadius.circular(13),
+      color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(13),
+        borderRadius: BorderRadius.circular(999),
         child: SizedBox(
-          width: 42,
-          height: 42,
+          width: 36,
+          height: 36,
           child: Stack(
             alignment: Alignment.center,
             children: [
@@ -511,27 +533,13 @@ class _ProfileOverviewCard extends StatelessWidget {
     final city = profile.city.trim();
     final rating = profile.rating.toStringAsFixed(1).replaceAll('.', ',');
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF0D0D0F), Color(0xFF26262A)],
-        ),
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x30000000),
-            blurRadius: 26,
-            offset: Offset(0, 12),
-          ),
-        ],
-      ),
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               _ProfileAvatar(
                 avatarUrl: profile.avatarUrl,
@@ -548,51 +556,34 @@ class _ProfileOverviewCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontFamily: 'Montserrat',
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 19,
+                        fontWeight: FontWeight.w800,
                         height: 1.15,
-                        letterSpacing: -0.2,
-                        color: Colors.white,
+                        letterSpacing: -0.35,
+                        color: _profileInk,
                       ),
                     ),
-                    const SizedBox(height: 7),
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 9,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0x17FFFFFF),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              handle,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontFamily: 'Montserrat',
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                                height: 1,
-                                letterSpacing: 0,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
+                    const SizedBox(height: 4),
+                    Text(
+                      handle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                        height: 1.2,
+                        color: Color(0xFF77777E),
+                      ),
                     ),
                     if (city.isNotEmpty) ...[
-                      const SizedBox(height: 7),
+                      const SizedBox(height: 6),
                       Row(
                         children: [
                           const Icon(
                             Icons.location_on_outlined,
-                            size: 13,
-                            color: Color(0xFF9C9CA4),
+                            size: 14,
+                            color: Color(0xFF8B8B91),
                           ),
                           const SizedBox(width: 3),
                           Expanded(
@@ -602,11 +593,10 @@ class _ProfileOverviewCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 fontFamily: 'Montserrat',
-                                fontSize: 11,
+                                fontSize: 11.5,
                                 fontWeight: FontWeight.w500,
                                 height: 1,
-                                letterSpacing: 0,
-                                color: Color(0xFF9C9CA4),
+                                color: Color(0xFF77777E),
                               ),
                             ),
                           ),
@@ -616,24 +606,30 @@ class _ProfileOverviewCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               _ProfileEditButton(onTap: onEditTap),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 17),
+          const Divider(height: 1, thickness: 1, color: Color(0xFFEDEDEF)),
+          const SizedBox(height: 14),
           Row(
             children: [
               Expanded(
-                child: _ProfileStatTile(value: rating, label: 'рейтинг'),
+                child: _ProfileStatTile(
+                  value: rating,
+                  label: 'рейтинг',
+                  onTap: onReviewsTap,
+                ),
               ),
-              const SizedBox(width: 8),
+              const _ProfileStatDivider(),
               Expanded(
                 child: _ProfileStatTile(
                   value: '${profile.salesCount}',
                   label: 'продажи',
                 ),
               ),
-              const SizedBox(width: 8),
+              const _ProfileStatDivider(),
               Expanded(
                 child: _ProfileStatTile(
                   value: '${profile.followersCount}',
@@ -642,30 +638,30 @@ class _ProfileOverviewCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           Material(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
             child: InkWell(
               onTap: onReviewsTap,
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(10),
               child: SizedBox(
-                height: 46,
+                height: 40,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
                   child: Row(
                     children: [
                       const Icon(
                         Icons.star_rounded,
-                        size: 19,
-                        color: _profileInk,
+                        size: 18,
+                        color: Color(0xFFFFB000),
                       ),
                       const SizedBox(width: 7),
                       Text(
                         '$rating  ·  Отзывы',
                         style: TextStyle(
                           fontFamily: 'Montserrat',
-                          fontSize: 13,
+                          fontSize: 12.5,
                           fontWeight: FontWeight.w700,
                           height: 1,
                           letterSpacing: 0,
@@ -684,7 +680,7 @@ class _ProfileOverviewCard extends StatelessWidget {
                             fontWeight: FontWeight.w600,
                             height: 1,
                             letterSpacing: 0,
-                            color: Color(0x99111113),
+                            color: Color(0xFF85858B),
                           ),
                         ),
                       ),
@@ -692,7 +688,7 @@ class _ProfileOverviewCard extends StatelessWidget {
                       const Icon(
                         Icons.chevron_right_rounded,
                         size: 20,
-                        color: _profileInk,
+                        color: Color(0xFF76767C),
                       ),
                     ],
                   ),
@@ -721,95 +717,98 @@ class _ProfileAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 78,
-      height: 78,
-      padding: const EdgeInsets.all(2.5),
-      decoration: const BoxDecoration(
+      width: 74,
+      height: 74,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Colors.white, Color(0xFF55555C)],
-        ),
+        color: const Color(0xFFF0F0F2),
+        border: Border.all(color: const Color(0xFFE4E4E7)),
       ),
-      child: Container(
-        padding: const EdgeInsets.all(2.5),
-        decoration: const BoxDecoration(
-          shape: BoxShape.circle,
-          color: Color(0xFF0D0D0F),
-        ),
-        child: ClipOval(
-          child: ColoredBox(
-            color: const Color(0xFFEEEEF0),
-            child: avatarUrl.trim().isEmpty
-                ? Center(
-                    child: Text(
-                      displayName.characters.first.toUpperCase(),
-                      style: const TextStyle(
-                        fontFamily: 'Montserrat',
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        color: _profileInk,
-                      ),
-                    ),
-                  )
-                : AppImage(
-                    imageUrl: avatarUrl,
-                    width: 68,
-                    height: 68,
-                    fit: BoxFit.cover,
-                  ),
-          ),
-        ),
-      ),
+      child: avatarUrl.trim().isEmpty
+          ? Center(
+              child: Text(
+                displayName.characters.first.toUpperCase(),
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 25,
+                  fontWeight: FontWeight.w700,
+                  color: _profileInk,
+                ),
+              ),
+            )
+          : AppImage(
+              imageUrl: avatarUrl,
+              width: 74,
+              height: 74,
+              fit: BoxFit.cover,
+            ),
+    );
+  }
+}
+
+class _ProfileStatDivider extends StatelessWidget {
+  const _ProfileStatDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 27,
+      child: VerticalDivider(width: 1, thickness: 1, color: Color(0xFFE7E7EA)),
     );
   }
 }
 
 class _ProfileStatTile extends StatelessWidget {
-  const _ProfileStatTile({required this.value, required this.label});
+  const _ProfileStatTile({
+    required this.value,
+    required this.label,
+    this.onTap,
+  });
 
   final String value;
   final String label;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 11),
-      decoration: BoxDecoration(
-        color: const Color(0x14FFFFFF),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        children: [
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontFamily: 'Montserrat',
-              fontSize: 15,
-              fontWeight: FontWeight.w800,
-              height: 1,
-              letterSpacing: 0,
-              color: Colors.white,
-            ),
+    return Semantics(
+      button: onTap != null,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Column(
+            children: [
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  height: 1,
+                  color: _profileInk,
+                ),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w500,
+                  height: 1,
+                  color: Color(0xFF85858B),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 5),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontFamily: 'Montserrat',
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              height: 1,
-              letterSpacing: 0.2,
-              color: Color(0xFF9C9CA4),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -825,16 +824,17 @@ class _ProfileEditButton extends StatelessWidget {
     return Semantics(
       button: true,
       label: 'Редактировать профиль',
-      child: Material(
-        color: const Color(0x1FFFFFFF),
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
-          child: const SizedBox(
-            width: 42,
-            height: 42,
-            child: Icon(Icons.edit_outlined, size: 19, color: Colors.white),
+      child: Tooltip(
+        message: 'Редактировать профиль',
+        child: IconButton(
+          onPressed: onTap,
+          constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+          padding: const EdgeInsets.all(7),
+          splashRadius: 18,
+          icon: const Icon(
+            Icons.edit_outlined,
+            size: 20,
+            color: _profileInk,
           ),
         ),
       ),
@@ -849,6 +849,170 @@ String _profileReviewCountLabel(int count) {
     1 => '$count отзыв покупателя',
     2 || 3 || 4 => '$count отзыва покупателей',
     _ => '$count отзывов покупателей',
+  };
+}
+
+class _ActiveOrdersOverview extends StatelessWidget {
+  const _ActiveOrdersOverview({
+    required this.orders,
+    required this.currentUserId,
+    required this.onTap,
+  });
+
+  final List<AppOrder> orders;
+  final String currentUserId;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = orders.take(2).toList();
+    return Padding(
+      padding: const EdgeInsets.only(top: 18),
+      child: Material(
+        color: const Color(0xFFF5F5F7),
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 13, 12, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Активные заказы',
+                        style: TextStyle(
+                          fontFamily: 'Montserrat',
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: _profileInk,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${orders.length}',
+                      style: const TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF77777D),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 20,
+                      color: Color(0xFF77777D),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                for (var index = 0; index < visible.length; index++) ...[
+                  _ActiveOrderRow(
+                    order: visible[index],
+                    currentUserId: currentUserId,
+                  ),
+                  if (index != visible.length - 1) const SizedBox(height: 10),
+                ],
+                if (orders.length > visible.length) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Ещё ${orders.length - visible.length}',
+                    style: const TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF66666C),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ActiveOrderRow extends StatelessWidget {
+  const _ActiveOrderRow({required this.order, required this.currentUserId});
+
+  final AppOrder order;
+  final String currentUserId;
+
+  @override
+  Widget build(BuildContext context) {
+    final isSeller = order.sellerId == currentUserId;
+    final status = _profileOrderStatus(order.status, isSeller: isSeller);
+    return Row(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: AppImage(
+            imageUrl: order.productImage,
+            width: 46,
+            height: 46,
+            fit: BoxFit.cover,
+            placeholderColor: Colors.white,
+          ),
+        ),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                status,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: _profileInk,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                order.productTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF77777D),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+String _profileOrderStatus(AppOrderStatus status, {required bool isSeller}) {
+  return switch (status) {
+    AppOrderStatus.pendingConfirmation => isSeller
+        ? 'Подтвердите заказ'
+        : 'Ждём подтверждения продавца',
+    AppOrderStatus.pendingShipment => isSeller
+        ? 'Пора отправить заказ'
+        : 'Продавец готовит отправку',
+    AppOrderStatus.inTransit => 'Заказ в пути',
+    AppOrderStatus.deliveredToPickup => 'Можно получать',
+    AppOrderStatus.awaitingPayment => isSeller
+        ? 'Доступна выплата'
+        : 'Ожидается оплата',
+    AppOrderStatus.returning => 'Оформляется возврат',
+    AppOrderStatus.disputed => 'Открыт спор',
+    AppOrderStatus.completed => 'Заказ завершён',
+    AppOrderStatus.canceled => 'Заказ отменён',
   };
 }
 
@@ -1143,15 +1307,8 @@ class _PhotoPreviewSection extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
-                  Container(
-                    height: 22,
-                    constraints: const BoxConstraints(minWidth: 26),
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF2F2F4),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
                     child: Text(
                       count.toString(),
                       style: const TextStyle(

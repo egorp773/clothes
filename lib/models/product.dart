@@ -50,6 +50,8 @@ class Product {
   final List<String> deliveryMethods;
   final String mainImage;
   final DateTime? publishedAt;
+  int viewsCount;
+  int likesCount;
   final String analysisStatus;
   final String normalizedCategory;
   final String normalizedBrand;
@@ -104,6 +106,8 @@ class Product {
     this.deliveryMethods = const [],
     this.mainImage = '',
     this.publishedAt,
+    this.viewsCount = 0,
+    this.likesCount = 0,
     this.analysisStatus = 'pending',
     this.normalizedCategory = '',
     this.normalizedBrand = '',
@@ -180,7 +184,15 @@ class Product {
       shippingAddress: json['shippingAddress'] as String? ?? '',
       deliveryMethods: _strings(json['deliveryMethods']),
       mainImage: json['mainImage'] as String? ?? json['image'] as String? ?? '',
-      publishedAt: DateTime.tryParse(json['publishedAt'] as String? ?? ''),
+      publishedAt: DateTime.tryParse(
+        json['publishedAt'] as String? ?? '',
+      )?.toUtc(),
+      viewsCount: _nonNegativeCount(
+        json['viewsCount'] ?? json['views_count'],
+      ),
+      likesCount: _nonNegativeCount(
+        json['likesCount'] ?? json['likes_count'] ?? json['favorite_count'],
+      ),
       analysisStatus: json['analysisStatus'] as String? ?? 'pending',
       normalizedCategory: json['normalizedCategory'] as String? ?? '',
       normalizedBrand: json['normalizedBrand'] as String? ?? '',
@@ -282,7 +294,15 @@ class Product {
       shippingAddress: json['shipping_address'] as String? ?? '',
       deliveryMethods: _strings(json['delivery_methods']),
       mainImage: image,
-      publishedAt: DateTime.tryParse(json['published_at'] as String? ?? ''),
+      publishedAt: DateTime.tryParse(
+        json['published_at'] as String? ?? '',
+      )?.toUtc(),
+      viewsCount: _nonNegativeCount(
+        json['views_count'] ?? json['viewsCount'],
+      ),
+      likesCount: _nonNegativeCount(
+        json['likes_count'] ?? json['favorite_count'] ?? json['likesCount'],
+      ),
       analysisStatus: json['analysis_status'] as String? ?? 'pending',
       normalizedCategory: normalizedCategory,
       normalizedBrand: normalizedBrand,
@@ -346,7 +366,9 @@ class Product {
     'shippingAddress': shippingAddress,
     'deliveryMethods': deliveryMethods,
     'mainImage': mainImage,
-    'publishedAt': publishedAt?.toIso8601String(),
+    'publishedAt': publishedAt?.toUtc().toIso8601String(),
+    'viewsCount': viewsCount,
+    'likesCount': likesCount,
     'analysisStatus': analysisStatus,
     'normalizedCategory': normalizedCategory,
     'normalizedBrand': normalizedBrand,
@@ -404,7 +426,9 @@ class Product {
       'shipping_address': shippingAddress,
       'delivery_methods': deliveryMethods,
       'main_image': mainImage.isEmpty ? image : mainImage,
-      'published_at': publishedAt?.toIso8601String(),
+      'published_at': publishedAt?.toUtc().toIso8601String(),
+      'views_count': viewsCount,
+      'likes_count': likesCount,
       'analysis_status': analysisStatus,
       'normalized_category': normalizedCategory,
       'normalized_brand': normalizedBrand,
@@ -462,6 +486,8 @@ class Product {
     List<String>? deliveryMethods,
     String? mainImage,
     DateTime? publishedAt,
+    int? viewsCount,
+    int? likesCount,
     String? analysisStatus,
     String? normalizedCategory,
     String? normalizedBrand,
@@ -515,6 +541,8 @@ class Product {
     deliveryMethods: deliveryMethods ?? this.deliveryMethods,
     mainImage: mainImage ?? this.mainImage,
     publishedAt: publishedAt ?? this.publishedAt,
+    viewsCount: viewsCount ?? this.viewsCount,
+    likesCount: likesCount ?? this.likesCount,
     analysisStatus: analysisStatus ?? this.analysisStatus,
     normalizedCategory: normalizedCategory ?? this.normalizedCategory,
     normalizedBrand: normalizedBrand ?? this.normalizedBrand,
@@ -527,6 +555,11 @@ class Product {
 
   static List<String> _strings(Object? value) =>
       (value as List<dynamic>? ?? const []).whereType<String>().toList();
+
+  static int _nonNegativeCount(Object? value) {
+    final count = value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+    return count < 0 ? 0 : count;
+  }
 
   static Map<String, String> _attributeMap(Object? value) {
     final result = <String, String>{};

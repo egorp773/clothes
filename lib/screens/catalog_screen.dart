@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../core/app_typography.dart';
+import '../features/catalog_search/catalog_search_engine.dart';
+import '../features/catalog_search/catalog_search_history.dart';
+import '../features/catalog_search/catalog_search_screen.dart';
 import '../features/chat/chat_actions.dart';
 import '../features/listing_publish/data/listing_catalogs.dart';
 import '../features/visual_search/visual_search_camera_screen.dart';
@@ -31,7 +34,12 @@ class CatalogScreen extends StatefulWidget {
   final void Function(Product product) onProductViewed;
   final DeliveryProfile deliveryProfile;
   final Future<void> Function(DeliveryProfile profile) onSaveDeliveryProfile;
-  final Future<void> Function(Product product) onCreateDeliveryOrder;
+  final Future<AppOrder?> Function(
+    Product product, {
+    required String deliveryService,
+    required int deliveryPrice,
+  })
+  onCreateDeliveryOrder;
   final Future<List<SellerReview>> Function(String sellerId) onLoadReviews;
   final Future<void> Function({
     required String sellerId,
@@ -86,8 +94,10 @@ class _CatalogScreenState extends State<CatalogScreen>
   final ScrollController _scrollController = ScrollController();
   bool _showFloatingSearch = false;
   double _lastScrollOffset = 0;
-  String _searchQuery = '';
   final _filters = _CatalogFilters();
+  final _searchHistory = CatalogSearchHistory();
+  late CatalogSearchIndex _searchIndex;
+  late int _indexedProductCount;
 
   final List<String> _tabs = [
     'Новинки',
@@ -130,27 +140,25 @@ class _CatalogScreenState extends State<CatalogScreen>
         .where((product) => !product.isHidden)
         .where(_matchesSelectedTab)
         .where(_matchesHardFilters)
-        .where(_matchesSearch)
         .toList();
+    products.sort(_compareSelectedSort);
+    return products;
+  }
+
+  int _compareSelectedSort(Product a, Product b) {
     switch (_selectedSort) {
       case 'Сначала дешёвые':
-        products.sort((a, b) => a.priceValue.compareTo(b.priceValue));
-        break;
+        return a.priceValue.compareTo(b.priceValue);
       case 'Сначала дорогие':
-        products.sort((a, b) => b.priceValue.compareTo(a.priceValue));
-        break;
+        return b.priceValue.compareTo(a.priceValue);
       case 'Сначала новые':
-        products.sort((a, b) => b.id.compareTo(a.id));
-        break;
+        return b.id.compareTo(a.id);
       case 'Популярные':
-        products.sort((a, b) => a.title.compareTo(b.title));
-        break;
+        return a.title.compareTo(b.title);
       case 'По рекомендациям':
       default:
-        products.sort((a, b) => _softScore(b).compareTo(_softScore(a)));
-        break;
+        return _softScore(b).compareTo(_softScore(a));
     }
-    return products;
   }
 
   bool _matchesHardFilters(Product product) {
@@ -198,23 +206,6 @@ class _CatalogScreenState extends State<CatalogScreen>
       return false;
     }
     return true;
-  }
-
-  bool _matchesSearch(Product product) {
-    final query = _normalizedText(_searchQuery);
-    if (query.isEmpty) return true;
-    final categoryName = ListingCatalogs.categoryName(
-      product.normalizedCategory,
-      fallback: product.category,
-    );
-    return <String>[
-      product.title,
-      product.description,
-      product.brand,
-      product.normalizedBrand,
-      product.normalizedCategory,
-      categoryName,
-    ].any((value) => _normalizedText(value).contains(query));
   }
 
   bool _matchesSelectedTab(Product product) {
@@ -290,7 +281,19 @@ class _CatalogScreenState extends State<CatalogScreen>
   @override
   void initState() {
     super.initState();
+    _searchIndex = CatalogSearchIndex(widget.products);
+    _indexedProductCount = widget.products.length;
     _scrollController.addListener(_handleScroll);
+  }
+
+  @override
+  void didUpdateWidget(covariant CatalogScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.products, widget.products) ||
+        _indexedProductCount != widget.products.length) {
+      _searchIndex = CatalogSearchIndex(widget.products);
+      _indexedProductCount = widget.products.length;
+    }
   }
 
   @override
@@ -422,9 +425,7 @@ class _CatalogScreenState extends State<CatalogScreen>
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        _searchQuery.isEmpty
-                            ? 'Найти вещь или бренд'
-                            : _searchQuery,
+                        'Найти вещь или бренд',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -622,6 +623,7 @@ class _CatalogScreenState extends State<CatalogScreen>
           catalogProducts: widget.products,
           onProductTap: _showProductDetails,
           onToggleLike: widget.onToggleLike,
+          onProductMenu: _showProductMenu,
           onShareProduct: widget.onShareProduct,
         ),
       ),
@@ -720,7 +722,13 @@ class _CatalogScreenState extends State<CatalogScreen>
             onRelatedProductTap: _showProductDetails,
             deliveryProfile: widget.deliveryProfile,
             onSaveDeliveryProfile: widget.onSaveDeliveryProfile,
-            onCreateDeliveryOrder: () => widget.onCreateDeliveryOrder(product),
+            onCreateDeliveryOrder:
+                ({required deliveryService, required deliveryPrice}) =>
+                    widget.onCreateDeliveryOrder(
+                      product,
+                      deliveryService: deliveryService,
+                      deliveryPrice: deliveryPrice,
+                    ),
             onContactSeller: () async {
               final navigator = Navigator.of(context, rootNavigator: true);
               final thread = await widget.onContactSeller(product);
@@ -789,15 +797,20 @@ class _CatalogScreenState extends State<CatalogScreen>
     );
   }
 
-  Future<void> _showTextSearch() async {
-    final query = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _CatalogSearchSheet(initialQuery: _searchQuery),
+  void _showTextSearch() {
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute<void>(
+        builder: (context) => CatalogSearchScreen(
+          products: widget.products,
+          index: _searchIndex,
+          history: _searchHistory,
+          onProductTap: _showProductDetails,
+          onToggleLike: widget.onToggleLike,
+          onProductMenu: _showProductMenu,
+          onShareProduct: widget.onShareProduct,
+        ),
+      ),
     );
-    if (!mounted || query == null) return;
-    setState(() => _searchQuery = query.trim());
   }
 
   void _showFilterSheet() {
@@ -991,7 +1004,12 @@ class _CatalogScreenState extends State<CatalogScreen>
           ),
           deliveryProfile: widget.deliveryProfile,
           onSaveProfile: widget.onSaveDeliveryProfile,
-          onSubmitOrder: () => widget.onCreateDeliveryOrder(product),
+          onSubmitOrder: ({required deliveryService, required deliveryPrice}) =>
+              widget.onCreateDeliveryOrder(
+                product,
+                deliveryService: deliveryService,
+                deliveryPrice: deliveryPrice,
+              ),
         ),
       ),
     );
@@ -1501,77 +1519,6 @@ class _CatalogFilters {
   void clear() => replaceWith(_CatalogFilters());
 }
 
-class _CatalogSearchSheet extends StatefulWidget {
-  const _CatalogSearchSheet({required this.initialQuery});
-
-  final String initialQuery;
-
-  @override
-  State<_CatalogSearchSheet> createState() => _CatalogSearchSheetState();
-}
-
-class _CatalogSearchSheetState extends State<_CatalogSearchSheet> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.initialQuery,
-  );
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _submit() => Navigator.pop(context, _controller.text.trim());
-
-  @override
-  Widget build(BuildContext context) => AnimatedPadding(
-    duration: const Duration(milliseconds: 180),
-    padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-    child: Container(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _controller,
-                autofocus: true,
-                textInputAction: TextInputAction.search,
-                onSubmitted: (_) => _submit(),
-                decoration: InputDecoration(
-                  hintText: 'Название, категория или бренд',
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  suffixIcon: IconButton(
-                    tooltip: 'Очистить',
-                    onPressed: () {
-                      _controller.clear();
-                      setState(() {});
-                    },
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                  filled: true,
-                  fillColor: const Color(0xFFF2F2F3),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            TextButton(onPressed: _submit, child: const Text('Найти')),
-          ],
-        ),
-      ),
-    ),
-  );
-}
-
 class _CatalogFilterSheet extends StatefulWidget {
   const _CatalogFilterSheet({
     required this.initial,
@@ -1627,100 +1574,189 @@ class _CatalogFilterSheetState extends State<_CatalogFilterSheet> {
     return values.map((value) => CatalogOption(value, value)).toList();
   }
 
+  String _optionName(
+    String value,
+    List<CatalogOption> options, {
+    required String emptyLabel,
+  }) {
+    if (value.isEmpty) return emptyLabel;
+    for (final option in options) {
+      if (option.id == value) return option.name;
+    }
+    return value;
+  }
+
+  Future<void> _selectOption({
+    required String title,
+    required String current,
+    required List<CatalogOption> options,
+    required ValueChanged<String> onSelected,
+    String emptyLabel = 'Любой',
+  }) async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.28),
+      builder: (context) => _AppActionSheet(
+        title: title,
+        child: Column(
+          children: [
+            _SheetOption(
+              label: emptyLabel,
+              isSelected: current.isEmpty,
+              onTap: () => Navigator.pop(context, ''),
+            ),
+            for (final option in options)
+              _SheetOption(
+                label: option.name,
+                isSelected: current == option.id,
+                onTap: () => Navigator.pop(context, option.id),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    setState(() => onSelected(selected));
+  }
+
+  Future<void> _editPrice() async {
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withValues(alpha: 0.28),
+      builder: (context) => AnimatedPadding(
+        duration: const Duration(milliseconds: 180),
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: _AppActionSheet(
+          title: 'Цена',
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _PriceField(label: 'От', controller: _minPrice),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _PriceField(label: 'До', controller: _maxPrice),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: _SheetButton(
+                      label: 'Очистить',
+                      isPrimary: false,
+                      onTap: () {
+                        _minPrice.clear();
+                        _maxPrice.clear();
+                        Navigator.pop(context, true);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _SheetButton(
+                      label: 'Готово',
+                      isPrimary: true,
+                      onTap: () => Navigator.pop(context, true),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || applied != true) return;
+    setState(() {});
+  }
+
+  String get _priceLabel {
+    final min = int.tryParse(_minPrice.text);
+    final max = int.tryParse(_maxPrice.text);
+    if (min == null && max == null) return 'Любая';
+    if (min != null && max != null) return '$min–$max ₽';
+    if (min != null) return 'от $min ₽';
+    return 'до $max ₽';
+  }
+
   @override
   Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Text(
-        'Точные параметры',
-        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+      _CompactFilterRow(
+        title: 'Категория',
+        value: _optionName(
+          _value.category,
+          ListingCatalogs.finalCategories,
+          emptyLabel: 'Все',
+        ),
+        onTap: () => _selectOption(
+          title: 'Категория',
+          current: _value.category,
+          options: ListingCatalogs.finalCategories,
+          emptyLabel: 'Все',
+          onSelected: (value) => _value.category = value,
+        ),
       ),
-      _FilterDropdown(
-        label: 'Категория',
-        value: _value.category,
-        options: ListingCatalogs.finalCategories,
-        onChanged: (value) => setState(() => _value.category = value),
+      _CompactFilterRow(
+        title: 'Размер',
+        value: _optionName(_value.size, _sizes, emptyLabel: 'Любой'),
+        onTap: () => _selectOption(
+          title: 'Размер',
+          current: _value.size,
+          options: _sizes,
+          onSelected: (value) => _value.size = value,
+        ),
       ),
-      _FilterDropdown(
-        label: 'Размер',
-        value: _value.size,
-        options: _sizes,
-        onChanged: (value) => setState(() => _value.size = value),
+      _CompactFilterRow(title: 'Цена', value: _priceLabel, onTap: _editPrice),
+      _CompactFilterRow(
+        title: 'Бренд',
+        value: _optionName(_value.brand, _brands, emptyLabel: 'Все'),
+        onTap: () => _selectOption(
+          title: 'Бренд',
+          current: _value.brand,
+          options: _brands,
+          emptyLabel: 'Все',
+          onSelected: (value) => _value.brand = value,
+        ),
       ),
-      Row(
-        children: [
-          Expanded(
-            child: _PriceField(label: 'Цена от', controller: _minPrice),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _PriceField(label: 'Цена до', controller: _maxPrice),
-          ),
-        ],
+      _CompactFilterRow(
+        title: 'Цвет',
+        value: _optionName(
+          _value.color,
+          ListingCatalogs.colors,
+          emptyLabel: 'Любой',
+        ),
+        onTap: () => _selectOption(
+          title: 'Цвет',
+          current: _value.color,
+          options: ListingCatalogs.colors,
+          onSelected: (value) => _value.color = value,
+        ),
       ),
-      _FilterDropdown(
-        label: 'Бренд',
-        value: _value.brand,
-        options: _brands,
-        onChanged: (value) => setState(() => _value.brand = value),
-      ),
-      _FilterDropdown(
-        label: 'Состояние',
-        value: _value.condition,
-        options: ListingCatalogs.conditions,
-        onChanged: (value) => setState(() => _value.condition = value),
-      ),
-      _FilterDropdown(
-        label: 'Аудитория',
-        value: _value.audience,
-        options: ListingCatalogs.genders,
-        onChanged: (value) => setState(() => _value.audience = value),
-      ),
-      _FilterDropdown(
-        label: 'Доставка',
-        value: _value.delivery,
-        options: ListingCatalogs.deliveryMethods,
-        onChanged: (value) => setState(() => _value.delivery = value),
-      ),
-      const SizedBox(height: 22),
-      const Text(
-        'Учитывать при ранжировании',
-        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-      ),
-      const SizedBox(height: 4),
-      const Text(
-        'Эти параметры поднимают подходящие вещи выше, но не скрывают остальные.',
-        style: TextStyle(fontSize: 11.5, color: Color(0xFF8F8F94)),
-      ),
-      _FilterDropdown(
-        label: 'Цвет',
-        value: _value.color,
-        options: ListingCatalogs.colors,
-        onChanged: (value) => setState(() => _value.color = value),
-      ),
-      _FilterDropdown(
-        label: 'Материал',
-        value: _value.material,
-        options: ListingCatalogs.materials,
-        onChanged: (value) => setState(() => _value.material = value),
-      ),
-      _FilterDropdown(
-        label: 'Рисунок',
-        value: _value.pattern,
-        options: ListingCatalogs.patterns,
-        onChanged: (value) => setState(() => _value.pattern = value),
-      ),
-      _FilterDropdown(
-        label: 'Крой',
-        value: _value.fit,
-        options: ListingCatalogs.fits,
-        onChanged: (value) => setState(() => _value.fit = value),
-      ),
-      _FilterDropdown(
-        label: 'Стиль',
-        value: _value.style,
-        options: ListingCatalogs.styles,
-        onChanged: (value) => setState(() => _value.style = value),
+      _CompactFilterRow(
+        title: 'Состояние',
+        value: _optionName(
+          _value.condition,
+          ListingCatalogs.conditions,
+          emptyLabel: 'Любое',
+        ),
+        onTap: () => _selectOption(
+          title: 'Состояние',
+          current: _value.condition,
+          options: ListingCatalogs.conditions,
+          emptyLabel: 'Любое',
+          onSelected: (value) => _value.condition = value,
+        ),
       ),
       const SizedBox(height: 20),
       Row(
@@ -1738,9 +1774,24 @@ class _CatalogFilterSheetState extends State<_CatalogFilterSheet> {
               label: 'Применить',
               isPrimary: true,
               onTap: () {
+                var minPrice = int.tryParse(_minPrice.text);
+                var maxPrice = int.tryParse(_maxPrice.text);
+                if (minPrice != null &&
+                    maxPrice != null &&
+                    minPrice > maxPrice) {
+                  final swap = minPrice;
+                  minPrice = maxPrice;
+                  maxPrice = swap;
+                }
                 _value
-                  ..minPrice = int.tryParse(_minPrice.text)
-                  ..maxPrice = int.tryParse(_maxPrice.text);
+                  ..minPrice = minPrice
+                  ..maxPrice = maxPrice
+                  ..audience = ''
+                  ..delivery = ''
+                  ..material = ''
+                  ..pattern = ''
+                  ..fit = ''
+                  ..style = '';
                 widget.onApply(_value);
               },
             ),
@@ -1751,34 +1802,50 @@ class _CatalogFilterSheetState extends State<_CatalogFilterSheet> {
   );
 }
 
-class _FilterDropdown extends StatelessWidget {
-  const _FilterDropdown({
-    required this.label,
+class _CompactFilterRow extends StatelessWidget {
+  const _CompactFilterRow({
+    required this.title,
     required this.value,
-    required this.options,
-    required this.onChanged,
+    required this.onTap,
   });
 
-  final String label;
+  final String title;
   final String value;
-  final List<CatalogOption> options;
-  final ValueChanged<String> onChanged;
+  final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => DropdownButtonFormField<String>(
-    initialValue: value,
-    isExpanded: true,
-    decoration: InputDecoration(labelText: label),
-    items: [
-      const DropdownMenuItem(value: '', child: Text('Любой')),
-      ...options.map(
-        (option) => DropdownMenuItem(
-          value: option.id,
-          child: Text(option.name, overflow: TextOverflow.ellipsis),
-        ),
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    child: Container(
+      height: 52,
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFFE7E7EA))),
       ),
-    ],
-    onChanged: (selected) => onChanged(selected ?? ''),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(
+                fontSize: 14.5,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF0B0B0B),
+              ),
+            ),
+          ),
+          Flexible(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13.5, color: Color(0xFF8F8F94)),
+            ),
+          ),
+          const SizedBox(width: 6),
+          const Icon(Icons.chevron_right, size: 17, color: Color(0xFFC7C7CC)),
+        ],
+      ),
+    ),
   );
 }
 

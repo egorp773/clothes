@@ -19,14 +19,19 @@ class OutfitsScreen extends StatefulWidget {
   final VoidCallback onCreateTap;
   final Future<void> Function(String productId) onToggleProductLike;
   final Future<void> Function(String outfitId) onToggleOutfitLike;
-  final Future<void> Function(String productId) onProductViewed;
-  final Future<void> Function(String outfitId) onOutfitViewed;
+  final Future<int> Function(String productId) onProductViewed;
+  final Future<int> Function(String outfitId) onOutfitViewed;
   final Future<void> Function(Product product, {bool imageOnly})
   onContactSeller;
   final ValueChanged<Product> onOpenSellerProfile;
   final DeliveryProfile deliveryProfile;
   final Future<void> Function(DeliveryProfile profile) onSaveDeliveryProfile;
-  final Future<void> Function(Product product) onCreateDeliveryOrder;
+  final Future<AppOrder?> Function(
+    Product product, {
+    required String deliveryService,
+    required int deliveryPrice,
+  })
+  onCreateDeliveryOrder;
 
   const OutfitsScreen({
     super.key,
@@ -289,6 +294,7 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
         reverseTransitionDuration: const Duration(milliseconds: 350),
         pageBuilder: (context, animation, secondaryAnimation) {
           return ProductScreen(
+            sourceProduct: source,
             product: ProductDetailData(
               id:
                   source?.id ??
@@ -317,6 +323,9 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
               shippingAddress: source?.shippingAddress ?? '',
               isLiked: source?.isLiked ?? product.isLiked,
               canPurchase: canPurchase,
+              publishedAt: source?.publishedAt,
+              viewsCount: source?.viewsCount ?? 0,
+              likesCount: source?.likesCount ?? 0,
             ),
             onLike: product.id.isEmpty || !canPurchase
                 ? () {}
@@ -336,8 +345,14 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
             deliveryProfile: widget.deliveryProfile,
             onSaveDeliveryProfile: widget.onSaveDeliveryProfile,
             onCreateDeliveryOrder: source == null
-                ? () async {}
-                : () => widget.onCreateDeliveryOrder(source),
+                ? ({required deliveryService, required deliveryPrice}) async =>
+                      null
+                : ({required deliveryService, required deliveryPrice}) =>
+                      widget.onCreateDeliveryOrder(
+                        source,
+                        deliveryService: deliveryService,
+                        deliveryPrice: deliveryPrice,
+                      ),
             onContactSeller: source == null
                 ? () {}
                 : () => widget.onContactSeller(source),
@@ -425,7 +440,14 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
   }
 
   void _showOutfitDetails(CreatedOutfit outfit) {
-    widget.onOutfitViewed(outfit.id);
+    late final Future<int> viewsCountFuture;
+    try {
+      viewsCountFuture = widget
+          .onOutfitViewed(outfit.id)
+          .catchError((Object _) => outfit.viewsCount);
+    } catch (_) {
+      viewsCountFuture = Future<int>.value(outfit.viewsCount);
+    }
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
         builder: (context) => _OutfitDetailScreen(
@@ -436,6 +458,9 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
           authorHandle: outfit.authorHandle,
           isLiked: outfit.isLiked,
           likesCount: outfit.likesCount,
+          initialViewsCount: outfit.viewsCount,
+          viewsCountFuture: viewsCountFuture,
+          publishedAt: outfit.publishedAt,
           products: _outfitProducts(outfit),
           moreOutfits: _relatedOutfits(outfit),
           onLikeTap: () => widget.onToggleOutfitLike(outfit.id),
@@ -458,6 +483,9 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
           authorHandle: '@lilyachty',
           isLiked: _isLiked,
           likesCount: _likesCount,
+          initialViewsCount: 0,
+          viewsCountFuture: Future<int>.value(0),
+          publishedAt: null,
           products: const [],
           moreOutfits: const [],
           onLikeTap: () async => _toggleLike(),
@@ -535,7 +563,6 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                   onProductTap: _showProductDetails,
                   onOutfitTap: () => _showOutfitDetails(outfit),
                   onLikeTap: () => widget.onToggleOutfitLike(outfit.id),
-                  onViewed: () => widget.onOutfitViewed(outfit.id),
                 ),
               ),
             ),
@@ -596,13 +623,14 @@ class _Header extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              'Образы',
-              style: TextStyle(
+              'образы',
+              style: const TextStyle(
+                fontFamily: 'Montserrat',
                 fontSize: 22,
-                fontWeight: FontWeight.w500,
-                letterSpacing: -0.35,
+                fontWeight: FontWeight.w800,
                 height: 1,
-                color: const Color(0xFF070707),
+                letterSpacing: -0.4,
+                color: Color(0xFF070707),
               ),
             ),
           ),
@@ -634,6 +662,9 @@ class _OutfitDetailScreen extends StatefulWidget {
     required this.authorHandle,
     required this.isLiked,
     required this.likesCount,
+    required this.initialViewsCount,
+    required this.viewsCountFuture,
+    required this.publishedAt,
     required this.products,
     required this.moreOutfits,
     required this.onLikeTap,
@@ -649,6 +680,9 @@ class _OutfitDetailScreen extends StatefulWidget {
   final String authorHandle;
   final bool isLiked;
   final int likesCount;
+  final int initialViewsCount;
+  final Future<int> viewsCountFuture;
+  final DateTime? publishedAt;
   final List<_OutfitProduct> products;
   final List<CreatedOutfit> moreOutfits;
   final Future<void> Function() onLikeTap;
@@ -665,6 +699,8 @@ class _OutfitDetailScreenState extends State<_OutfitDetailScreen> {
   bool _showCollapsedHeader = false;
   late bool _isLiked;
   late int _likesCount;
+  late int _viewsCount;
+  int _viewsFutureGeneration = 0;
 
   static const _heroImageHeight = 560.0;
   static const _heroSectionHeight = 598.0;
@@ -721,11 +757,40 @@ class _OutfitDetailScreenState extends State<_OutfitDetailScreen> {
     super.initState();
     _isLiked = widget.isLiked;
     _likesCount = widget.likesCount;
+    _viewsCount = widget.initialViewsCount;
     if (_isLiked && _likesCount == 0) {
       _likesCount = 1;
     }
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _scrollController.addListener(_handleScroll);
+    _watchViewsCount(widget.viewsCountFuture);
+  }
+
+  @override
+  void didUpdateWidget(covariant _OutfitDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialViewsCount > _viewsCount) {
+      _viewsCount = widget.initialViewsCount;
+    }
+    if (!identical(oldWidget.viewsCountFuture, widget.viewsCountFuture)) {
+      _watchViewsCount(widget.viewsCountFuture);
+    }
+  }
+
+  void _watchViewsCount(Future<int> future) {
+    final generation = ++_viewsFutureGeneration;
+    _applyViewsCount(future, generation);
+  }
+
+  Future<void> _applyViewsCount(Future<int> future, int generation) async {
+    try {
+      final resolved = await future;
+      if (!mounted || generation != _viewsFutureGeneration) return;
+      if (resolved <= _viewsCount) return;
+      setState(() => _viewsCount = resolved);
+    } catch (_) {
+      // Keep the initial/optimistic value when recording a view fails.
+    }
   }
 
   Future<void> _toggleLike() async {
@@ -815,6 +880,10 @@ class _OutfitDetailScreenState extends State<_OutfitDetailScreen> {
                   onProductTap: widget.onProductTap,
                 ),
                 _TotalSection(total: _totalText(_products)),
+                _OutfitPublicationMeta(
+                  publishedAt: widget.publishedAt,
+                  viewsCount: _viewsCount,
+                ),
                 _MoreOutfitsSection(
                   authorName: _authorName,
                   outfits: widget.moreOutfits,
@@ -1431,6 +1500,89 @@ class _TotalSection extends StatelessWidget {
   }
 }
 
+class _OutfitPublicationMeta extends StatelessWidget {
+  const _OutfitPublicationMeta({
+    required this.publishedAt,
+    required this.viewsCount,
+    this.horizontalPadding = 24,
+  });
+
+  final DateTime? publishedAt;
+  final int viewsCount;
+  final double horizontalPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(
+        horizontalPadding,
+        13,
+        horizontalPadding,
+        15,
+      ),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0xFFE8E8EA))),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              _outfitPublicationLabel(publishedAt),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontFamily: 'Montserrat',
+                fontSize: 11.5,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF8A8A8F),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Icon(
+            Icons.visibility_outlined,
+            size: 16,
+            color: Color(0xFF8A8A8F),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            '$viewsCount',
+            style: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF6F6F73),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _outfitPublicationLabel(DateTime? value) {
+  if (value == null) return 'Дата публикации не указана';
+  final local = value.toLocal();
+  const months = [
+    'янв',
+    'фев',
+    'мар',
+    'апр',
+    'мая',
+    'июн',
+    'июл',
+    'авг',
+    'сен',
+    'окт',
+    'ноя',
+    'дек',
+  ];
+  final hour = local.hour.toString().padLeft(2, '0');
+  final minute = local.minute.toString().padLeft(2, '0');
+  final year = local.year == DateTime.now().year ? '' : ' ${local.year}';
+  return 'Опубликовано ${local.day} ${months[local.month - 1]}$year, $hour:$minute';
+}
+
 class _MoreOutfitsSection extends StatelessWidget {
   const _MoreOutfitsSection({
     required this.authorName,
@@ -1561,7 +1713,6 @@ class _PublishedOutfitCard extends StatefulWidget {
     required this.onProductTap,
     required this.onOutfitTap,
     required this.onLikeTap,
-    required this.onViewed,
   });
 
   final double scale;
@@ -1571,7 +1722,6 @@ class _PublishedOutfitCard extends StatefulWidget {
   final void Function(_OutfitProduct) onProductTap;
   final VoidCallback onOutfitTap;
   final VoidCallback onLikeTap;
-  final VoidCallback onViewed;
 
   @override
   State<_PublishedOutfitCard> createState() => _PublishedOutfitCardState();
@@ -1588,7 +1738,6 @@ class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
   void initState() {
     super.initState();
     _pageController = PageController();
-    WidgetsBinding.instance.addPostFrameCallback((_) => widget.onViewed());
   }
 
   @override
@@ -1618,6 +1767,7 @@ class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
           Column(
             children: [
               GestureDetector(
+                key: ValueKey<String>('outfit-card-${widget.outfit.id}'),
                 behavior: HitTestBehavior.opaque,
                 onTap: widget.onOutfitTap,
                 child: _HeroMedia(
@@ -1651,6 +1801,11 @@ class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
                   );
                 }).toList(),
                 onProductTap: widget.onProductTap,
+              ),
+              _OutfitPublicationMeta(
+                publishedAt: widget.outfit.publishedAt,
+                viewsCount: widget.outfit.viewsCount,
+                horizontalPadding: 16 * widget.scale,
               ),
             ],
           ),

@@ -241,7 +241,7 @@ class ChatMessage {
     return {
       'id': id,
       'text': text,
-      'createdAt': createdAt.toIso8601String(),
+      'createdAt': createdAt.toUtc().toIso8601String(),
       'isMine': isMine,
       'senderId': senderId,
       'senderName': senderName,
@@ -255,8 +255,9 @@ class ChatMessage {
           'text': replyToText,
           'sender_name': replyToSenderName,
         },
-      if (editedAt != null) 'editedAt': editedAt!.toIso8601String(),
-      if (deletedAt != null) 'deletedAt': deletedAt!.toIso8601String(),
+      if (editedAt != null) 'editedAt': editedAt!.toUtc().toIso8601String(),
+      if (deletedAt != null)
+        'deletedAt': deletedAt!.toUtc().toIso8601String(),
       'readBy': readBy,
       'reactions': reactions,
       'isPending': isPending,
@@ -268,7 +269,7 @@ class ChatMessage {
     return {
       'id': id,
       'text': text,
-      'created_at': createdAt.toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
       'sender_id': senderId,
       'sender_name': senderName,
       'sender_avatar': senderAvatar,
@@ -281,8 +282,10 @@ class ChatMessage {
           'text': replyToText,
           'sender_name': replyToSenderName,
         },
-      if (editedAt != null) 'edited_at': editedAt!.toIso8601String(),
-      if (deletedAt != null) 'deleted_at': deletedAt!.toIso8601String(),
+      if (editedAt != null)
+        'edited_at': editedAt!.toUtc().toIso8601String(),
+      if (deletedAt != null)
+        'deleted_at': deletedAt!.toUtc().toIso8601String(),
       'read_by': readBy,
       'reactions': reactions,
     };
@@ -654,7 +657,7 @@ class MessageThread {
       'buyerName': buyerName,
       'productTitle': productTitle,
       'lastMessage': lastMessage,
-      'updatedAt': updatedAt.toIso8601String(),
+      'updatedAt': updatedAt.toUtc().toIso8601String(),
       'productId': productId,
       'productImage': productImage,
       'buyerId': buyerId,
@@ -674,7 +677,8 @@ class MessageThread {
       'isMuted': isMuted,
       'isArchived': isArchived,
       'draft': draft,
-      if (lastReadAt != null) 'lastReadAt': lastReadAt!.toIso8601String(),
+      if (lastReadAt != null)
+        'lastReadAt': lastReadAt!.toUtc().toIso8601String(),
     };
   }
 
@@ -693,7 +697,7 @@ class MessageThread {
       'buyer_avatar': buyerAvatar,
       'seller_avatar': sellerAvatar,
       'last_message': lastMessage,
-      'updated_at': updatedAt.toIso8601String(),
+      'updated_at': updatedAt.toUtc().toIso8601String(),
       'unread_count': unreadCount,
       'messages': messages.map((message) => message.toSupabaseJson()).toList(),
       'is_group': isGroup,
@@ -706,7 +710,8 @@ class MessageThread {
       'is_muted': isMuted,
       'is_archived': isArchived,
       'draft': draft,
-      if (lastReadAt != null) 'last_read_at': lastReadAt!.toIso8601String(),
+      if (lastReadAt != null)
+        'last_read_at': lastReadAt!.toUtc().toIso8601String(),
     };
   }
 }

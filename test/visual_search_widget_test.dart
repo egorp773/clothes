@@ -57,6 +57,39 @@ void main() {
     expect(size, const Size(320, 640));
   });
 
+  test('resolves only known IDs to complete current catalog products', () {
+    final catalogProduct = _catalogProduct(
+      id: 'known-product',
+      title: 'Полная карточка',
+      image: 'assets/products/catalog-photo.png',
+      sellerName: 'Продавец из каталога',
+    );
+    final sparseKnown = Product.fromSupabase({
+      'product_id': 'known-product',
+      'id': 'known-product',
+      'title': 'Неполный ответ API',
+      'price': 1,
+      'matched_image_url': 'https://example.test/wrong-match.jpg',
+    });
+    final sparseUnknown = Product.fromSupabase({
+      'product_id': 'unknown-product',
+      'id': 'unknown-product',
+      'title': 'Неизвестный товар',
+      'price': 1,
+      'matched_image_url': 'https://example.test/unknown.jpg',
+    });
+
+    final resolved = resolveVisualSearchCatalogProducts(
+      searchProducts: [sparseUnknown, sparseKnown, sparseKnown],
+      catalogProducts: [catalogProduct],
+    );
+
+    expect(resolved, hasLength(1));
+    expect(resolved.single, same(catalogProduct));
+    expect(resolved.single.image, 'assets/products/catalog-photo.png');
+    expect(resolved.single.sellerName, 'Продавец из каталога');
+  });
+
   testWidgets('photo selection keeps the original design and is manual-only', (
     tester,
   ) async {
@@ -141,6 +174,9 @@ void main() {
         home: VisualSearchScreen(
           initialImage: image,
           service: _FakeVisualSearchService(),
+          catalogProducts: [
+            _catalogProduct(id: 'product', title: 'Тестовое худи'),
+          ],
           onProductTap: (_) {},
           onToggleLike: (_) async {},
         ),
@@ -182,7 +218,7 @@ void main() {
       MaterialApp(
         home: VisualSearchScreen(
           initialImage: image,
-          service: _FakeVisualSearchService(),
+          service: _FakeVisualSearchService(includeUnknown: true),
           catalogProducts: [catalogProduct],
           onProductTap: (product) => openedProduct = product,
           onToggleLike: (_) async {},
@@ -192,11 +228,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Complete catalog product'), findsOneWidget);
+    expect(find.text('Неизвестный результат API'), findsNothing);
+    expect(find.text('1 похожий товар'), findsOneWidget);
 
     await tester.tap(find.text('Complete catalog product'));
     expect(openedProduct, same(catalogProduct));
     expect(openedProduct?.sellerName, 'Catalog seller');
     expect(openedProduct?.ownerId, 'seller-42');
+    expect(openedProduct?.image, 'assets/products/try_photo.png');
   });
 
   testWidgets('shows empty state when relevance filtering returns no items', (
@@ -243,6 +282,9 @@ void main() {
         home: VisualSearchScreen(
           initialImage: image,
           service: _FakeVisualSearchService(similarOnly: true),
+          catalogProducts: [
+            _catalogProduct(id: 'similar-product', title: 'Тестовое худи'),
+          ],
           onProductTap: (_) {},
           onToggleLike: (_) async {},
         ),
@@ -260,15 +302,19 @@ void main() {
 }
 
 class _FakeVisualSearchService extends VisualSearchService {
-  _FakeVisualSearchService({this.empty = false, this.similarOnly = false})
-    : super(
-        baseUrl: 'https://example.test',
-        client: MockClient((_) async => throw UnimplementedError()),
-        accessTokenProvider: () => 'token',
-      );
+  _FakeVisualSearchService({
+    this.empty = false,
+    this.similarOnly = false,
+    this.includeUnknown = false,
+  }) : super(
+         baseUrl: 'https://example.test',
+         client: MockClient((_) async => throw UnimplementedError()),
+         accessTokenProvider: () => 'token',
+       );
 
   final bool empty;
   final bool similarOnly;
+  final bool includeUnknown;
 
   @override
   Future<VisualSearchResult> search(
@@ -287,6 +333,14 @@ class _FakeVisualSearchService extends VisualSearchService {
               'images': <String>[],
               'category': 'clothing',
             }),
+            if (includeUnknown)
+              Product.fromSupabase({
+                'id': 'unknown-product',
+                'title': 'Неизвестный результат API',
+                'price': 10,
+                'main_image': 'https://example.test/wrong-match.jpg',
+                'category': 'clothing',
+              }),
           ],
     similarProducts: similarOnly
         ? [
@@ -315,3 +369,22 @@ class _FakeVisualSearchService extends VisualSearchService {
   @override
   void close() {}
 }
+
+Product _catalogProduct({
+  required String id,
+  required String title,
+  String image = 'assets/products/try_photo.png',
+  String sellerName = 'Каталожный продавец',
+}) => Product.fromSupabase({
+  'id': id,
+  'title': title,
+  'description': 'Полное описание товара',
+  'price': 3500,
+  'main_image': image,
+  'images': <String>[image],
+  'category': 'clothing',
+  'seller_id': 'seller-$id',
+  'seller_name': sellerName,
+  'seller_handle': '@catalog_seller',
+  'location': 'Москва',
+});

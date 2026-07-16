@@ -45,7 +45,9 @@ void main() {
             onRelatedProductTap: (_) {},
             deliveryProfile: const DeliveryProfile(),
             onSaveDeliveryProfile: (_) async {},
-            onCreateDeliveryOrder: () async {},
+            onCreateDeliveryOrder:
+                ({required deliveryService, required deliveryPrice}) async =>
+                    null,
             isPreview: true,
           ),
         ),

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -55,6 +57,10 @@ class Settings(BaseSettings):
     visual_search_cache_ttl_seconds: int = 900
     visual_search_rate_limit: int = 20
     visual_search_rate_window_seconds: int = 60
+    # Query fusion is foreground-first. Environment overrides are normalized
+    # below so deployments cannot accidentally change the score scale.
+    visual_search_foreground_weight: float = 0.97
+    visual_search_context_weight: float = 0.03
     # FashionSigLIP probabilities are over fine-grained item types.  A value
     # around 0.15 is common for ambiguous outfits and must not be treated as a
     # hard broad-category decision.
@@ -176,6 +182,21 @@ class Settings(BaseSettings):
     enrichment_image_max_side: int = 1280
     enrichment_embedding_batch_size: int = 4
     enrichment_cutout_bucket: str = "product-images"
+
+    @model_validator(mode="after")
+    def normalize_visual_search_fusion_weights(self) -> Settings:
+        foreground = float(self.visual_search_foreground_weight)
+        context = float(self.visual_search_context_weight)
+        if not math.isfinite(foreground) or not math.isfinite(context):
+            raise ValueError("Visual-search fusion weights must be finite")
+        if foreground < 0 or context < 0:
+            raise ValueError("Visual-search fusion weights must be non-negative")
+        total = foreground + context
+        if total <= 0:
+            raise ValueError("At least one visual-search fusion weight must be positive")
+        self.visual_search_foreground_weight = foreground / total
+        self.visual_search_context_weight = context / total
+        return self
 
     @property
     def sam_checkpoint(self) -> Path:

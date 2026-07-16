@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import threading
 import time
 from collections import OrderedDict
@@ -23,6 +24,9 @@ from app.visual_search.schemas import (
     VisualSearchResponse,
 )
 from app.visual_search.store import SupabaseVisualSearchStore
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -186,7 +190,14 @@ class VisualSearchService:
                 pool="context",
             )
             retrieval_ms += round((time.perf_counter() - stage_started) * 1000)
-            candidates = self._fuse_query_candidates(candidates, context_candidates)
+            candidates = self._fuse_query_candidates(
+                candidates,
+                context_candidates,
+                segmentation_tier=prepared.segmentation_tier,
+                segmentation_warning=",".join(prepared.warnings) or None,
+                segmentation_quality=prepared.segmentation_quality,
+                segmentation_coverage=prepared.segmentation_coverage,
+            )
             stage_started = time.perf_counter()
             products = self._rerank(
                 candidates,
@@ -198,6 +209,19 @@ class VisualSearchService:
                 confident_item_type=confident_item_type,
             )
             rerank_ms += round((time.perf_counter() - stage_started) * 1000)
+        else:
+            # Context is the complete fallback when segmentation is missing or
+            # measurably poor. Scores stay unchanged; this pass only attaches
+            # internal diagnostics and emits the same per-candidate debug log
+            # as foreground-aware fusion.
+            candidates = self._fuse_query_candidates(
+                [],
+                candidates,
+                segmentation_tier="poor",
+                segmentation_warning=",".join(prepared.warnings) or None,
+                segmentation_quality=prepared.segmentation_quality,
+                segmentation_coverage=prepared.segmentation_coverage,
+            )
         best_similarity = max(
             (product.visual_similarity for product in products),
             default=0.0,
@@ -396,11 +420,51 @@ class VisualSearchService:
                 merged[key] = row
         return list(merged.values())
 
-    @staticmethod
     def _fuse_query_candidates(
+        self,
         foreground: list[dict[str, Any]],
         context: list[dict[str, Any]],
+        *,
+        segmentation_tier: str = "good",
+        segmentation_warning: str | None = None,
+        segmentation_quality: float | None = None,
+        segmentation_coverage: float | None = None,
     ) -> list[dict[str, Any]]:
+        if segmentation_tier == "poor" or not foreground:
+            context_only: list[dict[str, Any]] = []
+            for row in context:
+                context_similarity = float(row.get("visual_similarity") or 0)
+                LOGGER.debug(
+                    "visual_search_fusion product_id=%s "
+                    "foreground_similarity=%s context_similarity=%.6f "
+                    "final_similarity=%.6f segmentation_tier=%s "
+                    "segmentation_warning=%s segmentation_quality=%s "
+                    "segmentation_coverage=%s",
+                    row.get("product_id"),
+                    None,
+                    context_similarity,
+                    context_similarity,
+                    segmentation_tier,
+                    segmentation_warning,
+                    segmentation_quality,
+                    segmentation_coverage,
+                )
+                context_only.append(
+                    {
+                        **row,
+                        "visual_similarity": context_similarity,
+                        "_foreground_similarity": None,
+                        "_context_similarity": context_similarity,
+                    }
+                )
+            return context_only
+
+        if segmentation_tier == "medium":
+            foreground_weight, context_weight = 0.85, 0.15
+        else:
+            foreground_weight = self.settings.visual_search_foreground_weight
+            context_weight = self.settings.visual_search_context_weight
+
         context_by_product: dict[str, float] = {}
         for row in context:
             product_id = str(row.get("product_id"))
@@ -416,11 +480,43 @@ class VisualSearchService:
                 str(row.get("product_id")),
                 foreground_similarity,
             )
+            # Context may confirm a foreground match, but it must never punish
+            # it or turn a background look-alike into the winner.  Clamping
+            # context to at most 0.10 above foreground bounds the default boost
+            # to 0.003 for good masks and 0.015 for medium masks.  The absolute
+            # cap also keeps unsafe environment overrides from bypassing this
+            # invariant.
+            effective_context = min(
+                max(context_similarity, foreground_similarity),
+                foreground_similarity + 0.10,
+            )
+            weighted_similarity = (
+                foreground_weight * foreground_similarity
+                + context_weight * effective_context
+            )
+            final_similarity = foreground_similarity + min(
+                max(0.0, weighted_similarity - foreground_similarity),
+                0.02,
+            )
+            LOGGER.debug(
+                "visual_search_fusion product_id=%s "
+                "foreground_similarity=%.6f context_similarity=%.6f "
+                "final_similarity=%.6f segmentation_tier=%s "
+                "segmentation_warning=%s segmentation_quality=%s "
+                "segmentation_coverage=%s",
+                row.get("product_id"),
+                foreground_similarity,
+                context_similarity,
+                final_similarity,
+                segmentation_tier,
+                segmentation_warning,
+                segmentation_quality,
+                segmentation_coverage,
+            )
             fused.append(
                 {
                     **row,
-                    "visual_similarity": 0.85 * foreground_similarity
-                    + 0.15 * context_similarity,
+                    "visual_similarity": final_similarity,
                     "_foreground_similarity": foreground_similarity,
                     "_context_similarity": context_similarity,
                 }

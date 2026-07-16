@@ -57,6 +57,46 @@ def test_visual_search_returns_ranked_payload(monkeypatch):
     assert response.json()["model_version"] == "test@1"
 
 
+def test_visual_search_response_contract_does_not_expose_fusion_debug_fields(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        visual_search,
+        "search",
+        lambda image, image_hash, filters: {
+            "image_hash": image_hash,
+            "model_version": "test@1",
+            "products": [
+                {
+                    "product_id": "product",
+                    "score": 0.8,
+                    "visual_similarity": 0.9,
+                    "matched_image_url": "https://example.com/product.jpg",
+                    "_foreground_similarity": 0.91,
+                    "_context_similarity": 0.72,
+                    "_final_similarity": 0.9,
+                }
+            ],
+            "_segmentation_quality": "good",
+        },
+    )
+
+    response = TestClient(app).post(
+        "/v1/visual-search",
+        files={"file": ("query.jpg", _jpeg(), "image/jpeg")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["image_hash"]
+    assert payload["model_version"] == "test@1"
+    assert payload["products"][0]["product_id"] == "product"
+    assert "_segmentation_quality" not in payload
+    assert "_foreground_similarity" not in payload["products"][0]
+    assert "_context_similarity" not in payload["products"][0]
+    assert "_final_similarity" not in payload["products"][0]
+
+
 def test_visual_search_is_available_without_login(monkeypatch):
     monkeypatch.setattr(
         visual_search,

@@ -257,6 +257,12 @@ def test_foreground_similarity_dominates_context_background():
         {"product_id": "crowd", "visual_similarity": 0.95},
     ]
 
-    fused = VisualSearchService._fuse_query_candidates(foreground, context)
+    service = object.__new__(VisualSearchService)
+    service.settings = Settings(_env_file=None)
+    fused = service._fuse_query_candidates(
+        foreground,
+        context,
+        segmentation_tier="good",
+    )
 
     assert fused[0]["visual_similarity"] > fused[1]["visual_similarity"]

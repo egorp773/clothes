@@ -352,11 +352,13 @@ class _MessagesHeader extends StatelessWidget {
             children: [
               const Expanded(
                 child: Text(
-                  'Сообщения',
+                  'сообщения',
                   style: TextStyle(
-                    fontSize: 25,
+                    fontFamily: 'Montserrat',
+                    fontSize: 22,
                     height: 1,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.4,
                     color: _ink,
                   ),
                 ),

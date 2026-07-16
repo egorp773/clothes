@@ -15,6 +15,7 @@ import 'models/app_profile.dart';
 import 'models/created_outfit.dart';
 import 'models/message_thread.dart';
 import 'models/product.dart';
+import 'models/profile_feature.dart';
 import 'screens/catalog_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/messages_screen.dart';
@@ -27,11 +28,13 @@ import 'screens/publish_outfit_screen.dart';
 import 'screens/product_screen.dart';
 import 'screens/reviews_screen.dart';
 import 'screens/seller_profile_screen.dart';
+import 'services/push_notification_service.dart';
 import 'widgets/app_bottom_nav.dart';
 import 'widgets/create_entry_sheet.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await PushNotificationService.initialize();
   await SupabaseConfig.initialize();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -146,6 +149,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   String? _handledMessageNotificationId;
   Timer? _messageNotificationTimer;
   Timer? _messageNotificationRemoveTimer;
+  StreamSubscription<PushNotificationTap>? _pushTapSubscription;
   OverlayEntry? _messageNotificationEntry;
   final List<Product> _draftOutfitProducts = [];
   final AppRepository _repository = AppRepository();
@@ -164,7 +168,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _pushTapSubscription = PushNotificationService.onNotificationTap.listen(
+      (tap) => unawaited(_handlePushNotificationTap(tap)),
+    );
     _repository.load();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final initialTap = PushNotificationService.takeInitialTap();
+      if (initialTap != null) {
+        unawaited(_handlePushNotificationTap(initialTap));
+      }
+    });
   }
 
   @override
@@ -172,6 +185,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _messageNotificationTimer?.cancel();
     _messageNotificationRemoveTimer?.cancel();
+    _pushTapSubscription?.cancel();
     _messageNotificationEntry?.remove();
     _repository.dispose();
     super.dispose();
@@ -261,6 +275,92 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           onOpenSellerProfile: () => _openSellerFromChat(thread),
           onBuyProduct: () => _buyFromChat(thread),
         ),
+      ),
+    );
+  }
+
+  Future<void> _openProfileNotification(
+    ProfileNotification notification,
+  ) async {
+    if (notification.kind == 'message') {
+      final threadId = notification.data['thread_id'] ?? notification.targetId;
+      if (threadId.isNotEmpty) {
+        final thread = _repository.threadById(threadId);
+        if (thread != null) {
+          _openMessageNotification(
+            MessageNotification(
+              id: notification.id,
+              threadId: threadId,
+              senderName: notification.title,
+              text: notification.body,
+            ),
+          );
+          return;
+        }
+      }
+    }
+
+    if (!mounted) return;
+    Navigator.of(
+      context,
+      rootNavigator: true,
+    ).popUntil((route) => route.isFirst);
+    setState(() {
+      _currentIndex = 4;
+      _createMode = _CreateMode.none;
+    });
+  }
+
+  Future<void> _handlePushNotificationTap(PushNotificationTap tap) async {
+    for (var attempt = 0; attempt < 25 && !_repository.isReady; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted) return;
+    }
+    if (!mounted) return;
+
+    final data = {
+      for (final entry in tap.data.entries)
+        entry.key: entry.value?.toString() ?? '',
+    };
+    final notificationId = data['notification_id'] ?? '';
+    if (notificationId.isNotEmpty) {
+      await _repository.markNotificationRead(notificationId);
+    }
+
+    final kind = (data['kind'] ?? data['type'] ?? 'general').toLowerCase();
+    final threadId = data['thread_id'] ?? '';
+    if (kind == 'message' && threadId.isNotEmpty) {
+      for (var attempt = 0; attempt < 20; attempt++) {
+        if (!mounted) return;
+        final thread = _repository.threadById(threadId);
+        if (thread != null) {
+          _openMessageNotification(
+            MessageNotification(
+              id: tap.messageId ?? notificationId,
+              threadId: threadId,
+              senderName: tap.title ?? data['title'] ?? '',
+              text: tap.body ?? data['body'] ?? '',
+            ),
+          );
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
+    }
+
+    await _openProfileNotification(
+      ProfileNotification(
+        id: notificationId.isNotEmpty
+            ? notificationId
+            : (tap.messageId ??
+                  'push-${DateTime.now().microsecondsSinceEpoch}'),
+        title: tap.title ?? data['title'] ?? 'Уведомление',
+        body: tap.body ?? data['body'] ?? '',
+        kind: kind,
+        targetId: data['target_id'] ?? '',
+        data: data,
+        isRead: true,
+        createdAt: DateTime.now().toUtc(),
       ),
     );
   }
@@ -357,8 +457,13 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             onRelatedProductTap: _openProductDetails,
             deliveryProfile: _repository.deliveryProfile,
             onSaveDeliveryProfile: _repository.updateDeliveryProfile,
-            onCreateDeliveryOrder: () =>
-                _repository.createDeliveryOrder(product),
+            onCreateDeliveryOrder:
+                ({required deliveryService, required deliveryPrice}) =>
+                    _repository.createDeliveryOrder(
+                      product,
+                      deliveryService: deliveryService,
+                      deliveryPrice: deliveryPrice,
+                    ),
           );
         },
       ),
@@ -444,7 +549,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ),
           deliveryProfile: _repository.deliveryProfile,
           onSaveProfile: _repository.updateDeliveryProfile,
-          onSubmitOrder: () => _repository.createDeliveryOrder(product),
+          onSubmitOrder: ({required deliveryService, required deliveryPrice}) =>
+              _repository.createDeliveryOrder(
+                product,
+                deliveryService: deliveryService,
+                deliveryPrice: deliveryPrice,
+              ),
         ),
       ),
     );
@@ -757,10 +867,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   Future<bool> _addProductToOutfitOnly(Product product) async {
-    final draftProduct = product.isHidden
-        ? product
-        : product.copyWith(isHidden: true);
-    await _repository.publishProduct(draftProduct);
+    final draftProduct = product.copyWith(
+      isHidden: true,
+      ownerId: _repository.currentUserId,
+    );
+    final didPublish = await _repository.publishProduct(draftProduct);
+    if (!didPublish) return false;
     setState(() {
       _draftOutfitProducts.insert(0, draftProduct);
       _currentIndex = 2;
@@ -1023,6 +1135,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   onProductTap: _openProductDetails,
                   onOutfitAuthorTap: _openOutfitAuthorProfile,
                   onMarkNotificationRead: _repository.markNotificationRead,
+                  onMarkAllNotificationsRead:
+                      _repository.markAllNotificationsRead,
+                  onNotificationTap: _openProfileNotification,
                   onUpdateNotificationPreferences:
                       _repository.updateNotificationPreferences,
                   onLoadReviews: _repository.fetchSellerReviews,
@@ -1108,10 +1223,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       sidePadding: _sidePadding,
       onClose: () => _changeTab(0),
       onPublish: _publishOutfit,
-      products: [
-        ..._draftOutfitProducts,
-        ..._repository.products.where((product) => !product.isHidden),
-      ],
+      products: [..._draftOutfitProducts, ..._repository.myProducts],
+      currentUserId: _repository.currentUserId,
       onUploadImage: _repository.uploadImage,
       onAddItem: _showOutfitItemChoiceSheet,
     );

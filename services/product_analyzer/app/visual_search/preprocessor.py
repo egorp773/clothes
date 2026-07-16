@@ -22,6 +22,9 @@ class PreparedQueryImages:
     foreground: Image.Image | None
     timings_ms: dict[str, int]
     warnings: list[str]
+    segmentation_tier: str = "poor"
+    segmentation_quality: float | None = None
+    segmentation_coverage: float | None = None
 
 
 class VisualSearchPreprocessor:
@@ -64,15 +67,41 @@ class VisualSearchPreprocessor:
                 foreground=None,
                 timings_ms={"resize": resize_ms, "segmentation": segmentation_ms},
                 warnings=["query_foreground_unavailable"],
+                segmentation_tier="poor",
             )
-        warnings = []
+        quality = float(segment.confidence)
+        coverage = float(segment.mask.mean())
+        numerically_acceptable = (
+            quality >= self.settings.rembg_min_quality
+            and self.settings.rembg_min_area_share
+            <= coverage
+            <= self.settings.rembg_max_area_share
+        )
+        acceptable = self.segmentation.is_acceptable(segment)
+        segmentation_tier = (
+            "good"
+            if acceptable
+            else "medium"
+            if numerically_acceptable
+            else "poor"
+        )
+        warnings: list[str] = []
         if segment.label == "multiple_foregrounds":
             warnings.append("query_multiple_foregrounds_dominant_used")
+        if segmentation_tier == "poor":
+            warnings.append("query_foreground_low_quality")
         return PreparedQueryImages(
             context=context,
-            foreground=self._white_composite(segment.cutout),
+            foreground=(
+                self._white_composite(segment.cutout)
+                if segmentation_tier != "poor"
+                else None
+            ),
             timings_ms={"resize": resize_ms, "segmentation": segmentation_ms},
             warnings=warnings,
+            segmentation_tier=segmentation_tier,
+            segmentation_quality=quality,
+            segmentation_coverage=coverage,
         )
 
     def prepare(self, image: Image.Image) -> PreparedSearchImage:

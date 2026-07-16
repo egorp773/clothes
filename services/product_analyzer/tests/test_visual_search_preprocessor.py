@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import numpy as np
 from PIL import Image
 
 from app.config import Settings
@@ -32,7 +33,17 @@ class _Foreground:
     def segment(self, image):
         rgba = Image.new("RGBA", image.size, (0, 0, 0, 0))
         rgba.putpixel((10, 10), (200, 20, 30, 255))
-        return SimpleNamespace(cutout=rgba, label="foreground")
+        mask = np.zeros((image.height, image.width), dtype=np.float32)
+        mask[:, : image.width // 2] = 1.0
+        return SimpleNamespace(
+            cutout=rgba,
+            label="foreground",
+            confidence=0.9,
+            mask=mask,
+        )
+
+    def is_acceptable(self, segment):
+        return True
 
 
 def test_query_variants_keep_context_and_white_composite_foreground():
@@ -47,3 +58,6 @@ def test_query_variants_keep_context_and_white_composite_foreground():
     assert prepared.foreground.getpixel((0, 0)) == (255, 255, 255)
     assert prepared.foreground.getpixel((10, 10)) == (200, 20, 30)
     assert prepared.warnings == []
+    assert prepared.segmentation_tier == "good"
+    assert prepared.segmentation_quality == 0.9
+    assert prepared.segmentation_coverage == 0.5

@@ -46,12 +46,58 @@ class AppRepository extends ChangeNotifier {
   static const _favoriteOutfitIdsKey = 'favorite_outfit_ids_v1';
   static const _recentProductIdsKey = 'recent_product_ids_v1';
   static const _recentOutfitIdsKey = 'recent_outfit_ids_v1';
+  static const _countedProductViewsKeyPrefix = 'counted_product_views_v1';
+  static const _countedOutfitViewsKeyPrefix = 'counted_outfit_views_v1';
   static const _notificationsKey = 'profile_notifications_v1';
   static const _notificationPreferencesKey = 'notification_preferences_v1';
   static const _deliveryProfileKey = 'delivery_profile_v1';
   static const _ordersKey = 'orders_v1';
   static const _sellerReviewsKey = 'seller_reviews_v1';
   static const _bucketName = 'product-images';
+
+  @visibleForTesting
+  static List<AppOrder> mergeOrdersForParticipant({
+    required Iterable<AppOrder> localOrders,
+    required Iterable<AppOrder> remoteOrders,
+    required String participantId,
+  }) {
+    final normalizedParticipantId = participantId.trim();
+    if (normalizedParticipantId.isEmpty) return const <AppOrder>[];
+
+    bool belongsToParticipant(AppOrder order) {
+      return order.buyerId == normalizedParticipantId ||
+          order.sellerId == normalizedParticipantId;
+    }
+
+    final localById = <String, AppOrder>{};
+    for (final order in localOrders.where(belongsToParticipant)) {
+      final previous = localById[order.id];
+      if (previous == null || order.updatedAt.isAfter(previous.updatedAt)) {
+        localById[order.id] = order;
+      }
+    }
+
+    final remoteById = <String, AppOrder>{};
+    for (final order in remoteOrders.where(belongsToParticipant)) {
+      final previous = remoteById[order.id];
+      if (previous == null || order.updatedAt.isAfter(previous.updatedAt)) {
+        remoteById[order.id] = order;
+      }
+    }
+
+    // Preserve participant orders missing from a possibly stale remote
+    // snapshot, while making returned rows authoritative for matching ids.
+    final mergedById = <String, AppOrder>{...localById, ...remoteById};
+    final merged = mergedById.values.toList()
+      ..sort((left, right) {
+        final byUpdatedAt = right.updatedAt.compareTo(left.updatedAt);
+        if (byUpdatedAt != 0) return byUpdatedAt;
+        final byCreatedAt = right.createdAt.compareTo(left.createdAt);
+        if (byCreatedAt != 0) return byCreatedAt;
+        return left.id.compareTo(right.id);
+      });
+    return merged;
+  }
 
   late final SharedPreferences _prefs;
   final _uuid = const Uuid();
@@ -68,6 +114,10 @@ class AppRepository extends ChangeNotifier {
   Set<String> _favoriteOutfitIds = {};
   List<String> _recentProductIds = [];
   List<String> _recentOutfitIds = [];
+  Set<String> _countedProductViewIds = {};
+  String _countedProductViewsUserId = '';
+  Set<String> _countedOutfitViewIds = {};
+  String _countedOutfitViewsUserId = '';
   User? _currentUser;
   bool _isSigningIn = false;
   String? _authError;
@@ -175,8 +225,9 @@ class AppRepository extends ChangeNotifier {
   List<ProfileNotification> get notifications => List.unmodifiable(
     _notifications.where(
       (notification) =>
-          notification.title.trim().isNotEmpty ||
-          notification.body.trim().isNotEmpty,
+          notification.kind != 'message' &&
+          (notification.title.trim().isNotEmpty ||
+              notification.body.trim().isNotEmpty),
     ),
   );
   NotificationPreferences get notificationPreferences =>
@@ -476,7 +527,10 @@ class AppRepository extends ChangeNotifier {
     _accessories = _readList(_accessoriesKey, OutfitAccessory.fromJson);
     _outfits = _readList(_outfitsKey, CreatedOutfit.fromJson);
     _threads = _readList(_threadsKey, MessageThread.fromJson);
-    _notifications = _readList(_notificationsKey, ProfileNotification.fromJson);
+    _notifications = _readList(
+      _notificationsKey,
+      ProfileNotification.fromJson,
+    ).where((notification) => notification.kind != 'message').toList();
     _orders = _readList(_ordersKey, AppOrder.fromJson);
     _sellerReviews = _readList(_sellerReviewsKey, SellerReview.fromJson);
     final notificationPreferencesJson = _prefs.getString(
@@ -1098,7 +1152,7 @@ class AppRepository extends ChangeNotifier {
       'rating': profile.rating,
       'sales_count': profile.salesCount,
       'followers_count': profile.followersCount,
-      'updated_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
     }, onConflict: 'id');
   }
 
@@ -1109,6 +1163,20 @@ class AppRepository extends ChangeNotifier {
         !PushNotificationService.isEnabled) {
       return;
     }
+
+    var permission = await PushNotificationService.getPermissionStatus();
+    if (permission == PushPermissionStatus.notDetermined) {
+      permission = await PushNotificationService.requestPermission();
+    }
+    if (permission == PushPermissionStatus.denied) {
+      _notificationPreferences = _notificationPreferences.copyWith(
+        pushEnabled: false,
+      );
+      await _saveNotificationPreferencesLocal();
+      notifyListeners();
+      return;
+    }
+    if (permission == PushPermissionStatus.unsupported) return;
 
     final token = await PushNotificationService.currentToken();
     if (token != null && token.isNotEmpty) {
@@ -1134,7 +1202,7 @@ class AppRepository extends ChangeNotifier {
         'user_id': userId,
         'token': token,
         'platform': PushNotificationService.platform,
-        'updated_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
       }, onConflict: 'token');
     } catch (e) {
       debugPrint('Push token upsert error: $e');
@@ -1164,7 +1232,7 @@ class AppRepository extends ChangeNotifier {
 
   Future<void> _updatePresence() async {
     if (!_hasSupabase || currentUserId.isEmpty) return;
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     _lastSeenByUserId[currentUserId] = now;
     try {
       await _client
@@ -1502,6 +1570,7 @@ class AppRepository extends ChangeNotifier {
           .from('notifications')
           .select()
           .eq('user_id', currentUserId)
+          .neq('kind', 'message')
           .order('created_at', ascending: false)
           .limit(80);
       _notifications = (notifications as List<dynamic>)
@@ -1515,16 +1584,24 @@ class AppRepository extends ChangeNotifier {
       debugPrint('Notifications sync error: $e');
     }
 
+    final ordersUserId = currentUserId;
     try {
       final orders = await _client
           .from('orders')
           .select()
-          .or('buyer_id.eq.$currentUserId,seller_id.eq.$currentUserId')
+          .or('buyer_id.eq.$ordersUserId,seller_id.eq.$ordersUserId')
           .order('updated_at', ascending: false);
-      _orders = (orders as List<dynamic>)
+      final remoteOrders = (orders as List<dynamic>)
           .map((item) => AppOrder.fromJson(item as Map<String, dynamic>))
           .toList();
-      await _saveOrdersLocal();
+      if (ordersUserId.isNotEmpty && currentUserId == ordersUserId) {
+        _orders = mergeOrdersForParticipant(
+          localOrders: _orders,
+          remoteOrders: remoteOrders,
+          participantId: ordersUserId,
+        );
+        await _saveOrdersLocal();
+      }
     } catch (e) {
       debugPrint('Orders sync error: $e');
     }
@@ -1551,7 +1628,7 @@ class AppRepository extends ChangeNotifier {
       await _client
           .from('notification_settings')
           .upsert(
-            preferences.toSupabaseJson(currentUserId),
+            _notificationPreferences.toSupabaseJson(currentUserId),
             onConflict: 'user_id',
           );
     } catch (e) {
@@ -1574,7 +1651,7 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
-  Future<void> createDeliveryOrder(
+  Future<AppOrder?> createDeliveryOrder(
     Product product, {
     String deliveryService = 'Почта России',
     int deliveryPrice = 122,
@@ -1582,21 +1659,21 @@ class AppRepository extends ChangeNotifier {
     final user = _hasSupabase
         ? await _ensureAuthSession(message: 'Войдите в профиль, чтобы купить')
         : null;
-    if (_hasSupabase && user == null) return;
+    if (_hasSupabase && user == null) return null;
 
     final buyerId = user?.id ?? currentUserId;
     if (buyerId.isEmpty) {
       _authError = 'Войдите в профиль, чтобы купить';
       notifyListeners();
-      return;
+      return null;
     }
     if (product.ownerId.isNotEmpty && product.ownerId == buyerId) {
       _authError = 'Это ваше объявление';
       notifyListeners();
-      return;
+      return null;
     }
 
-    final order = AppOrder.fromProduct(
+    final pendingOrder = AppOrder.fromProduct(
       product: product,
       buyerId: buyerId,
       status: AppOrderStatus.pendingConfirmation,
@@ -1604,22 +1681,57 @@ class AppRepository extends ChangeNotifier {
       deliveryService: deliveryService,
       deliveryPrice: deliveryPrice,
     );
-    _orders.removeWhere((item) => item.id == order.id);
-    _orders.insert(0, order);
-    await _saveOrdersLocal();
-    await _addProfileNotification(
-      title: 'Заказ создан',
-      body: product.title,
-      kind: 'order',
-      targetId: order.id,
-    );
-    notifyListeners();
 
-    if (!_hasSupabase) return;
+    var committedOrder = pendingOrder;
+    if (_hasSupabase) {
+      try {
+        final response = await _client
+            .from('orders')
+            .insert(pendingOrder.toSupabaseJson())
+            .select()
+            .single();
+        committedOrder = AppOrder.fromJson(Map<String, dynamic>.from(response));
+      } catch (e, stackTrace) {
+        debugPrint('Order create error: $e\n$stackTrace');
+        _authError =
+            'Не удалось создать заказ. Проверьте подключение и попробуйте ещё раз.';
+        notifyListeners();
+        return null;
+      }
+    }
+
+    _orders = mergeOrdersForParticipant(
+      localOrders: _orders,
+      remoteOrders: <AppOrder>[committedOrder],
+      participantId: buyerId,
+    );
     try {
-      await _client.from('orders').insert(order.toSupabaseJson());
-    } catch (e) {
-      debugPrint('Order create error: $e');
+      await _saveOrdersLocal();
+    } catch (e, stackTrace) {
+      debugPrint('Order local save error: $e\n$stackTrace');
+      if (!_hasSupabase) {
+        _orders.removeWhere((item) => item.id == committedOrder.id);
+        _authError = 'Не удалось сохранить заказ. Попробуйте ещё раз.';
+        notifyListeners();
+        return null;
+      }
+    }
+    _authError = null;
+    notifyListeners();
+    unawaited(_addOrderCreatedNotification(committedOrder));
+    return committedOrder;
+  }
+
+  Future<void> _addOrderCreatedNotification(AppOrder order) async {
+    try {
+      await _addProfileNotification(
+        title: 'Заказ создан',
+        body: order.productTitle,
+        kind: 'order',
+        targetId: order.id,
+      );
+    } catch (e, stackTrace) {
+      debugPrint('Order notification error: $e\n$stackTrace');
     }
   }
 
@@ -1632,9 +1744,10 @@ class AppRepository extends ChangeNotifier {
       changed = true;
       return notification.copyWith(isRead: true);
     }).toList();
-    if (!changed) return;
-    await _saveNotificationsLocal();
-    notifyListeners();
+    if (changed) {
+      await _saveNotificationsLocal();
+      notifyListeners();
+    }
 
     if (!_hasSupabase || currentUserId.isEmpty) return;
     try {
@@ -1645,6 +1758,26 @@ class AppRepository extends ChangeNotifier {
           .eq('user_id', currentUserId);
     } catch (e) {
       debugPrint('Notification read sync error: $e');
+    }
+  }
+
+  Future<void> markAllNotificationsRead() async {
+    if (!_notifications.any((notification) => !notification.isRead)) return;
+    _notifications = _notifications
+        .map((notification) => notification.copyWith(isRead: true))
+        .toList();
+    await _saveNotificationsLocal();
+    notifyListeners();
+
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+    try {
+      await _client
+          .from('notifications')
+          .update({'is_read': true})
+          .eq('user_id', currentUserId)
+          .eq('is_read', false);
+    } catch (e) {
+      debugPrint('Notifications mark all read error: $e');
     }
   }
 
@@ -1660,7 +1793,7 @@ class AppRepository extends ChangeNotifier {
       body: body,
       kind: kind,
       targetId: targetId,
-      createdAt: DateTime.now(),
+      createdAt: DateTime.now().toUtc(),
     );
     _notifications.removeWhere(
       (item) =>
@@ -1696,9 +1829,23 @@ class AppRepository extends ChangeNotifier {
           .toList();
 
       if (fetched.isEmpty) return;
-      final merged = <String, CreatedOutfit>{
-        for (final outfit in fetched) outfit.id: outfit,
+      final localById = <String, CreatedOutfit>{
+        for (final outfit in _outfits) outfit.id: outfit,
       };
+      final merged = <String, CreatedOutfit>{};
+      for (final remote in fetched) {
+        final local = localById[remote.id];
+        merged[remote.id] = local == null
+            ? remote
+            : remote.copyWith(
+                viewsCount: local.viewsCount > remote.viewsCount
+                    ? local.viewsCount
+                    : remote.viewsCount,
+                likesCount: local.likesCount > remote.likesCount
+                    ? local.likesCount
+                    : remote.likesCount,
+              );
+      }
       for (final outfit in _outfits) {
         merged.putIfAbsent(outfit.id, () => outfit);
       }
@@ -1729,8 +1876,7 @@ class AppRepository extends ChangeNotifier {
           .from('recent_products')
           .select('product_id')
           .eq('user_id', currentUserId)
-          .order('viewed_at', ascending: false)
-          .limit(24);
+          .order('viewed_at', ascending: false);
       final recentOutfits = await _client
           .from('recent_outfits')
           .select('outfit_id')
@@ -1759,6 +1905,11 @@ class AppRepository extends ChangeNotifier {
           .whereType<String>()
           .toList();
 
+      _activateProductViewIdentity(currentUserId);
+      _countedProductViewIds.addAll(remoteRecentProductIds);
+      _activateOutfitViewIdentity(currentUserId);
+      _countedOutfitViewIds.addAll(remoteRecentOutfitIds);
+
       _favoriteProductIds = {
         ..._favoriteProductIds,
         ...remoteFavoriteProductIds,
@@ -1777,6 +1928,8 @@ class AppRepository extends ChangeNotifier {
       _applyOutfitFavoriteState();
       await _pushLocalCollectionsToSupabase();
       await _saveCollectionState();
+      await _saveCountedProductViews();
+      await _saveCountedOutfitViews();
       await _saveProducts();
       await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
       notifyListeners();
@@ -1842,26 +1995,9 @@ class AppRepository extends ChangeNotifier {
               onConflict: 'user_id,product_id',
             );
       }
-      if (_recentOutfitIds.isNotEmpty) {
-        await _client
-            .from('recent_outfits')
-            .upsert(
-              _recentOutfitIds
-                  .asMap()
-                  .entries
-                  .map(
-                    (entry) => {
-                      'user_id': currentUserId,
-                      'outfit_id': entry.value,
-                      'viewed_at': DateTime.now()
-                          .subtract(Duration(milliseconds: entry.key))
-                          .toIso8601String(),
-                    },
-                  )
-                  .toList(),
-              onConflict: 'user_id,outfit_id',
-            );
-      }
+      // Outfit views are written per active identity by recordOutfitView.
+      // Replaying the device-wide recent history here could attribute a
+      // previous guest/account's views to the newly signed-in user.
     } catch (e) {
       debugPrint('Local collections push error: $e');
     }
@@ -1967,6 +2103,9 @@ class AppRepository extends ChangeNotifier {
         ownerId: user.id,
         sellerName: _profile.name,
         sellerHandle: _profile.handle,
+        publishedAt: DateTime.now().toUtc(),
+        viewsCount: 0,
+        likesCount: 0,
       );
       final data = ownedProduct.toSupabaseJson(sellerId: user.id);
       await _client.from('products').upsert(data, onConflict: 'id');
@@ -2095,7 +2234,13 @@ class AppRepository extends ChangeNotifier {
     } else {
       _favoriteProductIds.remove(productId);
     }
-    _applyProductFavoriteState();
+    for (final product in _products) {
+      product.isLiked = _favoriteProductIds.contains(product.id);
+      if (product.id != productId) continue;
+      product.likesCount = (product.likesCount + (willLike ? 1 : -1))
+          .clamp(0, 1 << 31)
+          .toInt();
+    }
     await _saveStringSet(_favoriteProductIdsKey, _favoriteProductIds);
     await _saveProducts();
     notifyListeners();
@@ -2106,7 +2251,7 @@ class AppRepository extends ChangeNotifier {
         await _client.from('product_favorites').upsert({
           'user_id': currentUserId,
           'product_id': productId,
-          'created_at': DateTime.now().toIso8601String(),
+          'created_at': DateTime.now().toUtc().toIso8601String(),
         }, onConflict: 'user_id,product_id');
       } else {
         await _client
@@ -2115,6 +2260,7 @@ class AppRepository extends ChangeNotifier {
             .eq('user_id', currentUserId)
             .eq('product_id', productId);
       }
+      await _refreshProductMetric(productId, metric: 'likes_count');
     } catch (e) {
       debugPrint('Product favorite sync error: $e');
     }
@@ -2160,48 +2306,185 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
-  Future<void> recordProductView(String productId) async {
-    if (productId.isEmpty) return;
+  Future<int> recordProductView(String productId) async {
+    if (productId.isEmpty) return 0;
+    final viewerId = currentUserId;
+    _activateProductViewIdentity(viewerId);
+    final isFirstAuthorizedView =
+        viewerId.isNotEmpty && _countedProductViewIds.add(productId);
     _recentProductIds.remove(productId);
     _recentProductIds.insert(0, productId);
     if (_recentProductIds.length > 24) {
       _recentProductIds.removeRange(24, _recentProductIds.length);
     }
+    if (isFirstAuthorizedView) {
+      for (final product in _products) {
+        if (product.id != productId) continue;
+        product.viewsCount = (product.viewsCount + 1).clamp(0, 1 << 31).toInt();
+        break;
+      }
+    }
     await _writeStringList(_recentProductIdsKey, _recentProductIds);
+    if (isFirstAuthorizedView) await _saveCountedProductViews();
+    if (isFirstAuthorizedView) await _saveProducts();
     notifyListeners();
 
-    if (!_hasSupabase || currentUserId.isEmpty) return;
+    final currentCount = _productMetric(productId, metric: 'views_count');
+    if (!_hasSupabase || viewerId.isEmpty) return currentCount;
+    unawaited(_recordRemoteProductView(productId, viewerId));
+    return currentCount;
+  }
+
+  Future<void> _recordRemoteProductView(
+    String productId,
+    String viewerId,
+  ) async {
     try {
       await _client.from('recent_products').upsert({
-        'user_id': currentUserId,
+        'user_id': viewerId,
         'product_id': productId,
-        'viewed_at': DateTime.now().toIso8601String(),
+        'viewed_at': DateTime.now().toUtc().toIso8601String(),
       }, onConflict: 'user_id,product_id');
+      await _refreshProductMetric(productId, metric: 'views_count');
     } catch (e) {
       debugPrint('Recent product sync error: $e');
     }
   }
 
-  Future<void> recordOutfitView(String outfitId) async {
-    if (outfitId.isEmpty) return;
+  int _productMetric(String productId, {required String metric}) {
+    for (final product in _products) {
+      if (product.id != productId) continue;
+      return metric == 'likes_count' ? product.likesCount : product.viewsCount;
+    }
+    return 0;
+  }
+
+  Future<void> _refreshProductMetric(
+    String productId, {
+    required String metric,
+  }) async {
+    final response = await _client
+        .from('products')
+        .select(metric)
+        .eq('id', productId)
+        .maybeSingle();
+    if (response == null) return;
+    final authoritative = (response[metric] as num?)?.toInt();
+    if (authoritative == null) return;
+    for (final product in _products) {
+      if (product.id != productId) continue;
+      if (metric == 'likes_count') {
+        product.likesCount = authoritative < 0 ? 0 : authoritative;
+      } else {
+        product.viewsCount = authoritative < 0 ? 0 : authoritative;
+      }
+      break;
+    }
+    await _saveProducts();
+    notifyListeners();
+  }
+
+  Future<int> recordOutfitView(String outfitId) async {
+    if (outfitId.isEmpty) return 0;
+    final viewerId = currentUserId;
+    _activateOutfitViewIdentity(viewerId);
+    final isFirstAuthorizedView =
+        viewerId.isNotEmpty && _countedOutfitViewIds.add(outfitId);
     _recentOutfitIds.remove(outfitId);
     _recentOutfitIds.insert(0, outfitId);
     if (_recentOutfitIds.length > 24) {
       _recentOutfitIds.removeRange(24, _recentOutfitIds.length);
     }
+    if (isFirstAuthorizedView) {
+      _outfits = _outfits
+          .map(
+            (outfit) => outfit.id == outfitId
+                ? outfit.copyWith(viewsCount: outfit.viewsCount + 1)
+                : outfit,
+          )
+          .toList();
+      await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
+      await _saveCountedOutfitViews();
+    }
     await _writeStringList(_recentOutfitIdsKey, _recentOutfitIds);
     notifyListeners();
 
-    if (!_hasSupabase || currentUserId.isEmpty) return;
+    if (!_hasSupabase || viewerId.isEmpty) {
+      return _outfitViewsCount(outfitId);
+    }
+    try {
+      final remoteCount = await _recordRemoteOutfitView(
+        outfitId,
+        viewerId,
+      ).timeout(const Duration(seconds: 4));
+      if (remoteCount != null && currentUserId == viewerId) {
+        await _applyAuthoritativeOutfitViews(outfitId, remoteCount);
+      }
+    } on TimeoutException {
+      debugPrint('Outfit view sync timed out: $outfitId');
+    } catch (e) {
+      debugPrint('Outfit view sync error: $e');
+    }
+    return _outfitViewsCount(outfitId);
+  }
+
+  int _outfitViewsCount(String outfitId) {
+    for (final outfit in _outfits) {
+      if (outfit.id == outfitId) return outfit.viewsCount;
+    }
+    return 0;
+  }
+
+  Future<void> _applyAuthoritativeOutfitViews(
+    String outfitId,
+    int remoteCount,
+  ) async {
+    final safeRemoteCount = remoteCount < 0 ? 0 : remoteCount;
+    var changed = false;
+    _outfits = _outfits.map((outfit) {
+      if (outfit.id != outfitId || safeRemoteCount <= outfit.viewsCount) {
+        return outfit;
+      }
+      changed = true;
+      return outfit.copyWith(viewsCount: safeRemoteCount);
+    }).toList();
+    if (!changed) return;
+    await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
+    notifyListeners();
+  }
+
+  Future<int?> _recordRemoteOutfitView(String outfitId, String viewerId) async {
+    try {
+      final response = await _client.rpc(
+        'record_outfit_view',
+        params: {'p_outfit_id': outfitId},
+      );
+      Object? row = response;
+      if (row is List && row.isNotEmpty) row = row.first;
+      if (row is Map) {
+        return (row['views_count'] as num?)?.toInt();
+      }
+    } catch (e) {
+      debugPrint('Outfit view RPC fallback: $e');
+    }
+
     try {
       await _client.from('recent_outfits').upsert({
-        'user_id': currentUserId,
+        'user_id': viewerId,
         'outfit_id': outfitId,
-        'viewed_at': DateTime.now().toIso8601String(),
+        'viewed_at': DateTime.now().toUtc().toIso8601String(),
       }, onConflict: 'user_id,outfit_id');
+      final response = await _client
+          .from('outfits')
+          .select('views_count')
+          .eq('id', outfitId)
+          .maybeSingle();
+      return (response?['views_count'] as num?)?.toInt();
     } catch (e) {
       debugPrint('Recent outfit sync error: $e');
+      return null;
     }
+    return null;
   }
 
   Future<void> hideProduct(String productId) async {
@@ -2234,10 +2517,12 @@ class AppRepository extends ChangeNotifier {
     final user = _hasSupabase ? await _ensureAuthSession() : null;
     if (_hasSupabase && user == null) return;
 
+    final publishedAt = DateTime.now().toUtc();
     final ownedOutfit = outfit.copyWith(
       ownerId: user?.id ?? currentUserId,
       authorName: _profile.name,
       authorHandle: _profile.handle,
+      publishedAt: publishedAt,
     );
 
     _outfits.insert(0, ownedOutfit);
@@ -2258,7 +2543,7 @@ class AppRepository extends ChangeNotifier {
           'backgroundColor': ownedOutfit.previewBackgroundColor,
           'items': ownedOutfit.layoutItems.map((i) => i.toJson()).toList(),
         },
-        'created_at': DateTime.now().toIso8601String(),
+        'created_at': publishedAt.toIso8601String(),
       });
     } catch (e) {
       debugPrint('Outfit publish error: $e');
@@ -3404,6 +3689,40 @@ class AppRepository extends ChangeNotifier {
       if (result.length == 24) break;
     }
     return result;
+  }
+
+  void _activateProductViewIdentity(String userId) {
+    if (_countedProductViewsUserId == userId) return;
+    _countedProductViewsUserId = userId;
+    _countedProductViewIds = userId.isEmpty
+        ? <String>{}
+        : _readStringSet('${_countedProductViewsKeyPrefix}_$userId');
+  }
+
+  Future<void> _saveCountedProductViews() {
+    final userId = _countedProductViewsUserId;
+    if (userId.isEmpty) return Future<void>.value();
+    return _saveStringSet(
+      '${_countedProductViewsKeyPrefix}_$userId',
+      _countedProductViewIds,
+    );
+  }
+
+  void _activateOutfitViewIdentity(String userId) {
+    if (_countedOutfitViewsUserId == userId) return;
+    _countedOutfitViewsUserId = userId;
+    _countedOutfitViewIds = userId.isEmpty
+        ? <String>{}
+        : _readStringSet('${_countedOutfitViewsKeyPrefix}_$userId');
+  }
+
+  Future<void> _saveCountedOutfitViews() {
+    final userId = _countedOutfitViewsUserId;
+    if (userId.isEmpty) return Future<void>.value();
+    return _saveStringSet(
+      '${_countedOutfitViewsKeyPrefix}_$userId',
+      _countedOutfitViewIds,
+    );
   }
 
   @override

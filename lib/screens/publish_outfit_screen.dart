@@ -14,6 +14,7 @@ class PublishOutfitScreen extends StatefulWidget {
     required this.onPublish,
     required this.onAddItem,
     required this.products,
+    required this.currentUserId,
     this.onUploadImage,
   });
 
@@ -22,6 +23,7 @@ class PublishOutfitScreen extends StatefulWidget {
   final Future<void> Function(CreatedOutfit outfit) onPublish;
   final VoidCallback onAddItem;
   final List<Product> products;
+  final String currentUserId;
   final Future<String?> Function(XFile imageFile, {String? folder})?
   onUploadImage;
 
@@ -38,11 +40,23 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
   bool _isPublishing = false;
 
   Map<String, Product> get _productsById {
-    return {for (final product in widget.products) product.id: product};
+    return {for (final product in _ownedProducts) product.id: product};
+  }
+
+  List<Product> get _ownedProducts {
+    final owned = <String, Product>{};
+    for (final product in widget.products) {
+      if (widget.currentUserId.isEmpty ||
+          product.ownerId != widget.currentUserId) {
+        continue;
+      }
+      owned[product.id] = product;
+    }
+    return owned.values.toList(growable: false);
   }
 
   List<OutfitItem> get _myItems {
-    return widget.products
+    return _ownedProducts
         .map(
           (product) => OutfitItem(
             id: product.id,

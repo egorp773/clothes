@@ -110,6 +110,8 @@ class CreatedOutfit {
     this.layoutItems = const [],
     this.isLiked = false,
     this.likesCount = 0,
+    this.viewsCount = 0,
+    this.publishedAt,
   });
 
   final String id;
@@ -122,6 +124,8 @@ class CreatedOutfit {
   final List<OutfitLayoutItem> layoutItems;
   final bool isLiked;
   final int likesCount;
+  final int viewsCount;
+  final DateTime? publishedAt;
 
   factory CreatedOutfit.fromJson(Map<String, dynamic> json) {
     return CreatedOutfit(
@@ -144,6 +148,10 @@ class CreatedOutfit {
           const [],
       isLiked: json['isLiked'] as bool? ?? false,
       likesCount: (json['likesCount'] as num?)?.toInt() ?? 0,
+      viewsCount: (json['viewsCount'] as num?)?.toInt() ?? 0,
+      publishedAt: _parseOutfitDate(
+        json['publishedAt'] ?? json['createdAt'] ?? json['created_at'],
+      ),
     );
   }
 
@@ -170,6 +178,8 @@ class CreatedOutfit {
           const [],
       isLiked: json['is_liked'] as bool? ?? false,
       likesCount: (json['likes_count'] as num?)?.toInt() ?? 0,
+      viewsCount: (json['views_count'] as num?)?.toInt() ?? 0,
+      publishedAt: _parseOutfitDate(json['created_at']),
     );
   }
 
@@ -185,6 +195,8 @@ class CreatedOutfit {
       'layoutItems': layoutItems.map((item) => item.toJson()).toList(),
       'isLiked': isLiked,
       'likesCount': likesCount,
+      'viewsCount': viewsCount,
+      'publishedAt': publishedAt?.toUtc().toIso8601String(),
     };
   }
 
@@ -199,6 +211,8 @@ class CreatedOutfit {
     List<OutfitLayoutItem>? layoutItems,
     bool? isLiked,
     int? likesCount,
+    int? viewsCount,
+    DateTime? publishedAt,
   }) {
     return CreatedOutfit(
       id: id ?? this.id,
@@ -212,6 +226,14 @@ class CreatedOutfit {
       layoutItems: layoutItems ?? this.layoutItems,
       isLiked: isLiked ?? this.isLiked,
       likesCount: likesCount ?? this.likesCount,
+      viewsCount: viewsCount ?? this.viewsCount,
+      publishedAt: publishedAt ?? this.publishedAt,
     );
   }
+}
+
+DateTime? _parseOutfitDate(Object? value) {
+  if (value is DateTime) return value.toUtc();
+  if (value is! String || value.trim().isEmpty) return null;
+  return DateTime.tryParse(value)?.toUtc();
 }

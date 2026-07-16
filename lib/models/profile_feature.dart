@@ -3,11 +3,21 @@ import 'product.dart';
 class NotificationPreferences {
   const NotificationPreferences({
     this.pushEnabled = true,
+    this.messagesEnabled = true,
+    this.ordersEnabled = true,
+    this.favoritesEnabled = true,
+    this.promotionsEnabled = false,
+    this.soundEnabled = true,
     this.emailEnabled = false,
     this.smsEnabled = true,
   });
 
   final bool pushEnabled;
+  final bool messagesEnabled;
+  final bool ordersEnabled;
+  final bool favoritesEnabled;
+  final bool promotionsEnabled;
+  final bool soundEnabled;
   final bool emailEnabled;
   final bool smsEnabled;
 
@@ -15,6 +25,26 @@ class NotificationPreferences {
     return NotificationPreferences(
       pushEnabled:
           json['push_enabled'] as bool? ?? json['pushEnabled'] as bool? ?? true,
+      messagesEnabled:
+          json['messages_enabled'] as bool? ??
+          json['messagesEnabled'] as bool? ??
+          true,
+      ordersEnabled:
+          json['orders_enabled'] as bool? ??
+          json['ordersEnabled'] as bool? ??
+          true,
+      favoritesEnabled:
+          json['favorites_enabled'] as bool? ??
+          json['favoritesEnabled'] as bool? ??
+          true,
+      promotionsEnabled:
+          json['promotions_enabled'] as bool? ??
+          json['promotionsEnabled'] as bool? ??
+          false,
+      soundEnabled:
+          json['sound_enabled'] as bool? ??
+          json['soundEnabled'] as bool? ??
+          true,
       emailEnabled:
           json['email_enabled'] as bool? ??
           json['emailEnabled'] as bool? ??
@@ -27,6 +57,11 @@ class NotificationPreferences {
   Map<String, dynamic> toJson() {
     return {
       'pushEnabled': pushEnabled,
+      'messagesEnabled': messagesEnabled,
+      'ordersEnabled': ordersEnabled,
+      'favoritesEnabled': favoritesEnabled,
+      'promotionsEnabled': promotionsEnabled,
+      'soundEnabled': soundEnabled,
       'emailEnabled': emailEnabled,
       'smsEnabled': smsEnabled,
     };
@@ -36,19 +71,34 @@ class NotificationPreferences {
     return {
       'user_id': userId,
       'push_enabled': pushEnabled,
+      'messages_enabled': messagesEnabled,
+      'orders_enabled': ordersEnabled,
+      'favorites_enabled': favoritesEnabled,
+      'promotions_enabled': promotionsEnabled,
+      'sound_enabled': soundEnabled,
       'email_enabled': emailEnabled,
       'sms_enabled': smsEnabled,
-      'updated_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
   }
 
   NotificationPreferences copyWith({
     bool? pushEnabled,
+    bool? messagesEnabled,
+    bool? ordersEnabled,
+    bool? favoritesEnabled,
+    bool? promotionsEnabled,
+    bool? soundEnabled,
     bool? emailEnabled,
     bool? smsEnabled,
   }) {
     return NotificationPreferences(
       pushEnabled: pushEnabled ?? this.pushEnabled,
+      messagesEnabled: messagesEnabled ?? this.messagesEnabled,
+      ordersEnabled: ordersEnabled ?? this.ordersEnabled,
+      favoritesEnabled: favoritesEnabled ?? this.favoritesEnabled,
+      promotionsEnabled: promotionsEnabled ?? this.promotionsEnabled,
+      soundEnabled: soundEnabled ?? this.soundEnabled,
       emailEnabled: emailEnabled ?? this.emailEnabled,
       smsEnabled: smsEnabled ?? this.smsEnabled,
     );
@@ -63,6 +113,7 @@ class ProfileNotification {
     required this.createdAt,
     this.kind = 'general',
     this.targetId = '',
+    this.data = const {},
     this.isRead = false,
   });
 
@@ -72,6 +123,7 @@ class ProfileNotification {
   final DateTime createdAt;
   final String kind;
   final String targetId;
+  final Map<String, String> data;
   final bool isRead;
 
   factory ProfileNotification.fromJson(Map<String, dynamic> json) {
@@ -81,10 +133,11 @@ class ProfileNotification {
       body: json['body'] as String? ?? '',
       createdAt: DateTime.parse(
         json['created_at'] as String? ?? json['createdAt'] as String,
-      ),
+      ).toUtc(),
       kind: json['kind'] as String? ?? 'general',
       targetId:
           json['target_id'] as String? ?? json['targetId'] as String? ?? '',
+      data: _stringMap(json['data']),
       isRead: json['is_read'] as bool? ?? json['isRead'] as bool? ?? false,
     );
   }
@@ -94,9 +147,10 @@ class ProfileNotification {
       'id': id,
       'title': title,
       'body': body,
-      'createdAt': createdAt.toIso8601String(),
+      'createdAt': createdAt.toUtc().toIso8601String(),
       'kind': kind,
       'targetId': targetId,
+      'data': data,
       'isRead': isRead,
     };
   }
@@ -109,8 +163,9 @@ class ProfileNotification {
       'body': body,
       'kind': kind,
       'target_id': targetId,
+      'data': data,
       'is_read': isRead,
-      'created_at': createdAt.toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
     };
   }
 
@@ -122,9 +177,19 @@ class ProfileNotification {
       createdAt: createdAt,
       kind: kind,
       targetId: targetId,
+      data: data,
       isRead: isRead ?? this.isRead,
     );
   }
+}
+
+Map<String, String> _stringMap(Object? value) {
+  if (value is! Map) return const {};
+  return {
+    for (final entry in value.entries)
+      if (entry.key != null && entry.value != null)
+        entry.key.toString(): entry.value.toString(),
+  };
 }
 
 enum AppOrderRole { buyer, seller }
@@ -185,7 +250,7 @@ class DeliveryProfile {
       'email': email,
       'city': city,
       'address': address,
-      'updated_at': DateTime.now().toIso8601String(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
   }
 
@@ -306,12 +371,12 @@ class AppOrder {
           DateTime.tryParse(
             json['created_at'] as String? ?? json['createdAt'] as String? ?? '',
           ) ??
-          DateTime.now(),
+          DateTime.now().toUtc(),
       updatedAt:
           DateTime.tryParse(
             json['updated_at'] as String? ?? json['updatedAt'] as String? ?? '',
           ) ??
-          DateTime.now(),
+          DateTime.now().toUtc(),
     );
   }
 
@@ -323,7 +388,7 @@ class AppOrder {
     String deliveryService = 'Почта России',
     int deliveryPrice = 122,
   }) {
-    final now = DateTime.now();
+    final now = DateTime.now().toUtc();
     return AppOrder(
       id: 'local_${product.id}_${now.millisecondsSinceEpoch}',
       productId: product.id,
@@ -364,8 +429,8 @@ class AppOrder {
       'recipientEmail': recipientEmail,
       'deliveryPrice': deliveryPrice,
       'statusName': status.name,
-      'createdAt': createdAt.toIso8601String(),
-      'updatedAt': updatedAt.toIso8601String(),
+      'createdAt': createdAt.toUtc().toIso8601String(),
+      'updatedAt': updatedAt.toUtc().toIso8601String(),
     };
   }
 
@@ -377,7 +442,7 @@ class AppOrder {
       'product_image': productImage,
       'product_price': productPrice,
       'product_price_value': productPriceValue,
-      'seller_id': sellerId,
+      'seller_id': _uuidOrNull(sellerId),
       'buyer_id': buyerId,
       'tracking_number': trackingNumber,
       'delivery_service': deliveryService,
@@ -387,8 +452,8 @@ class AppOrder {
       'recipient_email': recipientEmail,
       'delivery_price': deliveryPrice,
       'status': status.name,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
+      'updated_at': updatedAt.toUtc().toIso8601String(),
     };
   }
 }
@@ -416,4 +481,13 @@ AppOrderStatus _statusFromString(String value) {
     (status) => status.name == value,
     orElse: () => AppOrderStatus.pendingConfirmation,
   );
+}
+
+final RegExp _uuidPattern = RegExp(
+  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+);
+
+String? _uuidOrNull(String value) {
+  final normalized = value.trim();
+  return _uuidPattern.hasMatch(normalized) ? normalized : null;
 }

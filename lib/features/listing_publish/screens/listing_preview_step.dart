@@ -46,7 +46,8 @@ class ListingPreviewStep extends StatelessWidget {
         address: controller.draft.shippingAddress,
       ),
       onSaveDeliveryProfile: (_) async {},
-      onCreateDeliveryOrder: () async {},
+      onCreateDeliveryOrder:
+          ({required deliveryService, required deliveryPrice}) async => null,
     );
   }
 }

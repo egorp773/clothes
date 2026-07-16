@@ -71,6 +71,8 @@ void main() {
           onProductTap: (_) {},
           onOutfitAuthorTap: (_) {},
           onMarkNotificationRead: (id) async {},
+          onMarkAllNotificationsRead: () async {},
+          onNotificationTap: (notification) async {},
           onUpdateNotificationPreferences: (preferences) async {},
           onLoadReviews: (sellerId) async {
             loadedSellerId = sellerId;
@@ -81,6 +83,10 @@ void main() {
       ),
     );
 
+    expect(find.text('Ева Смирнова'), findsOneWidget);
+    expect(find.text('@eva'), findsOneWidget);
+    expect(find.text('Москва'), findsOneWidget);
+    expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
     expect(find.text('4,8  ·  Отзывы'), findsOneWidget);
     await tester.tap(find.text('4,8  ·  Отзывы'));
     await tester.pumpAndSettle();

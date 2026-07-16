@@ -10,6 +10,8 @@ alter table public.products
   add column if not exists seller_name text not null default 'Продавец',
   add column if not exists seller_handle text not null default '@seller',
   add column if not exists location text not null default '',
+  add column if not exists views_count integer not null default 0,
+  add column if not exists likes_count integer not null default 0,
   add column if not exists background_status text not null default 'queued',
   add column if not exists background_error text;
 
@@ -214,6 +216,7 @@ create table if not exists public.outfits (
   photos text[] not null default '{}',
   items jsonb not null default '[]'::jsonb,
   likes_count integer not null default 0,
+  views_count integer not null default 0,
   preview_layout jsonb,
   created_at timestamptz not null default now()
 );
@@ -223,6 +226,7 @@ alter table public.outfits
   add column if not exists author_name text not null default 'Автор',
   add column if not exists author_handle text not null default '@user',
   add column if not exists likes_count integer not null default 0,
+  add column if not exists views_count integer not null default 0,
   add column if not exists preview_layout jsonb;
 
 alter table public.outfits enable row level security;
@@ -333,6 +337,76 @@ create policy "Users can manage recent products"
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
+create or replace function public.sync_product_views_count()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  affected_product_id text;
+begin
+  affected_product_id := case when tg_op = 'DELETE'
+    then old.product_id else new.product_id end;
+  update public.products product
+  set views_count = (
+    select count(*)::integer
+    from public.recent_products recent
+    where recent.product_id = affected_product_id
+  )
+  where product.id::text = affected_product_id;
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+create or replace function public.sync_product_likes_count()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  affected_product_id text;
+begin
+  affected_product_id := case when tg_op = 'DELETE'
+    then old.product_id else new.product_id end;
+  update public.products product
+  set likes_count = (
+    select count(*)::integer
+    from public.product_favorites favorite
+    where favorite.product_id = affected_product_id
+  )
+  where product.id::text = affected_product_id;
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists sync_product_views_count_change
+  on public.recent_products;
+create trigger sync_product_views_count_change
+after insert or delete on public.recent_products
+for each row execute function public.sync_product_views_count();
+
+drop trigger if exists sync_product_likes_count_change
+  on public.product_favorites;
+create trigger sync_product_likes_count_change
+after insert or delete on public.product_favorites
+for each row execute function public.sync_product_likes_count();
+
+update public.products product
+set views_count = (
+  select count(*)::integer
+  from public.recent_products recent
+  where recent.product_id = product.id::text
+),
+likes_count = (
+  select count(*)::integer
+  from public.product_favorites favorite
+  where favorite.product_id = product.id::text
+);
+
 create table if not exists public.recent_outfits (
   user_id uuid not null references auth.users(id) on delete cascade,
   outfit_id uuid not null references public.outfits(id) on delete cascade,
@@ -348,6 +422,89 @@ create policy "Users can manage recent outfits"
   to authenticated
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+create or replace function public.sync_outfit_views_count()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' then
+    update public.outfits
+      set views_count = views_count + 1
+      where id = new.outfit_id;
+    return new;
+  end if;
+
+  if tg_op = 'DELETE' then
+    update public.outfits
+      set views_count = greatest(views_count - 1, 0)
+      where id = old.outfit_id;
+    return old;
+  end if;
+
+  return null;
+end;
+$$;
+
+drop trigger if exists sync_outfit_views_count_insert on public.recent_outfits;
+create trigger sync_outfit_views_count_insert
+after insert on public.recent_outfits
+for each row execute function public.sync_outfit_views_count();
+
+drop trigger if exists sync_outfit_views_count_delete on public.recent_outfits;
+
+update public.outfits
+set views_count = greatest(public.outfits.views_count, counts.total)
+from (
+  select outfit_id, count(*)::integer as total
+  from public.recent_outfits
+  group by outfit_id
+) counts
+where public.outfits.id = counts.outfit_id;
+
+create or replace function public.record_outfit_view(p_outfit_id uuid)
+returns table(views_count integer, first_view boolean)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  viewer_id uuid := auth.uid();
+  inserted_rows integer := 0;
+  authoritative_count integer := 0;
+begin
+  if viewer_id is null then
+    raise exception 'Authentication is required' using errcode = '42501';
+  end if;
+
+  insert into public.recent_outfits (user_id, outfit_id, viewed_at)
+  values (viewer_id, p_outfit_id, now())
+  on conflict (user_id, outfit_id) do nothing;
+  get diagnostics inserted_rows = row_count;
+
+  if inserted_rows = 0 then
+    update public.recent_outfits
+      set viewed_at = now()
+      where user_id = viewer_id and outfit_id = p_outfit_id;
+  end if;
+
+  select greatest(coalesce(outfits.views_count, 0), 0)
+    into authoritative_count
+    from public.outfits
+    where outfits.id = p_outfit_id;
+
+  if not found then
+    raise exception 'Outfit not found' using errcode = 'P0002';
+  end if;
+
+  return query select authoritative_count, inserted_rows > 0;
+end;
+$$;
+
+revoke all on function public.record_outfit_view(uuid) from public;
+grant execute on function public.record_outfit_view(uuid) to authenticated;
 
 notify pgrst, 'reload schema';
 
@@ -413,10 +570,22 @@ create policy "Users can update their message threads"
 create table if not exists public.notification_settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
   push_enabled boolean not null default true,
+  messages_enabled boolean not null default true,
+  orders_enabled boolean not null default true,
+  favorites_enabled boolean not null default true,
+  promotions_enabled boolean not null default false,
+  sound_enabled boolean not null default true,
   email_enabled boolean not null default false,
   sms_enabled boolean not null default true,
   updated_at timestamptz not null default now()
 );
+
+alter table public.notification_settings
+  add column if not exists messages_enabled boolean not null default true,
+  add column if not exists orders_enabled boolean not null default true,
+  add column if not exists favorites_enabled boolean not null default true,
+  add column if not exists promotions_enabled boolean not null default false,
+  add column if not exists sound_enabled boolean not null default true;
 
 alter table public.notification_settings enable row level security;
 
@@ -434,9 +603,17 @@ create table if not exists public.notifications (
   body text not null,
   kind text not null default 'general',
   target_id text not null default '',
+  data jsonb not null default '{}'::jsonb,
+  dedupe_key text,
   is_read boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+alter table public.notifications
+  add column if not exists data jsonb not null default '{}'::jsonb,
+  add column if not exists dedupe_key text;
+
+delete from public.notifications where kind = 'message';
 
 alter table public.notifications enable row level security;
 
@@ -450,6 +627,9 @@ create policy "Users can manage their notifications"
 create index if not exists notifications_user_created_idx
   on public.notifications (user_id, created_at desc);
 
+create unique index if not exists notifications_user_dedupe_idx
+  on public.notifications (user_id, dedupe_key);
+
 create table if not exists public.orders (
   id text primary key,
   product_id text not null,
@@ -457,7 +637,7 @@ create table if not exists public.orders (
   product_image text not null default '',
   product_price text not null default '',
   product_price_value integer not null default 0,
-  seller_id uuid not null references auth.users(id) on delete cascade,
+  seller_id uuid references auth.users(id) on delete set null,
   buyer_id uuid not null references auth.users(id) on delete cascade,
   tracking_number text not null default '',
   delivery_service text not null default 'Яндекс Доставка',
@@ -477,6 +657,30 @@ alter table public.orders
   add column if not exists recipient_phone text not null default '',
   add column if not exists recipient_email text not null default '',
   add column if not exists delivery_price integer not null default 0;
+
+alter table public.orders
+  alter column seller_id drop not null,
+  drop constraint if exists orders_seller_id_fkey;
+
+alter table public.orders
+  add constraint orders_seller_id_fkey
+  foreign key (seller_id) references auth.users(id) on delete set null;
+
+create or replace function public.touch_order_updated_at()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists touch_orders_updated_at on public.orders;
+create trigger touch_orders_updated_at
+before update on public.orders
+for each row execute function public.touch_order_updated_at();
 
 alter table public.orders enable row level security;
 

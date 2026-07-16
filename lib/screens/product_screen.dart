@@ -38,6 +38,9 @@ class ProductDetailData {
     required this.isLiked,
     this.shippingAddress = '',
     this.canPurchase = true,
+    this.publishedAt,
+    this.viewsCount = 0,
+    this.likesCount = 0,
   });
 
   final String id;
@@ -58,6 +61,9 @@ class ProductDetailData {
   final bool isLiked;
   final String shippingAddress;
   final bool canPurchase;
+  final DateTime? publishedAt;
+  final int viewsCount;
+  final int likesCount;
 }
 
 class ProductScreen extends StatefulWidget {
@@ -98,7 +104,11 @@ class ProductScreen extends StatefulWidget {
   final ValueChanged<Product> onRelatedProductTap;
   final DeliveryProfile deliveryProfile;
   final Future<void> Function(DeliveryProfile profile) onSaveDeliveryProfile;
-  final Future<void> Function() onCreateDeliveryOrder;
+  final Future<AppOrder?> Function({
+    required String deliveryService,
+    required int deliveryPrice,
+  })
+  onCreateDeliveryOrder;
 
   @override
   State<ProductScreen> createState() => _ProductScreenState();
@@ -122,6 +132,8 @@ class _ProductScreenState extends State<ProductScreen>
   double _scrollOffset = 0;
   bool _isClosing = false;
   bool _isLiked = false;
+  int _viewsCount = 0;
+  int _likesCount = 0;
   bool _isSellerSubscribed = false;
   SellerProfile? _sellerProfile;
   int _reviewCount = 0;
@@ -133,6 +145,14 @@ class _ProductScreenState extends State<ProductScreen>
   void initState() {
     super.initState();
     _isLiked = widget.product.isLiked;
+    _viewsCount =
+        (widget.sourceProduct?.viewsCount ?? widget.product.viewsCount)
+            .clamp(0, 1 << 31)
+            .toInt();
+    _likesCount =
+        (widget.sourceProduct?.likesCount ?? widget.product.likesCount)
+            .clamp(0, 1 << 31)
+            .toInt();
     _openController = AnimationController(duration: _openDuration, vsync: this);
     _expandController = AnimationController(
       duration: _expandDuration,
@@ -189,7 +209,13 @@ class _ProductScreenState extends State<ProductScreen>
       );
 
   void _toggleWishlist() {
-    setState(() => _isLiked = !_isLiked);
+    setState(() {
+      final wasLiked = _isLiked;
+      _isLiked = !wasLiked;
+      _likesCount = (_likesCount + (wasLiked ? -1 : 1))
+          .clamp(0, 1 << 31)
+          .toInt();
+    });
     widget.onLike();
   }
 
@@ -364,6 +390,8 @@ class _ProductScreenState extends State<ProductScreen>
     final messageButtonText = canPurchase
         ? 'Написать сообщение'
         : 'Уточнить у продавца';
+    final publishedAt =
+        widget.sourceProduct?.publishedAt ?? product.publishedAt;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -519,6 +547,15 @@ class _ProductScreenState extends State<ProductScreen>
                                       address: product.shippingAddress,
                                       fallbackCity: product.location,
                                     ),
+                                    if (!widget.isPreview ||
+                                        publishedAt != null) ...[
+                                      const SizedBox(height: 10),
+                                      _ProductPublicationMeta(
+                                        publishedAt: publishedAt,
+                                        viewsCount: _viewsCount,
+                                        likesCount: _likesCount,
+                                      ),
+                                    ],
                                     SizedBox(height: spacing),
                                     _BuyDeliveryBlock(
                                       onTap: _openDeliveryCheckout,
@@ -637,6 +674,122 @@ class _ProductScreenState extends State<ProductScreen>
       ),
     );
   }
+}
+
+class _ProductPublicationMeta extends StatelessWidget {
+  const _ProductPublicationMeta({
+    required this.publishedAt,
+    required this.viewsCount,
+    required this.likesCount,
+  });
+
+  final DateTime? publishedAt;
+  final int viewsCount;
+  final int likesCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final publicationLabel = publishedAt == null
+        ? null
+        : _formatPublicationDate(publishedAt!);
+    return Wrap(
+      alignment: WrapAlignment.start,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 14,
+      runSpacing: 7,
+      children: [
+        if (publicationLabel != null)
+          _ProductMetaItem(
+            icon: CupertinoIcons.clock,
+            text: publicationLabel,
+            semanticsLabel: 'Опубликовано $publicationLabel',
+          ),
+        _ProductMetaItem(
+          icon: CupertinoIcons.eye,
+          text: _countLabel(
+            viewsCount,
+            one: 'просмотр',
+            few: 'просмотра',
+            many: 'просмотров',
+          ),
+          semanticsLabel: '$viewsCount просмотров',
+        ),
+        _ProductMetaItem(
+          icon: CupertinoIcons.heart,
+          text: _countLabel(
+            likesCount,
+            one: 'лайк',
+            few: 'лайка',
+            many: 'лайков',
+          ),
+          semanticsLabel: '$likesCount лайков',
+        ),
+      ],
+    );
+  }
+}
+
+class _ProductMetaItem extends StatelessWidget {
+  const _ProductMetaItem({
+    required this.icon,
+    required this.text,
+    required this.semanticsLabel,
+  });
+
+  final IconData icon;
+  final String text;
+  final String semanticsLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: semanticsLabel,
+      excludeSemantics: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: const Color(0xFF77777D)),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: const TextStyle(
+              fontSize: 11,
+              height: 1.1,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0,
+              color: Color(0xFF77777D),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatPublicationDate(DateTime value) {
+  final local = value.toLocal();
+  String twoDigits(int part) => part.toString().padLeft(2, '0');
+  return '${twoDigits(local.day)}.${twoDigits(local.month)}.${local.year}, '
+      '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
+}
+
+String _countLabel(
+  int rawCount, {
+  required String one,
+  required String few,
+  required String many,
+}) {
+  final count = rawCount < 0 ? 0 : rawCount;
+  final lastTwo = count % 100;
+  final last = count % 10;
+  final noun = lastTwo >= 11 && lastTwo <= 14
+      ? many
+      : last == 1
+      ? one
+      : last >= 2 && last <= 4
+      ? few
+      : many;
+  return '$count $noun';
 }
 
 class _HeroImageGallery extends StatefulWidget {
@@ -1731,7 +1884,8 @@ class _CharacteristicLine extends StatelessWidget {
               text: '$label:',
               style: const TextStyle(color: Color(0xFF77777C)),
             ),
-            if (normalized.isNotEmpty) TextSpan(text: ' $normalized'),
+            if (normalized.isNotEmpty)
+              TextSpan(text: ' $normalized', style: _productInfoBodyTextStyle),
           ],
         ),
         style: _productInfoBodyTextStyle,
@@ -1752,7 +1906,11 @@ class DeliveryCheckoutScreen extends StatefulWidget {
   final ProductDetailData product;
   final DeliveryProfile deliveryProfile;
   final Future<void> Function(DeliveryProfile profile) onSaveProfile;
-  final Future<void> Function() onSubmitOrder;
+  final Future<AppOrder?> Function({
+    required String deliveryService,
+    required int deliveryPrice,
+  })
+  onSubmitOrder;
 
   @override
   State<DeliveryCheckoutScreen> createState() => _DeliveryCheckoutScreenState();
@@ -1785,6 +1943,23 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
     return '$city, $address';
   }
 
+  String? get _recipientValidationMessage {
+    if (_profile.fullName.trim().isEmpty) return 'Укажите имя получателя';
+    if (_profile.phone.trim().isEmpty) return 'Укажите телефон получателя';
+    if (_profile.city.trim().isEmpty || _profile.address.trim().isEmpty) {
+      return 'Укажите город и адрес доставки';
+    }
+    return null;
+  }
+
+  void _showCheckoutMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
+  }
+
   Future<void> _editRecipient() async {
     final next = await showModalBottomSheet<DeliveryProfile>(
       context: context,
@@ -1799,28 +1974,59 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
 
   Future<void> _submit() async {
     if (_isSubmitting) return;
+    final validationMessage = _recipientValidationMessage;
+    if (validationMessage != null) {
+      _showCheckoutMessage(validationMessage);
+      await _editRecipient();
+      return;
+    }
+
     setState(() => _isSubmitting = true);
-    await widget.onSaveProfile(_profile);
-    await widget.onSubmitOrder();
-    if (!mounted) return;
-    setState(() => _isSubmitting = false);
-    Navigator.of(context).pop();
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Заказ создан')));
+    var completed = false;
+    try {
+      await widget.onSaveProfile(_profile);
+      final order = await widget.onSubmitOrder(
+        deliveryService: _method,
+        deliveryPrice: _deliveryPrice,
+      );
+      if (!mounted) return;
+      if (order == null) {
+        _showCheckoutMessage(
+          'Не удалось оформить заказ. Проверьте вход и попробуйте ещё раз.',
+        );
+        return;
+      }
+      final messenger = ScaffoldMessenger.of(context);
+      completed = true;
+      Navigator.of(context).pop();
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Заказ создан — он появился в профиле'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } catch (_) {
+      if (mounted) {
+        _showCheckoutMessage('Не удалось оформить заказ. Попробуйте ещё раз.');
+      }
+    } finally {
+      if (mounted && !completed) setState(() => _isSubmitting = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFFF7F7F8),
       body: SafeArea(
         child: Column(
           children: [
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
                 children: [
                   SizedBox(
                     height: 44,
@@ -1840,7 +2046,7 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                           ),
                         ),
                         const Text(
-                          'Оформление доставки',
+                          'Оформление заказа',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w800,
@@ -1850,11 +2056,11 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 18),
                   const Text(
-                    'Способ Получения',
+                    'Способ получения',
                     style: TextStyle(
-                      fontSize: 24,
+                      fontSize: 19,
                       height: 1,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0,
@@ -1895,11 +2101,11 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 34),
+                  const SizedBox(height: 24),
                   Text(
                     widget.product.sellerName,
                     style: const TextStyle(
-                      fontSize: 24,
+                      fontSize: 18,
                       height: 1,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0,
@@ -1957,11 +2163,11 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                     address: _addressLine,
                     price: _deliveryPrice,
                   ),
-                  const SizedBox(height: 34),
+                  const SizedBox(height: 24),
                   const Text(
                     'Получатель',
                     style: TextStyle(
-                      fontSize: 24,
+                      fontSize: 19,
                       height: 1,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0,
@@ -1998,16 +2204,18 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                     child: TextButton(
                       onPressed: _editRecipient,
                       style: TextButton.styleFrom(
-                        backgroundColor: const Color(0xFFE0E0E0),
+                        backgroundColor: const Color(0xFFEDEDEF),
                         foregroundColor: Colors.black,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 14,
                           vertical: 12,
                         ),
-                        shape: const RoundedRectangleBorder(),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
                       child: const Text(
-                        'ИЗМЕНИТЬ ПОЛУЧАТЕЛЯ',
+                        'Изменить данные',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
@@ -2016,11 +2224,11 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 28),
+                  const SizedBox(height: 24),
                   const Text(
                     'Стоимость',
                     style: TextStyle(
-                      fontSize: 24,
+                      fontSize: 19,
                       height: 1,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 0,
@@ -2079,12 +2287,14 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                       alpha: 0.4,
                     ),
                     elevation: 0,
-                    shape: const RoundedRectangleBorder(),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                   ),
                   child: Text(
                     _isSubmitting
-                        ? 'СОХРАНЯЕМ'
-                        : 'ОПЛАТИТЬ ${_formatPrice(_total)} ₽',
+                        ? 'ОФОРМЛЯЕМ'
+                        : 'ОФОРМИТЬ ЗАКАЗ · ${_formatPrice(_total)} ₽',
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w800,
@@ -2121,10 +2331,10 @@ class _DeliveryMethodCard extends StatelessWidget {
       splashFactory: NoSplash.splashFactory,
       highlightColor: Colors.transparent,
       child: Container(
-        height: 64,
+        height: 68,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: selected ? Colors.white : const Color(0xFFD9D9D9),
+          color: selected ? Colors.white : const Color(0xFFEDEDEF),
           border: Border.all(
             color: selected ? Colors.black : Colors.transparent,
             width: selected ? 1.5 : 0,
@@ -2256,7 +2466,7 @@ class _PriceLine extends StatelessWidget {
             child: Container(
               height: 1,
               margin: const EdgeInsets.symmetric(horizontal: 10),
-              color: Colors.black,
+              color: const Color(0xFFD8D8DC),
             ),
           ),
           Text(
