@@ -71,7 +71,7 @@ create policy "Buyers can create seller reviews"
       from public.orders as completed_order
       where completed_order.buyer_id = seller_reviews.buyer_id
         and completed_order.seller_id = seller_reviews.seller_id
-        and completed_order.product_id = seller_reviews.product_id
+        and completed_order.product_id::text = seller_reviews.product_id
         and completed_order.status = 'completed'
     )
   );
@@ -91,7 +91,7 @@ create policy "Buyers can update own seller reviews"
       from public.orders as completed_order
       where completed_order.buyer_id = seller_reviews.buyer_id
         and completed_order.seller_id = seller_reviews.seller_id
-        and completed_order.product_id = seller_reviews.product_id
+        and completed_order.product_id::text = seller_reviews.product_id
         and completed_order.status = 'completed'
     )
   );
