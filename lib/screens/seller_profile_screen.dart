@@ -4,6 +4,7 @@ import 'package:share_plus/share_plus.dart';
 import '../models/app_profile.dart';
 import '../models/product.dart';
 import '../widgets/app_image.dart';
+import '../widgets/seller_follow_button.dart';
 import 'reviews_screen.dart';
 
 class SellerProfileScreen extends StatefulWidget {
@@ -23,6 +24,10 @@ class SellerProfileScreen extends StatefulWidget {
     this.onShareSeller,
     this.onReportSeller,
     this.onBlockSeller,
+    this.sellerFollowListenable,
+    this.canFollowSeller,
+    this.isFollowingSeller,
+    this.onToggleSellerFollow,
   });
 
   final Product sourceProduct;
@@ -49,6 +54,10 @@ class SellerProfileScreen extends StatefulWidget {
   final Future<String?> Function(SellerProfile seller, String reason)?
   onReportSeller;
   final Future<String?> Function(SellerProfile seller)? onBlockSeller;
+  final Listenable? sellerFollowListenable;
+  final bool Function(String sellerId)? canFollowSeller;
+  final bool Function(String sellerId)? isFollowingSeller;
+  final Future<bool> Function(String sellerId)? onToggleSellerFollow;
 
   @override
   State<SellerProfileScreen> createState() => _SellerProfileScreenState();
@@ -404,7 +413,13 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
                           ),
                         ],
                         const SizedBox(height: 28),
-                        _SellerHeader(seller: _seller),
+                        _SellerHeader(
+                          seller: _seller,
+                          followListenable: widget.sellerFollowListenable,
+                          canFollowSeller: widget.canFollowSeller,
+                          isFollowingSeller: widget.isFollowingSeller,
+                          onToggleSellerFollow: widget.onToggleSellerFollow,
+                        ),
                         const SizedBox(height: 16),
                         _SellerMeta(seller: _seller),
                         const SizedBox(height: 18),
@@ -539,9 +554,19 @@ class _TopIconButton extends StatelessWidget {
 }
 
 class _SellerHeader extends StatelessWidget {
-  const _SellerHeader({required this.seller});
+  const _SellerHeader({
+    required this.seller,
+    this.followListenable,
+    this.canFollowSeller,
+    this.isFollowingSeller,
+    this.onToggleSellerFollow,
+  });
 
   final SellerProfile seller;
+  final Listenable? followListenable;
+  final bool Function(String sellerId)? canFollowSeller;
+  final bool Function(String sellerId)? isFollowingSeller;
+  final Future<bool> Function(String sellerId)? onToggleSellerFollow;
 
   @override
   Widget build(BuildContext context) {
@@ -584,24 +609,12 @@ class _SellerHeader extends StatelessWidget {
               const SizedBox(height: 6),
               Row(
                 children: [
-                  Container(
-                    height: 18,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.black,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    alignment: Alignment.center,
-                    child: const Text(
-                      'ПРОДАВЕЦ',
-                      style: TextStyle(
-                        fontSize: 9.5,
-                        height: 1,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 3.2,
-                        color: Colors.white,
-                      ),
-                    ),
+                  SellerFollowButton(
+                    sellerId: seller.id,
+                    listenable: followListenable,
+                    canFollow: canFollowSeller,
+                    isFollowing: isFollowingSeller,
+                    onToggle: onToggleSellerFollow,
                   ),
                   const SizedBox(width: 14),
                   Flexible(

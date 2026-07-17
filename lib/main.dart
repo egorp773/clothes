@@ -428,6 +428,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           loadSellerProfile: _repository.fetchSellerProfile,
           loadReviews: _repository.fetchSellerReviews,
           onToggleRelatedLike: _repository.toggleProductLike,
+          sellerFollowListenable: _repository,
+          canFollowSeller: _repository.canFollowSeller,
+          isFollowingSeller: _repository.isFollowingSeller,
+          onToggleSellerFollow: _repository.toggleSellerFollow,
           onContactSeller: () => _contactSellerFromProduct(product),
           onShare: () => _shareProduct(product),
           relatedProducts: _relatedProductsFor(product),
@@ -591,6 +595,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           loadReviews: _repository.fetchSellerReviews,
           onCreateReview: _repository.createSellerReview,
           canCreateReview: _repository.isSignedIn,
+          sellerFollowListenable: _repository,
+          canFollowSeller: _repository.canFollowSeller,
+          isFollowingSeller: _repository.isFollowingSeller,
+          onToggleSellerFollow: _repository.toggleSellerFollow,
           onReportSeller: (seller, reason) async {
             final submitted = await _repository.submitContentReport(
               targetType: 'user',
@@ -1059,6 +1067,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   resolveThread: _repository.threadById,
                   lastSeenForUser: _repository.lastSeenForUser,
                   chatActions: _chatActions,
+                  sellerFollowListenable: _repository,
+                  canFollowSeller: _repository.canFollowSeller,
+                  isFollowingSeller: _repository.isFollowingSeller,
+                  onToggleSellerFollow: _repository.toggleSellerFollow,
                 ),
                 OutfitsScreen(
                   scale: 1.0,
@@ -1076,6 +1088,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   deliveryProfile: _repository.deliveryProfile,
                   onSaveDeliveryProfile: _repository.updateDeliveryProfile,
                   onCreateDeliveryOrder: _repository.createDeliveryOrder,
+                  sellerFollowListenable: _repository,
+                  canFollowSeller: _repository.canFollowSeller,
+                  isFollowingSeller: _repository.isFollowingSeller,
+                  onToggleSellerFollow: _repository.toggleSellerFollow,
                 ),
                 _buildCreateScreen(),
                 MessagesScreen(

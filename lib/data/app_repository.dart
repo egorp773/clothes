@@ -47,6 +47,7 @@ class AppRepository extends ChangeNotifier {
   static const _profileKey = 'profile_v1';
   static const _favoriteProductIdsKey = 'favorite_product_ids_v1';
   static const _favoriteOutfitIdsKey = 'favorite_outfit_ids_v1';
+  static const _followedSellerIdsKey = 'followed_seller_ids_v1';
   static const _recentProductIdsKey = 'recent_product_ids_v1';
   static const _recentOutfitIdsKey = 'recent_outfit_ids_v1';
   static const _countedProductViewsKeyPrefix = 'counted_product_views_v1';
@@ -64,6 +65,7 @@ class AppRepository extends ChangeNotifier {
     _profileKey,
     _favoriteProductIdsKey,
     _favoriteOutfitIdsKey,
+    _followedSellerIdsKey,
     _recentProductIdsKey,
     _recentOutfitIdsKey,
     _notificationsKey,
@@ -166,6 +168,7 @@ class AppRepository extends ChangeNotifier {
   List<SellerReview> _sellerReviews = [];
   Set<String> _favoriteProductIds = {};
   Set<String> _favoriteOutfitIds = {};
+  Set<String> _followedSellerIds = {};
   List<String> _recentProductIds = [];
   List<String> _recentOutfitIds = [];
   Set<String> _countedProductViewIds = {};
@@ -335,6 +338,13 @@ class AppRepository extends ChangeNotifier {
   }
 
   AppProfile get profile => _profile;
+  bool canFollowSeller(String sellerId) {
+    final normalized = sellerId.trim();
+    return normalized.isNotEmpty && normalized != currentUserId;
+  }
+
+  bool isFollowingSeller(String sellerId) =>
+      _followedSellerIds.contains(sellerId.trim());
   List<ProfileNotification> get notifications => List.unmodifiable(
     _notifications.where(
       (notification) =>
@@ -2530,6 +2540,10 @@ class AppRepository extends ChangeNotifier {
           .from('outfit_favorites')
           .select('outfit_id')
           .eq('user_id', currentUserId);
+      final followedSellers = await _client
+          .from('profile_follows')
+          .select('seller_id')
+          .eq('follower_id', currentUserId);
       final recentProducts = await _client
           .from('recent_products')
           .select('product_id')
@@ -2550,6 +2564,10 @@ class AppRepository extends ChangeNotifier {
           .toSet();
       final remoteFavoriteOutfitIds = (outfitFavorites as List<dynamic>)
           .map((item) => (item as Map<String, dynamic>)['outfit_id'] as String?)
+          .whereType<String>()
+          .toSet();
+      final remoteFollowedSellerIds = (followedSellers as List<dynamic>)
+          .map((item) => (item as Map<String, dynamic>)['seller_id'] as String?)
           .whereType<String>()
           .toSet();
       final remoteRecentProductIds = (recentProducts as List<dynamic>)
@@ -2573,6 +2591,7 @@ class AppRepository extends ChangeNotifier {
         ...remoteFavoriteProductIds,
       };
       _favoriteOutfitIds = {..._favoriteOutfitIds, ...remoteFavoriteOutfitIds};
+      _followedSellerIds = remoteFollowedSellerIds;
       _recentProductIds = _mergeRecentIds(
         remoteRecentProductIds,
         _recentProductIds,
@@ -2881,6 +2900,69 @@ class AppRepository extends ChangeNotifier {
             debugPrint('Accessory background queue error: $e');
           }),
     );
+  }
+
+  Future<bool> toggleSellerFollow(String sellerId) async {
+    final normalizedSellerId = sellerId.trim();
+    if (!canFollowSeller(normalizedSellerId)) return false;
+
+    final willFollow = !_followedSellerIds.contains(normalizedSellerId);
+    if (willFollow) {
+      _followedSellerIds.add(normalizedSellerId);
+    } else {
+      _followedSellerIds.remove(normalizedSellerId);
+    }
+    await _saveStringSet(
+      _scopedStorageKey(_followedSellerIdsKey),
+      _followedSellerIds,
+    );
+    notifyListeners();
+
+    if (!_hasSupabase || currentUserId.isEmpty) return willFollow;
+    try {
+      if (willFollow) {
+        await _client.from('profile_follows').upsert({
+          'follower_id': currentUserId,
+          'seller_id': normalizedSellerId,
+        }, onConflict: 'follower_id,seller_id');
+      } else {
+        await _client
+            .from('profile_follows')
+            .delete()
+            .eq('follower_id', currentUserId)
+            .eq('seller_id', normalizedSellerId);
+      }
+      if (_followedSellerIds.isNotEmpty) {
+        await _client
+            .from('profile_follows')
+            .upsert(
+              _followedSellerIds
+                  .where((sellerId) => sellerId != currentUserId)
+                  .map(
+                    (sellerId) => {
+                      'follower_id': currentUserId,
+                      'seller_id': sellerId,
+                    },
+                  )
+                  .toList(),
+              onConflict: 'follower_id,seller_id',
+            );
+      }
+    } catch (e) {
+      debugPrint('Seller follow sync error: $e');
+      if (willFollow) {
+        _followedSellerIds.remove(normalizedSellerId);
+      } else {
+        _followedSellerIds.add(normalizedSellerId);
+      }
+      await _saveStringSet(
+        _scopedStorageKey(_followedSellerIdsKey),
+        _followedSellerIds,
+      );
+      _authError = 'Не удалось обновить подписку. Попробуйте ещё раз.';
+      notifyListeners();
+    }
+    return _followedSellerIds.contains(normalizedSellerId);
   }
 
   Future<void> toggleProductLike(String productId) async {
@@ -4782,6 +4864,9 @@ class AppRepository extends ChangeNotifier {
     _favoriteOutfitIds = _readStringSet(
       _scopedStorageKey(_favoriteOutfitIdsKey),
     );
+    _followedSellerIds = _readStringSet(
+      _scopedStorageKey(_followedSellerIdsKey),
+    );
     _recentProductIds = _readStringList(
       _scopedStorageKey(_recentProductIdsKey),
     );
@@ -4846,6 +4931,10 @@ class AppRepository extends ChangeNotifier {
       _saveStringSet(
         _scopedStorageKey(_favoriteOutfitIdsKey),
         _favoriteOutfitIds,
+      ),
+      _saveStringSet(
+        _scopedStorageKey(_followedSellerIdsKey),
+        _followedSellerIds,
       ),
       _writeStringList(
         _scopedStorageKey(_recentProductIdsKey),

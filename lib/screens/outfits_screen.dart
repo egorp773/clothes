@@ -45,6 +45,10 @@ class OutfitsScreen extends StatefulWidget {
     required int deliveryPrice,
   })
   onCreateDeliveryOrder;
+  final Listenable? sellerFollowListenable;
+  final bool Function(String sellerId)? canFollowSeller;
+  final bool Function(String sellerId)? isFollowingSeller;
+  final Future<bool> Function(String sellerId)? onToggleSellerFollow;
 
   const OutfitsScreen({
     super.key,
@@ -63,6 +67,10 @@ class OutfitsScreen extends StatefulWidget {
     required this.deliveryProfile,
     required this.onSaveDeliveryProfile,
     required this.onCreateDeliveryOrder,
+    this.sellerFollowListenable,
+    this.canFollowSeller,
+    this.isFollowingSeller,
+    this.onToggleSellerFollow,
   });
 
   @override
@@ -408,6 +416,10 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
           onLike: product.id.isEmpty || !canPurchase
               ? () {}
               : () => widget.onToggleProductLike(product.id),
+          sellerFollowListenable: widget.sellerFollowListenable,
+          canFollowSeller: widget.canFollowSeller,
+          isFollowingSeller: widget.isFollowingSeller,
+          onToggleSellerFollow: widget.onToggleSellerFollow,
           onOpenSeller: () => widget.onOpenSellerProfile(
             _sellerProductForOutfitProduct(product),
           ),

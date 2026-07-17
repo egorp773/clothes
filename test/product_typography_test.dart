@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets(
-    'product characteristics use the same body typography as description',
+    'description keeps product typography with tighter line spacing',
     (tester) async {
       tester.view.physicalSize = const Size(480, 900);
       tester.view.devicePixelRatio = 1;
@@ -66,10 +66,6 @@ void main() {
             widget.textSpan?.toPlainText() == 'Категория: Куртки',
         description: 'characteristic body text',
       );
-      final description = tester
-          .renderObject<RenderParagraph>(descriptionFinder)
-          .text
-          .style;
       final characteristic = tester
           .renderObject<RenderParagraph>(characteristicFinder)
           .text
@@ -79,11 +75,16 @@ void main() {
               as TextSpan;
       final valueSpan = characteristicSpan.children!.last as TextSpan;
 
+      final description = tester
+          .renderObject<RenderParagraph>(descriptionFinder)
+          .text
+          .style;
       expect(characteristic?.fontSize, description?.fontSize);
-      expect(characteristic?.height, description?.height);
-      expect(characteristic?.fontWeight, description?.fontWeight);
-      expect(characteristic?.fontFamily, AppTypography.fontFamily);
-      expect(description?.fontFamily, AppTypography.fontFamily);
+      expect(characteristic?.fontFamily, description?.fontFamily);
+      expect(characteristic?.fontWeight, AppTypography.semiBold);
+      expect(description?.fontWeight, AppTypography.semiBold);
+      expect(description?.height, 1.16);
+      expect(description!.height!, lessThan(characteristic!.height!));
       expect(valueSpan.style, isNull);
     },
   );

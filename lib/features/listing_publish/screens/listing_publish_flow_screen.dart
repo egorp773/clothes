@@ -186,12 +186,30 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
   }
 
   Widget _bodyFor(ListingPublishStep step) => switch (step) {
-    ListingPublishStep.photos => ListingPhotosStep(controller: _controller),
-    ListingPublishStep.basics => ListingBasicsStep(controller: _controller),
-    ListingPublishStep.attributes => ListingAttributesStep(
-      controller: _controller,
+    ListingPublishStep.photos => Align(
+      alignment: Alignment.topCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: ListingPhotosStep(controller: _controller),
+      ),
     ),
-    ListingPublishStep.delivery => ListingDeliveryStep(controller: _controller),
+    ListingPublishStep.basics => Align(
+      alignment: Alignment.topCenter,
+      child: Transform.translate(
+        offset: const Offset(0, -9),
+        child: ListingBasicsStep(controller: _controller),
+      ),
+    ),
+    ListingPublishStep.attributes => Transform.translate(
+      offset: const Offset(0, -5),
+      child: ListingAttributesStep(
+        controller: _controller,
+      ),
+    ),
+    ListingPublishStep.delivery => Transform.translate(
+      offset: const Offset(0, -5),
+      child: ListingDeliveryStep(controller: _controller),
+    ),
     ListingPublishStep.preview => ListingPreviewStep(controller: _controller),
     ListingPublishStep.success => const SizedBox.shrink(),
   };

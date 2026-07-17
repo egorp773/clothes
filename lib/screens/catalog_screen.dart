@@ -64,6 +64,10 @@ class CatalogScreen extends StatefulWidget {
   final MessageThread? Function(String threadId) resolveThread;
   final DateTime? Function(String userId) lastSeenForUser;
   final ChatActions? chatActions;
+  final Listenable? sellerFollowListenable;
+  final bool Function(String sellerId)? canFollowSeller;
+  final bool Function(String sellerId)? isFollowingSeller;
+  final Future<bool> Function(String sellerId)? onToggleSellerFollow;
 
   const CatalogScreen({
     super.key,
@@ -91,6 +95,10 @@ class CatalogScreen extends StatefulWidget {
     required this.resolveThread,
     required this.lastSeenForUser,
     this.chatActions,
+    this.sellerFollowListenable,
+    this.canFollowSeller,
+    this.isFollowingSeller,
+    this.onToggleSellerFollow,
   });
 
   @override
@@ -700,6 +708,10 @@ class _CatalogScreenState extends State<CatalogScreen>
           loadReviews: widget.onLoadReviews,
           onCreateReview: widget.onCreateReview,
           canCreateReview: widget.currentUserId.isNotEmpty,
+          sellerFollowListenable: widget.sellerFollowListenable,
+          canFollowSeller: widget.canFollowSeller,
+          isFollowingSeller: widget.isFollowingSeller,
+          onToggleSellerFollow: widget.onToggleSellerFollow,
           onReportSeller: (seller, reason) async {
             final submitted = await widget.onSubmitContentReport(
               targetType: 'user',
@@ -785,6 +797,10 @@ class _CatalogScreenState extends State<CatalogScreen>
           loadSellerProfile: widget.onLoadSellerProfile,
           loadReviews: widget.onLoadReviews,
           onToggleRelatedLike: widget.onToggleLike,
+          sellerFollowListenable: widget.sellerFollowListenable,
+          canFollowSeller: widget.canFollowSeller,
+          isFollowingSeller: widget.isFollowingSeller,
+          onToggleSellerFollow: widget.onToggleSellerFollow,
           relatedProducts: _relatedProductsFor(product),
           onRelatedProductTap: _showProductDetails,
           deliveryProfile: widget.deliveryProfile,

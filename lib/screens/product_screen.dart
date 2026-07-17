@@ -8,12 +8,22 @@ import '../models/profile_feature.dart';
 import '../services/image_download_service.dart';
 import '../features/listing_publish/data/listing_catalogs.dart';
 import '../widgets/app_image.dart';
+import '../widgets/seller_follow_button.dart';
 
 const _productInfoBodyTextStyle = TextStyle(
   fontFamily: AppTypography.fontFamily,
   fontSize: 15,
   height: 1.24,
   fontWeight: AppTypography.medium,
+  letterSpacing: 0,
+  color: Colors.black,
+);
+
+const _productDescriptionTextStyle = TextStyle(
+  fontFamily: AppTypography.fontFamily,
+  fontSize: 15,
+  height: 1.16,
+  fontWeight: AppTypography.semiBold,
   letterSpacing: 0,
   color: Colors.black,
 );
@@ -86,6 +96,10 @@ class ProductScreen extends StatefulWidget {
     this.loadSellerProfile,
     this.loadReviews,
     this.onToggleRelatedLike,
+    this.sellerFollowListenable,
+    this.canFollowSeller,
+    this.isFollowingSeller,
+    this.onToggleSellerFollow,
     this.isPreview = false,
   });
 
@@ -99,6 +113,10 @@ class ProductScreen extends StatefulWidget {
   final Future<SellerProfile?> Function(Product product)? loadSellerProfile;
   final Future<List<SellerReview>> Function(String sellerId)? loadReviews;
   final Future<void> Function(String productId)? onToggleRelatedLike;
+  final Listenable? sellerFollowListenable;
+  final bool Function(String sellerId)? canFollowSeller;
+  final bool Function(String sellerId)? isFollowingSeller;
+  final Future<bool> Function(String sellerId)? onToggleSellerFollow;
   final bool isPreview;
   final List<Product> relatedProducts;
   final ValueChanged<Product> onRelatedProductTap;
@@ -555,6 +573,15 @@ class _ProductScreenState extends State<ProductScreen>
                                       rating: sellerRating.toDouble(),
                                       reviews: _reviewCount,
                                       followers: sellerFollowers,
+                                      sellerId:
+                                          widget.sourceProduct?.ownerId ?? '',
+                                      followListenable:
+                                          widget.sellerFollowListenable,
+                                      canFollowSeller: widget.canFollowSeller,
+                                      isFollowingSeller:
+                                          widget.isFollowingSeller,
+                                      onToggleSellerFollow:
+                                          widget.onToggleSellerFollow,
                                       onTap: widget.onOpenSeller,
                                       onReviewsTap: widget.onOpenReviews,
                                     ),
@@ -1023,6 +1050,11 @@ class _SellerCard extends StatelessWidget {
     required this.rating,
     required this.reviews,
     required this.followers,
+    required this.sellerId,
+    this.followListenable,
+    this.canFollowSeller,
+    this.isFollowingSeller,
+    this.onToggleSellerFollow,
     required this.onTap,
     required this.onReviewsTap,
   });
@@ -1034,6 +1066,11 @@ class _SellerCard extends StatelessWidget {
   final double rating;
   final int reviews;
   final int followers;
+  final String sellerId;
+  final Listenable? followListenable;
+  final bool Function(String sellerId)? canFollowSeller;
+  final bool Function(String sellerId)? isFollowingSeller;
+  final Future<bool> Function(String sellerId)? onToggleSellerFollow;
   final VoidCallback onTap;
   final VoidCallback onReviewsTap;
 
@@ -1155,24 +1192,12 @@ class _SellerCard extends StatelessWidget {
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      Container(
-                        height: 20,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        alignment: Alignment.center,
-                        child: const Text(
-                          'ПРОДАВЕЦ',
-                          style: TextStyle(
-                            fontSize: 9,
-                            height: 1,
-                            fontWeight: AppTypography.bold,
-                            letterSpacing: 3.2,
-                            color: Colors.white,
-                          ),
-                        ),
+                      SellerFollowButton(
+                        sellerId: sellerId,
+                        listenable: followListenable,
+                        canFollow: canFollowSeller,
+                        isFollowing: isFollowingSeller,
+                        onToggle: onToggleSellerFollow,
                       ),
                       const SizedBox(width: 14),
                       Expanded(
@@ -1474,7 +1499,7 @@ class _ProductDatabaseDescriptionState
             hairline: widget.hairline,
             showTopBorder: false,
             compact: true,
-            child: Text(description, style: _productInfoBodyTextStyle),
+            child: Text(description, style: _productDescriptionTextStyle),
           ),
         if (source?.hasDefects == true &&
             source!.defectsDescription.trim().isNotEmpty)
@@ -1811,6 +1836,14 @@ class _CharacteristicLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final normalized = value.trim();
     if (normalized.isEmpty) return const SizedBox.shrink();
+    const characteristicTextStyle = TextStyle(
+      fontFamily: AppTypography.fontFamily,
+      fontSize: 15,
+      height: 1.24,
+      fontWeight: AppTypography.semiBold,
+      letterSpacing: 0,
+      color: Colors.black,
+    );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -1824,7 +1857,7 @@ class _CharacteristicLine extends StatelessWidget {
             if (normalized.isNotEmpty) TextSpan(text: ' $normalized'),
           ],
         ),
-        style: _productInfoBodyTextStyle,
+        style: characteristicTextStyle,
       ),
     );
   }
