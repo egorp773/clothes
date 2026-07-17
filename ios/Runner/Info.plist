@@ -41,11 +41,13 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Камера нужна, чтобы фотографировать вещи для объявления.</string>
+	<string>Камера нужна для фото и видео вещей в объявлениях, поиске и чатах.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Микрофон нужен для записи звука при съёмке видео в чате.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Доступ к фотографиям нужен для встроенной галереи и поиска похожих вещей.</string>
+	<string>Доступ к медиатеке нужен, чтобы выбирать фото и видео для объявлений, образов, профиля, поиска и чатов.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Access is needed to save listing and outfit photos to the gallery.</string>
+	<string>Доступ нужен, чтобы сохранять выбранные объявления и образы в медиатеку.</string>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>

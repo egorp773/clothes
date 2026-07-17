@@ -41,6 +41,7 @@ class ProductDetailData {
     this.publishedAt,
     this.viewsCount = 0,
     this.likesCount = 0,
+    this.deliveryMethods = const [],
   });
 
   final String id;
@@ -64,6 +65,7 @@ class ProductDetailData {
   final DateTime? publishedAt;
   final int viewsCount;
   final int likesCount;
+  final List<String> deliveryMethods;
 }
 
 class ProductScreen extends StatefulWidget {
@@ -71,7 +73,6 @@ class ProductScreen extends StatefulWidget {
     super.key,
     required this.product,
     required this.onLike,
-    required this.onAddToCart,
     required this.onContactSeller,
     this.onShare,
     required this.onOpenSeller,
@@ -91,7 +92,6 @@ class ProductScreen extends StatefulWidget {
   final Product? sourceProduct;
   final ProductDetailData product;
   final VoidCallback onLike;
-  final VoidCallback onAddToCart;
   final VoidCallback onContactSeller;
   final VoidCallback? onShare;
   final VoidCallback onOpenSeller;
@@ -134,11 +134,9 @@ class _ProductScreenState extends State<ProductScreen>
   bool _isLiked = false;
   int _viewsCount = 0;
   int _likesCount = 0;
-  bool _isSellerSubscribed = false;
   SellerProfile? _sellerProfile;
   int _reviewCount = 0;
   double _reviewRating = 0;
-  int _followersDelta = 0;
   bool _didShowUnavailableSheet = false;
 
   @override
@@ -223,16 +221,14 @@ class _ProductScreenState extends State<ProductScreen>
     final sourceProduct = widget.sourceProduct;
     final loadSellerProfile = widget.loadSellerProfile;
     final loadReviews = widget.loadReviews;
-    if (sourceProduct == null ||
-        loadSellerProfile == null ||
-        loadReviews == null) {
+    if (sourceProduct == null || loadSellerProfile == null) {
       return;
     }
     final profile = await loadSellerProfile(sourceProduct);
     final sellerId = profile?.id.trim().isNotEmpty == true
         ? profile!.id
         : sourceProduct.ownerId;
-    final reviews = sellerId.trim().isEmpty
+    final reviews = loadReviews == null || sellerId.trim().isEmpty
         ? const <SellerReview>[]
         : await loadReviews(sellerId);
     if (!mounted) return;
@@ -243,13 +239,6 @@ class _ProductScreenState extends State<ProductScreen>
           ? 0
           : reviews.fold<int>(0, (sum, review) => sum + review.rating) /
                 reviews.length;
-    });
-  }
-
-  void _toggleSellerSubscription() {
-    setState(() {
-      _isSellerSubscribed = !_isSellerSubscribed;
-      _followersDelta += _isSellerSubscribed ? 1 : -1;
     });
   }
 
@@ -376,16 +365,12 @@ class _ProductScreenState extends State<ProductScreen>
         : _bottomRadiusCard * (1 - tExpand);
     final spacing = _spacing;
     final t = (_scrollOffset / _scrollRange).clamp(0.0, 1.0);
-    final screenHeight = MediaQuery.sizeOf(context).height;
-    final detailsStartOffset = screenHeight * 0.34;
-    final sellerTopExtra = detailsStartOffset * (1 - t);
     final titlePriceSpacing = spacing + 28.0 * (1 - t);
     final canPurchase = product.canPurchase;
     final sellerRating = _reviewCount == 0 ? 0.0 : _reviewRating;
-    final sellerFollowers =
-        ((_sellerProfile?.followersCount ?? 0) + _followersDelta)
-            .clamp(0, 1 << 31)
-            .toInt();
+    final sellerFollowers = (_sellerProfile?.followersCount ?? 0)
+        .clamp(0, 1 << 31)
+        .toInt();
     final priceText = canPurchase ? product.price : 'Не продается';
     final messageButtonText = canPurchase
         ? 'Написать сообщение'
@@ -530,8 +515,7 @@ class _ProductScreenState extends State<ProductScreen>
                               child: Padding(
                                 padding: EdgeInsets.fromLTRB(
                                   18,
-                                  (spacing * 0.5).clamp(12.0, 28.0) +
-                                      sellerTopExtra,
+                                  (spacing * 0.5).clamp(12.0, 28.0),
                                   18,
                                   spacing,
                                 ),
@@ -544,7 +528,6 @@ class _ProductScreenState extends State<ProductScreen>
                                       hairline: hairline,
                                     ),
                                     _DeliveryAddress(
-                                      address: product.shippingAddress,
                                       fallbackCity: product.location,
                                     ),
                                     if (!widget.isPreview ||
@@ -557,23 +540,25 @@ class _ProductScreenState extends State<ProductScreen>
                                       ),
                                     ],
                                     SizedBox(height: spacing),
-                                    _BuyDeliveryBlock(
-                                      onTap: _openDeliveryCheckout,
-                                    ),
-                                    SizedBox(height: spacing),
+                                    if (!widget.isPreview) ...[
+                                      _BuyDeliveryBlock(
+                                        onTap: _openDeliveryCheckout,
+                                      ),
+                                      SizedBox(height: spacing),
+                                    ],
                                     _SellerCard(
                                       hairline: hairline,
                                       name: product.sellerName,
                                       handle: product.sellerHandle,
+                                      avatarUrl:
+                                          _sellerProfile?.avatarUrl ?? '',
                                       rating: sellerRating.toDouble(),
                                       reviews: _reviewCount,
                                       followers: sellerFollowers,
-                                      isSubscribed: _isSellerSubscribed,
-                                      onSubscribe: _toggleSellerSubscription,
                                       onTap: widget.onOpenSeller,
                                       onReviewsTap: widget.onOpenReviews,
                                     ),
-                                    SizedBox(height: spacing),
+                                    const SizedBox(height: 14),
                                     _RelatedProductsSection(
                                       products: widget.relatedProducts,
                                       onProductTap: widget.onRelatedProductTap,
@@ -632,7 +617,7 @@ class _ProductScreenState extends State<ProductScreen>
                               messageButtonText.toUpperCase(),
                               style: const TextStyle(
                                 fontSize: 12,
-                                fontWeight: FontWeight.w800,
+                                fontWeight: AppTypography.bold,
                                 letterSpacing: 0,
                               ),
                             ),
@@ -690,38 +675,36 @@ class _ProductPublicationMeta extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final publicationLabel = publishedAt == null
-        ? null
+        ? '—'
         : _formatPublicationDate(publishedAt!);
-    return Wrap(
-      alignment: WrapAlignment.start,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 14,
-      runSpacing: 7,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        if (publicationLabel != null)
-          _ProductMetaItem(
-            icon: CupertinoIcons.clock,
-            text: publicationLabel,
-            semanticsLabel: 'Опубликовано $publicationLabel',
+        Expanded(
+          child: Text(
+            'Опубликовано: $publicationLabel',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 13.5,
+              height: 1.2,
+              fontWeight: AppTypography.medium,
+              letterSpacing: 0,
+              color: Color(0xFF77777D),
+            ),
           ),
+        ),
+        const SizedBox(width: 12),
         _ProductMetaItem(
           icon: CupertinoIcons.eye,
-          text: _countLabel(
-            viewsCount,
-            one: 'просмотр',
-            few: 'просмотра',
-            many: 'просмотров',
-          ),
+          text: '$viewsCount',
           semanticsLabel: '$viewsCount просмотров',
         ),
+        const SizedBox(width: 10),
         _ProductMetaItem(
           icon: CupertinoIcons.heart,
-          text: _countLabel(
-            likesCount,
-            one: 'лайк',
-            few: 'лайка',
-            many: 'лайков',
-          ),
+          text: '$likesCount',
           semanticsLabel: '$likesCount лайков',
         ),
       ],
@@ -753,9 +736,10 @@ class _ProductMetaItem extends StatelessWidget {
           Text(
             text,
             style: const TextStyle(
-              fontSize: 11,
-              height: 1.1,
-              fontWeight: FontWeight.w500,
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 13.5,
+              height: 1.2,
+              fontWeight: AppTypography.medium,
               letterSpacing: 0,
               color: Color(0xFF77777D),
             ),
@@ -771,25 +755,6 @@ String _formatPublicationDate(DateTime value) {
   String twoDigits(int part) => part.toString().padLeft(2, '0');
   return '${twoDigits(local.day)}.${twoDigits(local.month)}.${local.year}, '
       '${twoDigits(local.hour)}:${twoDigits(local.minute)}';
-}
-
-String _countLabel(
-  int rawCount, {
-  required String one,
-  required String few,
-  required String many,
-}) {
-  final count = rawCount < 0 ? 0 : rawCount;
-  final lastTwo = count % 100;
-  final last = count % 10;
-  final noun = lastTwo >= 11 && lastTwo <= 14
-      ? many
-      : last == 1
-      ? one
-      : last >= 2 && last <= 4
-      ? few
-      : many;
-  return '$count $noun';
 }
 
 class _HeroImageGallery extends StatefulWidget {
@@ -1054,11 +1019,10 @@ class _SellerCard extends StatelessWidget {
     required this.hairline,
     required this.name,
     required this.handle,
+    required this.avatarUrl,
     required this.rating,
     required this.reviews,
     required this.followers,
-    required this.isSubscribed,
-    required this.onSubscribe,
     required this.onTap,
     required this.onReviewsTap,
   });
@@ -1066,11 +1030,10 @@ class _SellerCard extends StatelessWidget {
   final double hairline;
   final String name;
   final String handle;
+  final String avatarUrl;
   final double rating;
   final int reviews;
   final int followers;
-  final bool isSubscribed;
-  final VoidCallback onSubscribe;
   final VoidCallback onTap;
   final VoidCallback onReviewsTap;
 
@@ -1084,21 +1047,28 @@ class _SellerCard extends StatelessWidget {
               onTap: onTap,
               splashFactory: NoSplash.splashFactory,
               highlightColor: Colors.transparent,
-              child: Container(
+              child: SizedBox(
                 width: 56,
                 height: 56,
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase(),
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.black,
-                  ),
+                child: ClipOval(
+                  child: avatarUrl.trim().isEmpty
+                      ? ColoredBox(
+                          color: const Color(0xFFF0F0F1),
+                          child: Center(
+                            child: Text(
+                              name.trim().isEmpty
+                                  ? '?'
+                                  : name.trim()[0].toUpperCase(),
+                              style: const TextStyle(
+                                fontFamily: AppTypography.fontFamily,
+                                fontSize: 24,
+                                fontWeight: AppTypography.bold,
+                                color: Colors.black,
+                              ),
+                            ),
+                          ),
+                        )
+                      : AppImage(imageUrl: avatarUrl.trim(), fit: BoxFit.cover),
                 ),
               ),
             ),
@@ -1115,9 +1085,9 @@ class _SellerCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 22,
+                            fontSize: 18,
                             height: 1,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: AppTypography.bold,
                           ),
                         ),
                       ),
@@ -1139,9 +1109,9 @@ class _SellerCard extends StatelessWidget {
                               Text(
                                 rating.toStringAsFixed(1).replaceAll('.', ','),
                                 style: const TextStyle(
-                                  fontSize: 13,
+                                  fontSize: 14,
                                   height: 1,
-                                  fontWeight: FontWeight.w800,
+                                  fontWeight: AppTypography.bold,
                                   color: Colors.black,
                                 ),
                               ),
@@ -1167,88 +1137,54 @@ class _SellerCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 6),
                   InkWell(
-                    onTap: null,
+                    onTap: onTap,
                     splashFactory: NoSplash.splashFactory,
                     highlightColor: Colors.transparent,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            handle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              height: 1,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.black.withValues(alpha: 0.58),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 0),
-                        const Icon(
-                          CupertinoIcons.star_fill,
-                          size: 0,
-                          color: Color(0xFFFFB31A),
-                        ),
-                        const SizedBox(width: 0),
-                        Text(
-                          rating.toStringAsFixed(1).replaceAll('.', ','),
-                          style: const TextStyle(
-                            fontSize: 0,
-                            height: 1,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.black,
-                          ),
-                        ),
-                        const SizedBox(width: 0),
-                        Text(
-                          '$reviews отзыва',
-                          style: TextStyle(
-                            fontSize: 0,
-                            height: 1,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.black.withValues(alpha: 0.56),
-                          ),
-                        ),
-                      ],
+                    child: Text(
+                      handle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1,
+                        fontWeight: AppTypography.semiBold,
+                        color: Colors.black.withValues(alpha: 0.58),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      InkWell(
-                        onTap: onSubscribe,
-                        splashFactory: NoSplash.splashFactory,
-                        highlightColor: Colors.transparent,
-                        child: Container(
-                          height: 20,
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          decoration: BoxDecoration(
-                            color: Colors.black,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(
-                            isSubscribed ? 'ВЫ ПОДПИСАНЫ' : 'ПОДПИСАТЬСЯ',
-                            style: const TextStyle(
-                              fontSize: 9,
-                              height: 1,
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 4,
-                              color: Colors.white,
-                            ),
+                      Container(
+                        height: 20,
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        alignment: Alignment.center,
+                        child: const Text(
+                          'ПРОДАВЕЦ',
+                          style: TextStyle(
+                            fontSize: 9,
+                            height: 1,
+                            fontWeight: AppTypography.bold,
+                            letterSpacing: 3.2,
+                            color: Colors.white,
                           ),
                         ),
                       ),
                       const SizedBox(width: 14),
-                      Text(
-                        '$followers подписчика',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.black.withValues(alpha: 0.72),
+                      Expanded(
+                        child: Text(
+                          '$followers ${_followerCountLabel(followers)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: AppTypography.medium,
+                            color: Colors.black.withValues(alpha: 0.72),
+                          ),
                         ),
                       ),
                     ],
@@ -1261,6 +1197,15 @@ class _SellerCard extends StatelessWidget {
       ],
     );
   }
+}
+
+String _followerCountLabel(int count) {
+  final mod100 = count.abs() % 100;
+  final mod10 = count.abs() % 10;
+  if (mod100 >= 11 && mod100 <= 14) return 'подписчиков';
+  if (mod10 == 1) return 'подписчик';
+  if (mod10 >= 2 && mod10 <= 4) return 'подписчика';
+  return 'подписчиков';
 }
 
 class _BuyDeliveryBlock extends StatelessWidget {
@@ -1285,7 +1230,7 @@ class _BuyDeliveryBlock extends StatelessWidget {
           'КУПИТЬ С ДОСТАВКОЙ',
           style: TextStyle(
             fontSize: 12,
-            fontWeight: FontWeight.w800,
+            fontWeight: AppTypography.bold,
             letterSpacing: 0,
           ),
         ),
@@ -1295,22 +1240,14 @@ class _BuyDeliveryBlock extends StatelessWidget {
 }
 
 class _DeliveryAddress extends StatelessWidget {
-  const _DeliveryAddress({required this.address, required this.fallbackCity});
+  const _DeliveryAddress({required this.fallbackCity});
 
-  final String address;
   final String fallbackCity;
 
   @override
   Widget build(BuildContext context) {
     final city = fallbackCity.trim();
-    final savedAddress = address.trim();
-    final value = savedAddress.isEmpty
-        ? city
-        : city.isEmpty ||
-              savedAddress.toLowerCase().startsWith('${city.toLowerCase()},')
-        ? savedAddress
-        : '$city, $savedAddress';
-    if (value.isEmpty) return const SizedBox.shrink();
+    if (city.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 2),
       child: Row(
@@ -1319,7 +1256,7 @@ class _DeliveryAddress extends StatelessWidget {
           const SizedBox(width: 7),
           Expanded(
             child: Text(
-              'Адрес: $value',
+              'Отправка из города: $city',
               style: const TextStyle(
                 fontSize: 15,
                 height: 1.2,
@@ -1377,7 +1314,7 @@ class _ProductLocationSection extends StatelessWidget {
               style: TextStyle(
                 fontSize: 14,
                 height: 1,
-                fontWeight: FontWeight.w800,
+                fontWeight: AppTypography.bold,
                 letterSpacing: 0,
                 color: Colors.black.withValues(alpha: 0.48),
               ),
@@ -1614,7 +1551,7 @@ class _SellerProfileLink extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 14,
                   height: 1,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: AppTypography.bold,
                   letterSpacing: 0,
                   color: Colors.black,
                 ),
@@ -1667,9 +1604,9 @@ class _RelatedProductsSection extends StatelessWidget {
           itemCount: products.length,
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
-            mainAxisSpacing: 16,
+            mainAxisSpacing: 12,
             crossAxisSpacing: 12,
-            childAspectRatio: 0.58,
+            childAspectRatio: 0.62,
           ),
           itemBuilder: (context, index) {
             final product = products[index];
@@ -1778,7 +1715,7 @@ class _RelatedProductCardState extends State<_RelatedProductCard> {
             style: const TextStyle(
               fontSize: 13,
               height: 1.12,
-              fontWeight: FontWeight.w800,
+              fontWeight: AppTypography.bold,
               letterSpacing: 0,
               color: Colors.black,
             ),
@@ -1791,7 +1728,7 @@ class _RelatedProductCardState extends State<_RelatedProductCard> {
             style: const TextStyle(
               fontSize: 13,
               height: 1,
-              fontWeight: FontWeight.w800,
+              fontWeight: AppTypography.bold,
               letterSpacing: 0,
               color: Colors.black,
               fontFeatures: [
@@ -1848,7 +1785,7 @@ class _ProductInfoSection extends StatelessWidget {
                   style: TextStyle(
                     fontSize: compact ? 17 : 24,
                     height: 1,
-                    fontWeight: compact ? FontWeight.w700 : FontWeight.w800,
+                    fontWeight: AppTypography.bold,
                     letterSpacing: 0,
                     color: Colors.black,
                   ),
@@ -1917,21 +1854,58 @@ class DeliveryCheckoutScreen extends StatefulWidget {
 }
 
 class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
-  static const _postPrice = 122;
-  static const _pickupPrice = 0;
+  static const _addressMethod = 'address';
+  static const _pickupMethod = 'pickup_point';
 
   late DeliveryProfile _profile;
-  String _method = 'Почта России';
+  String _method = _addressMethod;
+  late String _provider;
+  _PickupPointDraft? _selectedPickupPoint;
   bool _isSubmitting = false;
 
-  int get _deliveryPrice =>
-      _method == 'Почта России' ? _postPrice : _pickupPrice;
+  bool get _isPickup => _method == _pickupMethod;
+  bool get _hasSelectedPickupPoint =>
+      _selectedPickupPoint?.id.trim().isNotEmpty == true &&
+      _selectedPickupPoint?.address.trim().isNotEmpty == true;
+  int get _deliveryPrice => 0;
   int get _total => widget.product.priceValue + _deliveryPrice;
+
+  List<_DeliveryProviderOption> get _providers {
+    final methods = widget.product.deliveryMethods.toSet();
+    // Legacy listings do not declare a carrier. Keep that state explicit
+    // instead of silently presenting a real provider that was never selected.
+    if (methods.isEmpty) return const [_unassignedDeliveryProvider];
+    final options = _deliveryProviders
+        .where((option) => methods.contains(option.id))
+        .toList(growable: false);
+    if (options.isNotEmpty) return options;
+    return const [];
+  }
+
+  String get _providerLabel {
+    for (final provider in _providers) {
+      if (provider.id == _provider) return provider.label;
+    }
+    return _unassignedDeliveryProvider.label;
+  }
 
   @override
   void initState() {
     super.initState();
     _profile = widget.deliveryProfile;
+    final availableProviders = _providers;
+    final savedProvider = _profile.pickupProvider.trim();
+    _provider = availableProviders.any((item) => item.id == savedProvider)
+        ? savedProvider
+        : availableProviders.firstOrNull?.id ?? 'unavailable';
+    if (_profile.pickupPointId.trim().isNotEmpty &&
+        _profile.pickupPointAddress.trim().isNotEmpty) {
+      _selectedPickupPoint = _PickupPointDraft(
+        id: _profile.pickupPointId.trim(),
+        name: _profile.pickupPointName.trim(),
+        address: _profile.pickupPointAddress.trim(),
+      );
+    }
   }
 
   String get _addressLine {
@@ -1944,9 +1918,24 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
   }
 
   String? get _recipientValidationMessage {
-    if (_profile.fullName.trim().isEmpty) return 'Укажите имя получателя';
-    if (_profile.phone.trim().isEmpty) return 'Укажите телефон получателя';
-    if (_profile.city.trim().isEmpty || _profile.address.trim().isEmpty) {
+    if (_profile.fullName.trim().length < 2) {
+      return 'Укажите имя получателя';
+    }
+    final phoneDigits = _profile.phone.replaceAll(RegExp(r'\D'), '');
+    if (phoneDigits.length < 10) return 'Проверьте телефон получателя';
+    final email = _profile.email.trim();
+    if (email.isNotEmpty &&
+        !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)) {
+      return 'Проверьте email получателя';
+    }
+    if (_profile.city.trim().isEmpty) return 'Укажите город доставки';
+    if (_providers.isEmpty) {
+      return 'Продавец не подключил доставку для этого объявления';
+    }
+    if (_isPickup && !_hasSelectedPickupPoint) {
+      return 'Выберите пункт выдачи';
+    }
+    if (!_isPickup && _profile.address.trim().isEmpty) {
       return 'Укажите город и адрес доставки';
     }
     return null;
@@ -1965,11 +1954,40 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
-      builder: (context) => _RecipientEditor(profile: _profile),
+      builder: (context) =>
+          _RecipientEditor(profile: _profile, requiresAddress: !_isPickup),
     );
-    if (next == null) return;
-    setState(() => _profile = next);
-    await widget.onSaveProfile(next);
+    if (next == null || !mounted) return;
+    final cityChanged =
+        next.city.trim().toLowerCase() != _profile.city.trim().toLowerCase();
+    setState(() {
+      _profile = next;
+      if (cityChanged) _selectedPickupPoint = null;
+    });
+    try {
+      await widget.onSaveProfile(next);
+    } catch (_) {
+      if (mounted) {
+        _showCheckoutMessage(
+          'Не удалось сохранить данные получателя. Попробуйте ещё раз.',
+        );
+      }
+    }
+  }
+
+  Future<void> _selectPickupPoint() async {
+    final next = await showModalBottomSheet<_PickupPointDraft>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      builder: (context) => _PickupPointEditor(
+        city: _profile.city,
+        providerLabel: _providerLabel,
+        initialValue: _selectedPickupPoint,
+      ),
+    );
+    if (next == null || !mounted) return;
+    setState(() => _selectedPickupPoint = next);
   }
 
   Future<void> _submit() async {
@@ -1977,23 +1995,34 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
     final validationMessage = _recipientValidationMessage;
     if (validationMessage != null) {
       _showCheckoutMessage(validationMessage);
-      await _editRecipient();
+      if (validationMessage == 'Выберите пункт выдачи') {
+        await _selectPickupPoint();
+      } else if (validationMessage !=
+          'Продавец не подключил доставку для этого объявления') {
+        await _editRecipient();
+      }
       return;
     }
 
     setState(() => _isSubmitting = true);
     var completed = false;
     try {
-      await widget.onSaveProfile(_profile);
+      final submissionProfile = _isPickup
+          ? _profile.copyWith(
+              pickupProvider: _provider,
+              pickupPointId: _selectedPickupPoint!.id.trim(),
+              pickupPointName: _selectedPickupPoint!.name.trim(),
+              pickupPointAddress: _selectedPickupPoint!.address.trim(),
+            )
+          : _profile;
+      await widget.onSaveProfile(submissionProfile);
       final order = await widget.onSubmitOrder(
-        deliveryService: _method,
+        deliveryService: '$_method:$_provider',
         deliveryPrice: _deliveryPrice,
       );
       if (!mounted) return;
       if (order == null) {
-        _showCheckoutMessage(
-          'Не удалось оформить заказ. Проверьте вход и попробуйте ещё раз.',
-        );
+        _showCheckoutMessage('Не удалось оформить заказ. Попробуйте ещё раз.');
         return;
       }
       final messenger = ScaffoldMessenger.of(context);
@@ -2003,10 +2032,12 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(
-            content: Text('Заказ создан — он появился в профиле'),
+            content: Text('Заявка на заказ создана — она появилась в профиле'),
             behavior: SnackBarBehavior.floating,
           ),
         );
+    } on CheckoutException catch (error) {
+      if (mounted) _showCheckoutMessage(error.message);
     } catch (_) {
       if (mounted) {
         _showCheckoutMessage('Не удалось оформить заказ. Попробуйте ещё раз.');
@@ -2019,292 +2050,330 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F8),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
-                children: [
-                  SizedBox(
-                    height: 44,
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: const Icon(CupertinoIcons.back, size: 24),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(
-                              minWidth: 44,
-                              minHeight: 44,
-                            ),
-                          ),
-                        ),
-                        const Text(
-                          'Оформление заказа',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  const Text(
-                    'Способ получения',
-                    style: TextStyle(
-                      fontSize: 19,
-                      height: 1,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Для адреса: $_addressLine',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      height: 1.15,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0,
-                      color: Colors.black,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _DeliveryMethodCard(
-                          selected: _method == 'Почта России',
-                          title: 'Почта России',
-                          subtitle: '${_formatPrice(_postPrice)} ₽',
-                          onTap: () => setState(() => _method = 'Почта России'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _DeliveryMethodCard(
-                          selected: _method == 'Пункт выдачи',
-                          title: 'Пункт выдачи',
-                          subtitle: _pickupPrice == 0
-                              ? 'бесплатно'
-                              : '${_formatPrice(_pickupPrice)} ₽',
-                          onTap: () => setState(() => _method = 'Пункт выдачи'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    widget.product.sellerName,
-                    style: const TextStyle(
-                      fontSize: 18,
-                      height: 1,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: SizedBox(
-                          width: 80,
-                          height: 80,
-                          child: AppImage(
-                            imageUrl: widget.product.image,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.product.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                height: 1.15,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0,
+    final baseTheme = Theme.of(context);
+    return Theme(
+      data: baseTheme.copyWith(
+        textTheme: baseTheme.textTheme.apply(
+          fontFamily: AppTypography.fontFamily,
+        ),
+        primaryTextTheme: baseTheme.primaryTextTheme.apply(
+          fontFamily: AppTypography.fontFamily,
+        ),
+      ),
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF7F7F8),
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(18, 10, 18, 28),
+                  children: [
+                    SizedBox(
+                      height: 44,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: IconButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              icon: const Icon(CupertinoIcons.back, size: 24),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(
+                                minWidth: 44,
+                                minHeight: 44,
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${_formatPrice(widget.product.priceValue)} ₽',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                height: 1,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  _DeliveryAddressBlock(
-                    method: _method,
-                    address: _addressLine,
-                    price: _deliveryPrice,
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Получатель',
-                    style: TextStyle(
-                      fontSize: 19,
-                      height: 1,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    _profile.fullName.trim().isEmpty
-                        ? 'Имя не указано'
-                        : _profile.fullName,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      height: 1.2,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    [
-                      if (_profile.phone.trim().isNotEmpty) _profile.phone,
-                      if (_profile.email.trim().isNotEmpty) _profile.email,
-                    ].join('\n'),
-                    style: const TextStyle(
-                      fontSize: 12,
-                      height: 1.2,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton(
-                      onPressed: _editRecipient,
-                      style: TextButton.styleFrom(
-                        backgroundColor: const Color(0xFFEDEDEF),
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 12,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: const Text(
-                        'Изменить данные',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'Стоимость',
-                    style: TextStyle(
-                      fontSize: 19,
-                      height: 1,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  _PriceLine(
-                    title: '1 товар',
-                    value: '${_formatPrice(widget.product.priceValue)} ₽',
-                  ),
-                  _PriceLine(
-                    title: _method,
-                    value: '${_formatPrice(_deliveryPrice)} ₽',
-                  ),
-                  _PriceLine(
-                    title: 'Итого',
-                    value: '${_formatPrice(_total)} ₽',
-                    bold: true,
-                  ),
-                  const SizedBox(height: 24),
-                  InkWell(
-                    onTap: () {},
-                    splashFactory: NoSplash.splashFactory,
-                    highlightColor: Colors.transparent,
-                    child: const Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'промокод',
+                          ),
+                          const Text(
+                            'Оформление заказа',
                             style: TextStyle(
-                              fontSize: 13,
-                              height: 1,
-                              fontWeight: FontWeight.w800,
+                              fontFamily: AppTypography.fontFamily,
+                              fontSize: 18,
+                              fontWeight: AppTypography.bold,
                               letterSpacing: 0,
                             ),
                           ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'Способ получения',
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 18,
+                        height: 1.1,
+                        fontWeight: AppTypography.bold,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _isPickup
+                          ? 'Выберите удобный пункт в ${_profile.city.trim().isEmpty ? 'вашем городе' : _profile.city.trim()}'
+                          : 'Куда доставить: $_addressLine',
+                      style: const TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 14,
+                        height: 1.35,
+                        fontWeight: AppTypography.medium,
+                        letterSpacing: 0,
+                        color: Color(0xFF66666B),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _DeliveryMethodCard(
+                            key: const Key('delivery-method-post'),
+                            selected: _method == _addressMethod,
+                            title: 'До адреса',
+                            subtitle: 'после подтверждения',
+                            onTap: () =>
+                                setState(() => _method = _addressMethod),
+                          ),
                         ),
-                        Icon(CupertinoIcons.chevron_right, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _DeliveryMethodCard(
+                            key: const Key('delivery-method-pickup'),
+                            selected: _isPickup,
+                            title: 'Пункт выдачи',
+                            subtitle: 'после подтверждения',
+                            onTap: () =>
+                                setState(() => _method = _pickupMethod),
+                          ),
+                        ),
                       ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    _DeliveryProviderSelector(
+                      providers: _providers,
+                      selectedId: _provider,
+                      onChanged: (provider) {
+                        setState(() {
+                          if (_provider != provider) {
+                            _provider = provider;
+                            _selectedPickupPoint = null;
+                          }
+                        });
+                      },
+                    ),
+                    if (_isPickup) ...[
+                      const SizedBox(height: 12),
+                      _PickupPointSelector(
+                        value: _selectedPickupPoint,
+                        onTap: _selectPickupPoint,
+                      ),
+                    ],
+                    const SizedBox(height: 24),
+                    Text(
+                      widget.product.sellerName,
+                      style: const TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 16,
+                        height: 1.1,
+                        fontWeight: AppTypography.semiBold,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: SizedBox(
+                            width: 80,
+                            height: 80,
+                            child: AppImage(
+                              imageUrl: widget.product.image,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.product.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontFamily: AppTypography.fontFamily,
+                                  fontSize: 14,
+                                  height: 1.25,
+                                  fontWeight: AppTypography.medium,
+                                  letterSpacing: 0,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${_formatPrice(widget.product.priceValue)} ₽',
+                                style: const TextStyle(
+                                  fontFamily: AppTypography.fontFamily,
+                                  fontSize: 13,
+                                  height: 1,
+                                  fontWeight: AppTypography.bold,
+                                  letterSpacing: 0,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    _DeliveryAddressBlock(
+                      method: _isPickup ? 'Пункт выдачи' : 'До адреса',
+                      provider: _providerLabel,
+                      address: _isPickup
+                          ? (_selectedPickupPoint?.displayLabel ??
+                                'Пункт выдачи не выбран')
+                          : _addressLine,
+                      priceLabel: 'Стоимость после подтверждения',
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Получатель',
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 18,
+                        height: 1.1,
+                        fontWeight: AppTypography.bold,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      _profile.fullName.trim().isEmpty
+                          ? 'Имя не указано'
+                          : _profile.fullName,
+                      style: const TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 14,
+                        height: 1.2,
+                        fontWeight: AppTypography.semiBold,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      [
+                        if (_profile.phone.trim().isNotEmpty) _profile.phone,
+                        if (_profile.email.trim().isNotEmpty) _profile.email,
+                      ].join('\n'),
+                      style: const TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 13,
+                        height: 1.3,
+                        fontWeight: AppTypography.medium,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton(
+                        onPressed: _editRecipient,
+                        style: TextButton.styleFrom(
+                          backgroundColor: const Color(0xFFEDEDEF),
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'Изменить данные',
+                          style: TextStyle(
+                            fontFamily: AppTypography.fontFamily,
+                            fontSize: 13,
+                            fontWeight: AppTypography.semiBold,
+                            letterSpacing: 0,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Стоимость',
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 18,
+                        height: 1.1,
+                        fontWeight: AppTypography.bold,
+                        letterSpacing: 0,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    _PriceLine(
+                      title: '1 товар',
+                      value: '${_formatPrice(widget.product.priceValue)} ₽',
+                    ),
+                    _PriceLine(title: 'Доставка', value: 'после подтверждения'),
+                    _PriceLine(
+                      title: 'Итого сейчас',
+                      value: '${_formatPrice(_total)} ₽',
+                      bold: true,
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Оплата не списывается. Продавец подтвердит заказ, а точная стоимость доставки появится после расчёта службы доставки.',
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 12.5,
+                        height: 1.4,
+                        fontWeight: AppTypography.medium,
+                        color: Color(0xFF66666B),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(14, 10, 14, 12 + bottomInset),
-              child: SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: _isSubmitting ? null : _submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    foregroundColor: Colors.white,
-                    disabledBackgroundColor: Colors.black.withValues(
-                      alpha: 0.4,
+              Padding(
+                padding: EdgeInsets.fromLTRB(14, 10, 14, 12 + bottomInset),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: ElevatedButton(
+                    key: const Key('checkout-submit'),
+                    onPressed: _isSubmitting ? null : _submit,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: Colors.black.withValues(
+                        alpha: 0.4,
+                      ),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                  ),
-                  child: Text(
-                    _isSubmitting
-                        ? 'ОФОРМЛЯЕМ'
-                        : 'ОФОРМИТЬ ЗАКАЗ · ${_formatPrice(_total)} ₽',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0,
+                    child: Text(
+                      _isSubmitting
+                          ? 'ОФОРМЛЯЕМ'
+                          : 'ОФОРМИТЬ ЗАЯВКУ · ${_formatPrice(_total)} ₽',
+                      style: const TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 13,
+                        fontWeight: AppTypography.semiBold,
+                        letterSpacing: 0,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -2313,6 +2382,7 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
 
 class _DeliveryMethodCard extends StatelessWidget {
   const _DeliveryMethodCard({
+    super.key,
     required this.selected,
     required this.title,
     required this.subtitle,
@@ -2331,8 +2401,8 @@ class _DeliveryMethodCard extends StatelessWidget {
       splashFactory: NoSplash.splashFactory,
       highlightColor: Colors.transparent,
       child: Container(
-        height: 68,
-        padding: const EdgeInsets.all(12),
+        constraints: const BoxConstraints(minHeight: 76),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
         decoration: BoxDecoration(
           color: selected ? Colors.white : const Color(0xFFEDEDEF),
           border: Border.all(
@@ -2350,9 +2420,10 @@ class _DeliveryMethodCard extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 12,
-                height: 1,
-                fontWeight: FontWeight.w800,
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 14,
+                height: 1.15,
+                fontWeight: AppTypography.semiBold,
                 letterSpacing: 0,
               ),
             ),
@@ -2362,9 +2433,10 @@ class _DeliveryMethodCard extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 11,
-                height: 1,
-                fontWeight: FontWeight.w700,
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 12,
+                height: 1.2,
+                fontWeight: AppTypography.medium,
                 letterSpacing: 0,
                 color: Colors.black.withValues(alpha: 0.55),
               ),
@@ -2376,16 +2448,386 @@ class _DeliveryMethodCard extends StatelessWidget {
   }
 }
 
+class _DeliveryProviderOption {
+  const _DeliveryProviderOption(this.id, this.label);
+
+  final String id;
+  final String label;
+}
+
+const _unassignedDeliveryProvider = _DeliveryProviderOption(
+  'unassigned',
+  'Служба после подтверждения',
+);
+
+const _deliveryProviders = <_DeliveryProviderOption>[
+  _DeliveryProviderOption('cdek', 'СДЭК'),
+  _DeliveryProviderOption('russian_post', 'Почта России'),
+  _DeliveryProviderOption('yandex_delivery', 'Яндекс Доставка'),
+];
+
+class _DeliveryProviderSelector extends StatelessWidget {
+  const _DeliveryProviderSelector({
+    required this.providers,
+    required this.selectedId,
+    required this.onChanged,
+  });
+
+  final List<_DeliveryProviderOption> providers;
+  final String selectedId;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    if (providers.isEmpty) {
+      return Container(
+        key: const Key('delivery-provider-unavailable'),
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF1F0),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Text(
+          'Продавец не подключил доставку для этого объявления',
+          style: TextStyle(
+            fontFamily: AppTypography.fontFamily,
+            fontSize: 13,
+            height: 1.35,
+            fontWeight: AppTypography.medium,
+            color: Color(0xFF8E2C28),
+          ),
+        ),
+      );
+    }
+
+    return DropdownButtonFormField<String>(
+      key: const Key('delivery-provider-selector'),
+      initialValue: providers.any((item) => item.id == selectedId)
+          ? selectedId
+          : providers.first.id,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: 'Служба доставки',
+        labelStyle: const TextStyle(
+          fontFamily: AppTypography.fontFamily,
+          fontSize: 13,
+          fontWeight: AppTypography.medium,
+        ),
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 13,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFE1E1E5)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFE1E1E5)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.black, width: 1.4),
+        ),
+      ),
+      style: const TextStyle(
+        fontFamily: AppTypography.fontFamily,
+        fontSize: 14,
+        fontWeight: AppTypography.semiBold,
+        color: Colors.black,
+      ),
+      items: [
+        for (final provider in providers)
+          DropdownMenuItem(value: provider.id, child: Text(provider.label)),
+      ],
+      onChanged: (value) {
+        if (value != null) onChanged(value);
+      },
+    );
+  }
+}
+
+class _PickupPointSelector extends StatelessWidget {
+  const _PickupPointSelector({required this.value, required this.onTap});
+
+  final _PickupPointDraft? value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedValue = value?.displayLabel ?? '';
+    final hasSelection =
+        value?.id.trim().isNotEmpty == true &&
+        value?.address.trim().isNotEmpty == true;
+    return Material(
+      key: const Key('pickup-point-selector'),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
+          child: Row(
+            children: [
+              Icon(
+                CupertinoIcons.location,
+                size: 20,
+                color: hasSelection ? Colors.black : const Color(0xFF77777D),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Пункт выдачи',
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 14,
+                        height: 1.1,
+                        fontWeight: AppTypography.semiBold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      hasSelection ? selectedValue : 'Пункт ещё не выбран',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 13,
+                        height: 1.25,
+                        fontWeight: AppTypography.medium,
+                        color: Colors.black.withValues(alpha: 0.52),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                hasSelection ? 'Изменить' : 'Выбрать',
+                style: const TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 13,
+                  fontWeight: AppTypography.semiBold,
+                  color: Colors.black,
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(CupertinoIcons.chevron_right, size: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PickupPointEditor extends StatefulWidget {
+  const _PickupPointEditor({
+    required this.city,
+    required this.providerLabel,
+    required this.initialValue,
+  });
+
+  final String city;
+  final String providerLabel;
+  final _PickupPointDraft? initialValue;
+
+  @override
+  State<_PickupPointEditor> createState() => _PickupPointEditorState();
+}
+
+class _PickupPointEditorState extends State<_PickupPointEditor> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _addressController;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.initialValue?.name);
+    _addressController = TextEditingController(
+      text: widget.initialValue?.address,
+    );
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _addressController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final address = _addressController.text.trim();
+    if (address.length < 5) {
+      setState(() => _errorText = 'Укажите точный адрес пункта выдачи');
+      return;
+    }
+    final existingId = widget.initialValue?.id.trim() ?? '';
+    Navigator.of(context).pop(
+      _PickupPointDraft(
+        id: existingId.isNotEmpty
+            ? existingId
+            : 'manual_${DateTime.now().microsecondsSinceEpoch}',
+        name: _nameController.text.trim(),
+        address: address,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(20, 18, 20, 20 + bottomInset),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Выбор пункта выдачи',
+            style: TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 20,
+              height: 1.1,
+              fontWeight: AppTypography.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            widget.city.trim().isEmpty
+                ? 'Сначала укажите город в данных получателя.'
+                : '${widget.providerLabel} · ${widget.city.trim()}',
+            style: const TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 13,
+              height: 1.3,
+              fontWeight: AppTypography.medium,
+              color: Color(0xFF66666B),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'До подключения карты ПВЗ укажите точный пункт вручную. Перед оплатой адрес и стоимость будут подтверждены.',
+            style: TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 12.5,
+              height: 1.35,
+              fontWeight: AppTypography.medium,
+              color: Color(0xFF66666B),
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _nameController,
+            textInputAction: TextInputAction.next,
+            style: const TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 15,
+              fontWeight: AppTypography.medium,
+            ),
+            decoration: InputDecoration(
+              labelText: 'Название пункта (необязательно)',
+              hintText: 'Например, СДЭК на Тверской',
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: Colors.black, width: 1.4),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            key: const Key('pickup-point-field'),
+            controller: _addressController,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _save(),
+            style: const TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 15,
+              fontWeight: AppTypography.medium,
+            ),
+            decoration: InputDecoration(
+              labelText: 'Точный адрес пункта',
+              hintText: 'Улица, дом',
+              errorText: _errorText,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: Colors.black, width: 1.4),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 50,
+            child: ElevatedButton(
+              key: const Key('pickup-point-save'),
+              onPressed: _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                'Сохранить пункт',
+                style: TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 14,
+                  fontWeight: AppTypography.semiBold,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PickupPointDraft {
+  const _PickupPointDraft({
+    required this.id,
+    required this.name,
+    required this.address,
+  });
+
+  final String id;
+  final String name;
+  final String address;
+
+  String get displayLabel => name.trim().isEmpty
+      ? address.trim()
+      : '${name.trim()} · ${address.trim()}';
+}
+
 class _DeliveryAddressBlock extends StatelessWidget {
   const _DeliveryAddressBlock({
     required this.method,
+    required this.provider,
     required this.address,
-    required this.price,
+    required this.priceLabel,
   });
 
   final String method;
+  final String provider;
   final String address;
-  final int price;
+  final String priceLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -2401,30 +2843,44 @@ class _DeliveryAddressBlock extends StatelessWidget {
               Text(
                 method,
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 14,
                   height: 1.1,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: AppTypography.semiBold,
                   letterSpacing: 0,
                 ),
               ),
               const SizedBox(height: 4),
               Text(
+                provider,
+                style: const TextStyle(
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 13,
+                  height: 1.25,
+                  fontWeight: AppTypography.semiBold,
+                  color: Color(0xFF55555B),
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
                 address,
                 style: TextStyle(
-                  fontSize: 12,
-                  height: 1.2,
-                  fontWeight: FontWeight.w700,
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 13,
+                  height: 1.3,
+                  fontWeight: AppTypography.medium,
                   letterSpacing: 0,
                   color: Colors.black.withValues(alpha: 0.45),
                 ),
               ),
               const SizedBox(height: 6),
               Text(
-                '${_formatPrice(price)} ₽',
+                priceLabel,
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 12.5,
                   height: 1,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: AppTypography.semiBold,
                   letterSpacing: 0,
                 ),
               ),
@@ -2456,9 +2912,10 @@ class _PriceLine extends StatelessWidget {
           Text(
             title,
             style: TextStyle(
+              fontFamily: AppTypography.fontFamily,
               fontSize: 12,
               height: 1,
-              fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+              fontWeight: bold ? AppTypography.bold : AppTypography.medium,
               letterSpacing: 0,
             ),
           ),
@@ -2472,9 +2929,10 @@ class _PriceLine extends StatelessWidget {
           Text(
             value,
             style: TextStyle(
+              fontFamily: AppTypography.fontFamily,
               fontSize: 12,
               height: 1,
-              fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+              fontWeight: bold ? AppTypography.bold : AppTypography.medium,
               letterSpacing: 0,
             ),
           ),
@@ -2485,9 +2943,13 @@ class _PriceLine extends StatelessWidget {
 }
 
 class _RecipientEditor extends StatefulWidget {
-  const _RecipientEditor({required this.profile});
+  const _RecipientEditor({
+    required this.profile,
+    required this.requiresAddress,
+  });
 
   final DeliveryProfile profile;
+  final bool requiresAddress;
 
   @override
   State<_RecipientEditor> createState() => _RecipientEditorState();
@@ -2527,7 +2989,13 @@ class _RecipientEditorState extends State<_RecipientEditor> {
         phone: _phoneController.text.trim(),
         email: _emailController.text.trim(),
         city: _cityController.text.trim(),
-        address: _addressController.text.trim(),
+        address: widget.requiresAddress
+            ? _addressController.text.trim()
+            : widget.profile.address,
+        pickupProvider: widget.profile.pickupProvider,
+        pickupPointId: widget.profile.pickupPointId,
+        pickupPointName: widget.profile.pickupPointName,
+        pickupPointAddress: widget.profile.pickupPointAddress,
       ),
     );
   }
@@ -2535,7 +3003,7 @@ class _RecipientEditorState extends State<_RecipientEditor> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    return Padding(
+    return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(20, 18, 20, 20 + bottomInset),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -2544,18 +3012,37 @@ class _RecipientEditorState extends State<_RecipientEditor> {
           const Text(
             'Получатель',
             style: TextStyle(
-              fontSize: 24,
-              height: 1,
-              fontWeight: FontWeight.w800,
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 20,
+              height: 1.1,
+              fontWeight: AppTypography.bold,
               letterSpacing: 0,
             ),
           ),
           const SizedBox(height: 18),
-          _RecipientField(controller: _nameController, label: 'Имя Фамилия'),
-          _RecipientField(controller: _phoneController, label: 'Телефон'),
-          _RecipientField(controller: _emailController, label: 'Email'),
+          _RecipientField(
+            controller: _nameController,
+            label: 'Имя и фамилия',
+            textInputAction: TextInputAction.next,
+          ),
+          _RecipientField(
+            controller: _phoneController,
+            label: 'Телефон',
+            keyboardType: TextInputType.phone,
+            textInputAction: TextInputAction.next,
+          ),
+          _RecipientField(
+            controller: _emailController,
+            label: 'Email',
+            keyboardType: TextInputType.emailAddress,
+            textInputAction: TextInputAction.next,
+          ),
           _RecipientField(controller: _cityController, label: 'Город'),
-          _RecipientField(controller: _addressController, label: 'Адрес'),
+          if (widget.requiresAddress)
+            _RecipientField(
+              controller: _addressController,
+              label: 'Улица, дом, квартира',
+            ),
           const SizedBox(height: 12),
           SizedBox(
             height: 50,
@@ -2568,10 +3055,11 @@ class _RecipientEditorState extends State<_RecipientEditor> {
                 shape: const RoundedRectangleBorder(),
               ),
               child: const Text(
-                'СОХРАНИТЬ',
+                'Сохранить данные',
                 style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
+                  fontFamily: AppTypography.fontFamily,
+                  fontSize: 14,
+                  fontWeight: AppTypography.semiBold,
                   letterSpacing: 0,
                 ),
               ),
@@ -2584,10 +3072,17 @@ class _RecipientEditorState extends State<_RecipientEditor> {
 }
 
 class _RecipientField extends StatelessWidget {
-  const _RecipientField({required this.controller, required this.label});
+  const _RecipientField({
+    required this.controller,
+    required this.label,
+    this.keyboardType,
+    this.textInputAction,
+  });
 
   final TextEditingController controller;
   final String label;
+  final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
 
   @override
   Widget build(BuildContext context) {
@@ -2595,11 +3090,19 @@ class _RecipientField extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 10),
       child: TextField(
         controller: controller,
+        keyboardType: keyboardType,
+        textInputAction: textInputAction,
+        style: const TextStyle(
+          fontFamily: AppTypography.fontFamily,
+          fontSize: 16,
+          fontWeight: AppTypography.medium,
+        ),
         decoration: InputDecoration(
           labelText: label,
           labelStyle: TextStyle(
+            fontFamily: AppTypography.fontFamily,
             color: Colors.black.withValues(alpha: 0.5),
-            fontWeight: FontWeight.w700,
+            fontWeight: AppTypography.medium,
           ),
           focusedBorder: const UnderlineInputBorder(
             borderSide: BorderSide(color: Colors.black),

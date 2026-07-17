@@ -1,13 +1,12 @@
 import 'dart:async';
 
-import 'package:device_preview/device_preview.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'core/app_typography.dart';
 import 'core/supabase_config.dart';
 import 'data/app_repository.dart';
+import 'features/catalog_search/catalog_search_engine.dart';
 import 'features/chat/chat_actions.dart';
 import 'features/chat/product_share_sheet.dart';
 import 'features/listing_publish/screens/listing_publish_flow_screen.dart';
@@ -45,13 +44,7 @@ void main() async {
   );
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
-  if (kIsWeb) {
-    runApp(
-      DevicePreview(enabled: true, builder: (context) => const FashionApp()),
-    );
-  } else {
-    runApp(const FashionApp());
-  }
+  runApp(const FashionApp());
 }
 
 class FashionApp extends StatelessWidget {
@@ -80,18 +73,6 @@ class FashionApp extends StatelessWidget {
         ),
       ),
       home: const AppShell(),
-    );
-  }
-}
-
-class FashionAppWithPreview extends StatelessWidget {
-  const FashionAppWithPreview({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return DevicePreview(
-      enabled: true,
-      builder: (context) => const FashionApp(),
     );
   }
 }
@@ -155,8 +136,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   final AppRepository _repository = AppRepository();
 
   ChatActions get _chatActions => ChatActions(
+    sendText: _repository.sendChatText,
     sendReply: _repository.sendReply,
     sendImage: _repository.sendChatImage,
+    sendMedia: _repository.sendChatMedia,
     editMessage: _repository.editMessage,
     deleteMessage: _repository.deleteMessage,
     updateThread: _repository.updateThreadPreferences,
@@ -405,69 +388,67 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   void _openProductDetails(Product product) {
-    _repository.recordProductView(product.id);
-    Navigator.of(context, rootNavigator: true).push(
-      PageRouteBuilder<void>(
-        opaque: false,
-        barrierColor: Colors.black.withValues(alpha: 0.24),
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: const Duration(milliseconds: 350),
-        pageBuilder: (context, animation, secondaryAnimation) {
-          return ProductScreen(
-            sourceProduct: product,
-            product: ProductDetailData(
-              id: product.id,
-              title: product.title,
-              description: product.description,
-              price: product.price,
-              priceValue: product.priceValue,
-              image: product.image,
-              images: product.images.isNotEmpty
-                  ? product.images
-                  : [if (product.image.isNotEmpty) product.image],
-              category: product.category,
-              brand: product.brand,
-              color: product.color,
-              sellerName: product.sellerName,
-              sellerHandle: product.sellerHandle,
-              size: product.size,
-              condition: product.condition,
-              location: product.location,
-              isLiked: product.isLiked,
-              shippingAddress: product.shippingAddress,
-              canPurchase: !product.isHidden,
-            ),
-            onLike: () => _repository.toggleProductLike(product.id),
-            onAddToCart: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Добавлено в корзину'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            },
-            onOpenSeller: () => _openSellerProfile(product),
-            onOpenReviews: () => _openReviewsForProduct(product),
-            loadSellerProfile: _repository.fetchSellerProfile,
-            loadReviews: _repository.fetchSellerReviews,
-            onToggleRelatedLike: _repository.toggleProductLike,
-            onContactSeller: () => _contactSellerFromProduct(product),
-            onShare: () => _shareProduct(product),
-            relatedProducts: _relatedProductsFor(product),
-            onRelatedProductTap: _openProductDetails,
-            deliveryProfile: _repository.deliveryProfile,
-            onSaveDeliveryProfile: _repository.updateDeliveryProfile,
-            onCreateDeliveryOrder:
-                ({required deliveryService, required deliveryPrice}) =>
-                    _repository.createDeliveryOrder(
-                      product,
-                      deliveryService: deliveryService,
-                      deliveryPrice: deliveryPrice,
-                    ),
-          );
-        },
-      ),
+    final route = PageRouteBuilder<void>(
+      opaque: false,
+      barrierColor: Colors.black.withValues(alpha: 0.24),
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: const Duration(milliseconds: 350),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return ProductScreen(
+          sourceProduct: product,
+          product: ProductDetailData(
+            id: product.id,
+            title: product.title,
+            description: product.description,
+            price: product.price,
+            priceValue: product.priceValue,
+            image: product.image,
+            images: product.images.isNotEmpty
+                ? product.images
+                : [if (product.image.isNotEmpty) product.image],
+            category: product.category,
+            brand: product.brand,
+            color: product.color,
+            sellerName: product.sellerName,
+            sellerHandle: product.sellerHandle,
+            size: product.size,
+            condition: product.condition,
+            location: product.location,
+            isLiked: product.isLiked,
+            shippingAddress: product.shippingAddress,
+            canPurchase: !product.isHidden,
+            publishedAt: product.publishedAt,
+            viewsCount: product.viewsCount,
+            likesCount: product.likesCount,
+            deliveryMethods: product.deliveryMethods,
+          ),
+          onLike: () => _repository.toggleProductLike(product.id),
+          onOpenSeller: () => _openSellerProfile(product),
+          onOpenReviews: () => _openReviewsForProduct(product),
+          loadSellerProfile: _repository.fetchSellerProfile,
+          loadReviews: _repository.fetchSellerReviews,
+          onToggleRelatedLike: _repository.toggleProductLike,
+          onContactSeller: () => _contactSellerFromProduct(product),
+          onShare: () => _shareProduct(product),
+          relatedProducts: _relatedProductsFor(product),
+          onRelatedProductTap: _openProductDetails,
+          deliveryProfile: _repository.deliveryProfile,
+          onSaveDeliveryProfile: _repository.updateDeliveryProfile,
+          onCreateDeliveryOrder:
+              ({required deliveryService, required deliveryPrice}) =>
+                  _repository.createDeliveryOrder(
+                    product,
+                    deliveryService: deliveryService,
+                    deliveryPrice: deliveryPrice,
+                  ),
+        );
+      },
     );
+    Navigator.of(context, rootNavigator: true).push(route);
+    // Count only an accepted detail navigation. The repository applies the
+    // optimistic unique-view update before its first await, so every entry
+    // point (profile, chat, notification) renders the same current value.
+    unawaited(_repository.recordProductView(product.id));
   }
 
   void _openProductFromChat(String productId) {
@@ -546,6 +527,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             isLiked: product.isLiked,
             shippingAddress: product.shippingAddress,
             canPurchase: true,
+            deliveryMethods: product.deliveryMethods,
           ),
           deliveryProfile: _repository.deliveryProfile,
           onSaveProfile: _repository.updateDeliveryProfile,
@@ -583,15 +565,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   List<Product> _relatedProductsFor(Product product) {
-    return _repository.products
-        .where(
-          (item) =>
-              item.id != product.id &&
-              !item.isHidden &&
-              item.category == product.category,
-        )
-        .take(8)
-        .toList();
+    return rankRelatedCatalogProducts(product, _repository.products);
   }
 
   void _openSellerProfile(Product product) {
@@ -617,6 +591,18 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           loadReviews: _repository.fetchSellerReviews,
           onCreateReview: _repository.createSellerReview,
           canCreateReview: _repository.isSignedIn,
+          onReportSeller: (seller, reason) async {
+            final submitted = await _repository.submitContentReport(
+              targetType: 'user',
+              targetId: seller.id,
+              reason: reason,
+            );
+            return submitted ? null : 'Не удалось отправить жалобу';
+          },
+          onBlockSeller: (seller) async {
+            final blocked = await _repository.blockUser(seller.id);
+            return blocked ? null : 'Не удалось заблокировать пользователя';
+          },
           onMessage: (seller) async {
             final navigator = Navigator.of(context, rootNavigator: true);
             final messenger = ScaffoldMessenger.of(context);
@@ -757,6 +743,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           myAccessories: _repository.myAccessories,
           authorName: _repository.profile.name,
           authorHandle: _repository.profile.handle,
+          authorAvatarUrl: _repository.profile.avatarUrl,
           onPublish: (outfit) =>
               _publishOutfitFromCreateRoute(routeContext, outfit),
           onCreateAccessory:
@@ -962,6 +949,19 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   void _openLoginScreen({VoidCallback? onSignedIn}) {
     var didComplete = false;
+
+    void closeLoginFlow(BuildContext loginContext) {
+      if (!loginContext.mounted) return;
+      final loginRoute = ModalRoute.of(loginContext);
+      final navigator = Navigator.of(loginContext);
+      if (loginRoute == null) {
+        if (navigator.canPop()) navigator.pop();
+        return;
+      }
+      navigator.popUntil((route) => identical(route, loginRoute));
+      if (loginRoute.isCurrent) navigator.pop();
+    }
+
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
@@ -971,32 +971,24 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             if (_repository.isSignedIn && !didComplete) {
               didComplete = true;
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (Navigator.of(loginContext).canPop()) {
-                  Navigator.of(loginContext).pop();
-                }
+                closeLoginFlow(loginContext);
                 onSignedIn?.call();
               });
             }
             return LoginScreen(
               onClose: () => Navigator.of(loginContext).pop(),
-              onYandexTap: () {
-                _repository.signInWithYandex();
-              },
-              onVkTap: () {
-                _repository.signInWithVk();
-              },
+              onYandexTap: _repository.signInWithYandex,
+              onVkTap: _repository.signInWithVk,
+              isSigningIn: _repository.isSigningIn,
+              authError: _repository.authError,
               onPhoneTap: () {
                 Navigator.of(loginContext).push(
                   MaterialPageRoute<void>(
                     builder: (phoneContext) => PhoneLoginScreen(
                       onBack: () => Navigator.of(phoneContext).pop(),
-                      onClose: () {
-                        final navigator = Navigator.of(phoneContext);
-                        navigator.pop();
-                        if (navigator.canPop()) {
-                          navigator.pop();
-                        }
-                      },
+                      onClose: () => closeLoginFlow(loginContext),
+                      onRequestCode: _repository.requestPhoneOtp,
+                      onVerifyCode: _repository.verifyPhoneOtp,
                     ),
                   ),
                 );
@@ -1047,6 +1039,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   products: _repository.products,
                   onToggleLike: _repository.toggleProductLike,
                   onHideProduct: _repository.hideProduct,
+                  onSubmitContentReport: _repository.submitContentReport,
+                  onBlockUser: _repository.blockUser,
                   onShareProduct: _shareProduct,
                   onContactSeller: _repository.contactSeller,
                   onLoadSellerProfile: _repository.fetchSellerProfile,
@@ -1078,6 +1072,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   onOutfitViewed: _repository.recordOutfitView,
                   onContactSeller: _contactSellerFromProduct,
                   onOpenSellerProfile: _openSellerProfile,
+                  onSubmitContentReport: _repository.submitContentReport,
                   deliveryProfile: _repository.deliveryProfile,
                   onSaveDeliveryProfile: _repository.updateDeliveryProfile,
                   onCreateDeliveryOrder: _repository.createDeliveryOrder,
@@ -1122,6 +1117,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   notificationPreferences: _repository.notificationPreferences,
                   orders: _repository.orders,
                   sellerDashboardStats: _repository.sellerDashboardStats(),
+                  deliveryProfile: _repository.deliveryProfile,
+                  onSaveDeliveryProfile: _repository.updateDeliveryProfile,
                   onSignInWithYandex: _repository.signInWithYandex,
                   onSignInWithTelegram: _repository.signInWithTelegram,
                   onSignOut: _repository.signOut,
@@ -1131,8 +1128,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   onDeleteAccount: _repository.deleteAccount,
                   onToggleProductLike: _repository.toggleProductLike,
                   onToggleOutfitLike: _repository.toggleOutfitLike,
+                  onClearRecentlyViewed: _repository.clearRecentlyViewed,
                   onDeleteProduct: _repository.deleteProduct,
                   onProductTap: _openProductDetails,
+                  onShareProduct: _shareProduct,
                   onOutfitAuthorTap: _openOutfitAuthorProfile,
                   onMarkNotificationRead: _repository.markNotificationRead,
                   onMarkAllNotificationsRead:
@@ -1170,6 +1169,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           myAccessories: _repository.myAccessories,
           authorName: _repository.profile.name,
           authorHandle: _repository.profile.handle,
+          authorAvatarUrl: _repository.profile.avatarUrl,
           onPublish: _publishOutfit,
           onCreateAccessory:
               (imageFile, {required bool isDefault, required String title}) {

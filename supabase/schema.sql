@@ -139,7 +139,7 @@ as $$
 $$;
 
 revoke all on function public.delete_current_user() from public;
-grant execute on function public.delete_current_user() to authenticated;
+revoke execute on function public.delete_current_user() from anon, authenticated;
 
 notify pgrst, 'reload schema';
 
@@ -213,6 +213,7 @@ create table if not exists public.outfits (
   owner_id uuid references auth.users(id) on delete set null,
   author_name text not null default 'Автор',
   author_handle text not null default '@user',
+  author_avatar_url text not null default '',
   photos text[] not null default '{}',
   items jsonb not null default '[]'::jsonb,
   likes_count integer not null default 0,
@@ -225,11 +226,81 @@ alter table public.outfits
   add column if not exists owner_id uuid references auth.users(id) on delete set null,
   add column if not exists author_name text not null default 'Автор',
   add column if not exists author_handle text not null default '@user',
+  add column if not exists author_avatar_url text not null default '',
   add column if not exists likes_count integer not null default 0,
   add column if not exists views_count integer not null default 0,
   add column if not exists preview_layout jsonb;
 
+update public.outfits outfit
+set
+  author_name = 'Автор',
+  author_handle = '@user',
+  author_avatar_url = ''
+where not exists (
+  select 1
+  from public.profiles profile
+  where profile.id = outfit.owner_id
+);
+
 alter table public.outfits enable row level security;
+
+create or replace function public.hydrate_outfit_author()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_author_id uuid;
+  author_profile public.profiles%rowtype;
+begin
+  if tg_op = 'INSERT' then
+    current_author_id := auth.uid();
+    if current_author_id is null then
+      raise exception 'authentication_required' using errcode = '42501';
+    end if;
+    if new.owner_id is null then
+      new.owner_id := current_author_id;
+    end if;
+    if new.owner_id <> current_author_id then
+      raise exception 'outfit_owner_mismatch' using errcode = '42501';
+    end if;
+  else
+    current_author_id := new.owner_id;
+    if current_author_id is null then
+      new.author_name := old.author_name;
+      new.author_handle := old.author_handle;
+      new.author_avatar_url := old.author_avatar_url;
+      return new;
+    end if;
+  end if;
+
+  select * into author_profile
+  from public.profiles
+  where id = current_author_id;
+
+  if found then
+    new.author_name := coalesce(nullif(author_profile.name, ''), 'Автор');
+    new.author_handle := coalesce(nullif(author_profile.handle, ''), '@user');
+    new.author_avatar_url := coalesce(author_profile.avatar_url, '');
+  elsif tg_op = 'INSERT' then
+    new.author_name := 'Автор';
+    new.author_handle := '@user';
+    new.author_avatar_url := '';
+  else
+    new.author_name := old.author_name;
+    new.author_handle := old.author_handle;
+    new.author_avatar_url := old.author_avatar_url;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists hydrate_outfit_author_before_write on public.outfits;
+create trigger hydrate_outfit_author_before_write
+before insert or update of author_name, author_handle, author_avatar_url
+on public.outfits
+for each row execute function public.hydrate_outfit_author();
 
 drop policy if exists "Public outfits are readable" on public.outfits;
 create policy "Public outfits are readable"
@@ -237,10 +308,10 @@ create policy "Public outfits are readable"
   using (true);
 
 drop policy if exists "Authenticated users can publish outfits" on public.outfits;
-create policy "Authenticated users can publish outfits"
+create policy "Users can publish own outfits"
   on public.outfits for insert
   to authenticated
-  with check (true);
+  with check (auth.uid() = owner_id);
 
 create table if not exists public.product_favorites (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -710,7 +781,7 @@ create index if not exists orders_seller_updated_idx
   on public.orders (seller_id, updated_at desc);
 
 create table if not exists public.seller_reviews (
-  id uuid primary key,
+  id uuid primary key default gen_random_uuid(),
   seller_id uuid not null references public.profiles(id) on delete cascade,
   buyer_id uuid not null references auth.users(id) on delete cascade,
   buyer_name text not null default '',
@@ -737,17 +808,44 @@ drop policy if exists "Buyers can create seller reviews" on public.seller_review
 create policy "Buyers can create seller reviews"
   on public.seller_reviews for insert
   to authenticated
-  with check (auth.uid() = buyer_id and auth.uid() <> seller_id);
+  with check (
+    (select auth.uid()) = buyer_id
+    and buyer_id <> seller_id
+    and nullif(btrim(product_id), '') is not null
+    and exists (
+      select 1
+      from public.orders as completed_order
+      where completed_order.buyer_id = seller_reviews.buyer_id
+        and completed_order.seller_id = seller_reviews.seller_id
+        and completed_order.product_id = seller_reviews.product_id
+        and completed_order.status = 'completed'
+    )
+  );
 
 drop policy if exists "Buyers can update own seller reviews" on public.seller_reviews;
 create policy "Buyers can update own seller reviews"
   on public.seller_reviews for update
   to authenticated
-  using (auth.uid() = buyer_id)
-  with check (auth.uid() = buyer_id);
+  using ((select auth.uid()) = buyer_id)
+  with check (
+    (select auth.uid()) = buyer_id
+    and buyer_id <> seller_id
+    and nullif(btrim(product_id), '') is not null
+    and exists (
+      select 1
+      from public.orders as completed_order
+      where completed_order.buyer_id = seller_reviews.buyer_id
+        and completed_order.seller_id = seller_reviews.seller_id
+        and completed_order.product_id = seller_reviews.product_id
+        and completed_order.status = 'completed'
+    )
+  );
 
 create index if not exists seller_reviews_seller_created_idx
   on public.seller_reviews (seller_id, created_at desc);
+
+create unique index if not exists seller_reviews_buyer_product_unique_idx
+  on public.seller_reviews (buyer_id, product_id);
 
 create table if not exists public.delivery_profiles (
   user_id uuid primary key references public.profiles(id) on delete cascade,
@@ -1101,6 +1199,85 @@ before insert or update of default_address_id, user_id
 on public.listing_publish_preferences
 for each row execute function public.validate_publish_preference_address();
 
+do $$
+begin
+  if exists (
+    select 1
+    from public.products product
+    left join public.listing_addresses private_address
+      on private_address.id = product.shipping_address_id
+     and private_address.user_id = product.seller_id
+    where (
+        (
+          product.status = 'published'
+          and coalesce(product.delivery_methods, '{}'::text[])
+            && array['cdek', 'russian_post', 'yandex_delivery']::text[]
+        )
+        or btrim(coalesce(product.shipping_address, '')) <> ''
+      )
+      and (
+        private_address.id is null
+        or btrim(coalesce(private_address.address, '')) = ''
+      )
+  ) then
+    raise exception using
+      errcode = '23514',
+      message = 'shipping_address_privacy_preflight_failed';
+  end if;
+end
+$$;
+
+update public.products
+set shipping_address = ''
+where btrim(coalesce(shipping_address, '')) <> '';
+
+create or replace function public.strip_public_product_shipping_address()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  has_private_address boolean;
+begin
+  select exists (
+    select 1
+    from public.listing_addresses private_address
+    where private_address.id = new.shipping_address_id
+      and private_address.user_id = new.seller_id
+      and btrim(coalesce(private_address.address, '')) <> ''
+  ) into has_private_address;
+
+  if new.status = 'published'
+     and coalesce(new.delivery_methods, '{}'::text[])
+       && array['cdek', 'russian_post', 'yandex_delivery']::text[]
+     and not has_private_address then
+    raise exception using
+      errcode = '23514',
+      message = 'published_shipping_address_required';
+  end if;
+  if btrim(coalesce(new.shipping_address, '')) <> ''
+     and not has_private_address then
+    raise exception using
+      errcode = '23514',
+      message = 'shipping_address_private_source_required';
+  end if;
+  new.shipping_address := '';
+  return new;
+end;
+$$;
+
+drop trigger if exists strip_public_product_shipping_address_before_write
+  on public.products;
+create trigger strip_public_product_shipping_address_before_write
+before insert or update of
+  shipping_address, shipping_address_id, seller_id, status, delivery_methods
+on public.products
+for each row execute function public.strip_public_product_shipping_address();
+
+revoke all on function public.strip_public_product_shipping_address()
+  from public;
+
 alter table public.products enable row level security;
 alter table public.listing_analysis enable row level security;
 alter table public.listing_addresses enable row level security;
@@ -1126,7 +1303,10 @@ $$;
 
 create policy "Published products are readable"
   on public.products for select
-  using (status = 'published' or auth.uid() = seller_id);
+  using (
+    auth.uid() = seller_id
+    or (status = 'published' and not coalesce(is_hidden, false))
+  );
 
 create policy "Authenticated users can create own products"
   on public.products for insert

@@ -24,6 +24,14 @@ class CatalogScreen extends StatefulWidget {
   final List<Product> products;
   final Future<void> Function(String productId) onToggleLike;
   final Future<void> Function(String productId) onHideProduct;
+  final Future<bool> Function({
+    required String targetType,
+    required String targetId,
+    required String reason,
+    String details,
+  })
+  onSubmitContentReport;
+  final Future<bool> Function(String userId) onBlockUser;
   final ValueChanged<Product> onShareProduct;
   final Future<MessageThread?> Function(Product product) onContactSeller;
   final Future<SellerProfile?> Function(Product product) onLoadSellerProfile;
@@ -64,6 +72,8 @@ class CatalogScreen extends StatefulWidget {
     required this.products,
     required this.onToggleLike,
     required this.onHideProduct,
+    required this.onSubmitContentReport,
+    required this.onBlockUser,
     required this.onShareProduct,
     required this.onContactSeller,
     required this.onLoadSellerProfile,
@@ -119,18 +129,11 @@ class _CatalogScreenState extends State<CatalogScreen>
         onTap: _openVisualSearch,
       ),
       PromoBanner(
-        image: 'assets/mock/outfit_hero.jpg',
-        title: 'РОПНО',
-        subtitle: 'тататататат та тата тата\nтаа, та та тата?',
-        buttonText: 'ПЕРЕЙТИ',
-        onTap: () => _showSnackBar('Переход по промо-баннеру'),
-      ),
-      PromoBanner(
         image: 'assets/mock/post_8.jpg',
         title: 'ДЕНИМ',
         subtitle: 'Свободные силуэты, винтажные оттенки и чистые линии',
         buttonText: 'ПЕРЕЙТИ',
-        onTap: () => _showSnackBar('Переход по промо-баннеру'),
+        onTap: () => _selectCatalogTab('Деним'),
       ),
     ];
   }
@@ -152,9 +155,14 @@ class _CatalogScreenState extends State<CatalogScreen>
       case 'Сначала дорогие':
         return b.priceValue.compareTo(a.priceValue);
       case 'Сначала новые':
-        return b.id.compareTo(a.id);
+        return _comparePublicationDate(a, b);
       case 'Популярные':
-        return a.title.compareTo(b.title);
+        final popularityOrder = (b.likesCount * 4 + b.viewsCount).compareTo(
+          a.likesCount * 4 + a.viewsCount,
+        );
+        return popularityOrder != 0
+            ? popularityOrder
+            : _comparePublicationDate(a, b);
       case 'По рекомендациям':
       default:
         return _softScore(b).compareTo(_softScore(a));
@@ -205,7 +213,39 @@ class _CatalogScreenState extends State<CatalogScreen>
         !product.deliveryMethods.contains(_filters.delivery)) {
       return false;
     }
+    if (_filters.color.isNotEmpty &&
+        !_sameOption(
+          product.primaryColor.isEmpty ? product.color : product.primaryColor,
+          _filters.color,
+          field: 'color',
+        )) {
+      return false;
+    }
+    if (_filters.material.isNotEmpty &&
+        !_sameOption(product.material, _filters.material, field: 'material')) {
+      return false;
+    }
+    if (_filters.pattern.isNotEmpty &&
+        !_sameOption(product.pattern, _filters.pattern, field: 'pattern')) {
+      return false;
+    }
+    if (_filters.fit.isNotEmpty &&
+        !_sameOption(product.fit, _filters.fit, field: 'fit')) {
+      return false;
+    }
+    if (_filters.style.isNotEmpty &&
+        !_sameOption(product.style, _filters.style, field: 'style')) {
+      return false;
+    }
     return true;
+  }
+
+  int _comparePublicationDate(Product left, Product right) {
+    final leftDate = left.publishedAt?.microsecondsSinceEpoch ?? -1;
+    final rightDate = right.publishedAt?.microsecondsSinceEpoch ?? -1;
+    final dateOrder = rightDate.compareTo(leftDate);
+    if (dateOrder != 0) return dateOrder;
+    return right.id.compareTo(left.id);
   }
 
   bool _matchesSelectedTab(Product product) {
@@ -616,6 +656,19 @@ class _CatalogScreenState extends State<CatalogScreen>
     await widget.onHideProduct(productId);
   }
 
+  void _selectCatalogTab(String label) {
+    final index = _tabs.indexOf(label);
+    if (index < 0 || index == _selectedTabIndex) return;
+    setState(() => _selectedTabIndex = index);
+    if (_scrollController.hasClients) {
+      _scrollController.animateTo(
+        0,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
   Future<void> _openVisualSearch() async {
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
@@ -647,6 +700,18 @@ class _CatalogScreenState extends State<CatalogScreen>
           loadReviews: widget.onLoadReviews,
           onCreateReview: widget.onCreateReview,
           canCreateReview: widget.currentUserId.isNotEmpty,
+          onReportSeller: (seller, reason) async {
+            final submitted = await widget.onSubmitContentReport(
+              targetType: 'user',
+              targetId: seller.id,
+              reason: reason,
+            );
+            return submitted ? null : 'Не удалось отправить жалобу';
+          },
+          onBlockSeller: (seller) async {
+            final blocked = await widget.onBlockUser(seller.id);
+            return blocked ? null : 'Не удалось заблокировать пользователя';
+          },
           onMessage: (seller) async {
             final navigator = Navigator.of(context, rootNavigator: true);
             final thread = await widget.onStartDirectChat(
@@ -680,99 +745,97 @@ class _CatalogScreenState extends State<CatalogScreen>
   }
 
   void _showProductDetails(Product product) {
-    widget.onProductViewed(product);
-    Navigator.of(context, rootNavigator: true).push(
-      PageRouteBuilder<void>(
-        opaque: false,
-        barrierColor: Colors.black.withValues(alpha: 0.24),
-        transitionDuration: Duration.zero,
-        reverseTransitionDuration: const Duration(milliseconds: 350),
-        pageBuilder: (context, animation, secondaryAnimation) {
-          return ProductScreen(
-            sourceProduct: product,
-            product: ProductDetailData(
-              id: product.id,
-              title: product.title,
-              description: product.description,
-              price: product.price,
-              priceValue: product.priceValue,
-              image: product.image,
-              images: product.images.isNotEmpty
-                  ? product.images
-                  : [product.image],
-              category: product.category,
-              brand: product.brand,
-              color: product.color,
-              sellerName: product.sellerName,
-              sellerHandle: product.sellerHandle,
-              size: product.size,
-              condition: product.condition,
-              location: product.location,
-              isLiked: product.isLiked,
-              shippingAddress: product.shippingAddress,
-            ),
-            onLike: () => _toggleLike(product.id),
-            onAddToCart: () => _showSnackBar('Добавлено в корзину'),
-            onOpenSeller: () => _openSellerProfile(product),
-            onOpenReviews: () => _openReviewsForProduct(product),
-            loadSellerProfile: widget.onLoadSellerProfile,
-            loadReviews: widget.onLoadReviews,
-            onToggleRelatedLike: widget.onToggleLike,
-            relatedProducts: _relatedProductsFor(product),
-            onRelatedProductTap: _showProductDetails,
-            deliveryProfile: widget.deliveryProfile,
-            onSaveDeliveryProfile: widget.onSaveDeliveryProfile,
-            onCreateDeliveryOrder:
-                ({required deliveryService, required deliveryPrice}) =>
-                    widget.onCreateDeliveryOrder(
-                      product,
-                      deliveryService: deliveryService,
-                      deliveryPrice: deliveryPrice,
-                    ),
-            onContactSeller: () async {
-              final navigator = Navigator.of(context, rootNavigator: true);
-              final thread = await widget.onContactSeller(product);
-              if (!mounted) return;
-              if (thread == null) {
-                _showSnackBar('Не удалось открыть чат');
-                return;
-              }
-              await navigator.maybePop();
-              if (!mounted) return;
-              navigator.push(
-                MaterialPageRoute<void>(
-                  builder: (context) => ChatScreen(
-                    thread: thread,
-                    onSendMessage: widget.onSendMessage,
-                    onOpenProduct: _openProductFromChat,
-                    currentUserId: widget.currentUserId,
-                    threadsListenable: widget.threadsListenable,
-                    resolveThread: widget.resolveThread,
-                    lastSeenForUser: widget.lastSeenForUser,
-                    actions: widget.chatActions,
-                    onOpenSellerProfile: () => _openSellerFromChat(thread),
-                    onBuyProduct: () => _buyFromChat(thread),
+    final route = PageRouteBuilder<void>(
+      opaque: false,
+      barrierColor: Colors.black.withValues(alpha: 0.24),
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: const Duration(milliseconds: 350),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return ProductScreen(
+          sourceProduct: product,
+          product: ProductDetailData(
+            id: product.id,
+            title: product.title,
+            description: product.description,
+            price: product.price,
+            priceValue: product.priceValue,
+            image: product.image,
+            images: product.images.isNotEmpty
+                ? product.images
+                : [product.image],
+            category: product.category,
+            brand: product.brand,
+            color: product.color,
+            sellerName: product.sellerName,
+            sellerHandle: product.sellerHandle,
+            size: product.size,
+            condition: product.condition,
+            location: product.location,
+            isLiked: product.isLiked,
+            shippingAddress: product.shippingAddress,
+            canPurchase: !product.isHidden,
+            publishedAt: product.publishedAt,
+            viewsCount: product.viewsCount,
+            likesCount: product.likesCount,
+            deliveryMethods: product.deliveryMethods,
+          ),
+          onLike: () => _toggleLike(product.id),
+          onOpenSeller: () => _openSellerProfile(product),
+          onOpenReviews: () => _openReviewsForProduct(product),
+          loadSellerProfile: widget.onLoadSellerProfile,
+          loadReviews: widget.onLoadReviews,
+          onToggleRelatedLike: widget.onToggleLike,
+          relatedProducts: _relatedProductsFor(product),
+          onRelatedProductTap: _showProductDetails,
+          deliveryProfile: widget.deliveryProfile,
+          onSaveDeliveryProfile: widget.onSaveDeliveryProfile,
+          onCreateDeliveryOrder:
+              ({required deliveryService, required deliveryPrice}) =>
+                  widget.onCreateDeliveryOrder(
+                    product,
+                    deliveryService: deliveryService,
+                    deliveryPrice: deliveryPrice,
                   ),
+          onContactSeller: () async {
+            final navigator = Navigator.of(context, rootNavigator: true);
+            final thread = await widget.onContactSeller(product);
+            if (!mounted) return;
+            if (thread == null) {
+              _showSnackBar('Не удалось открыть чат');
+              return;
+            }
+            await navigator.maybePop();
+            if (!mounted) return;
+            navigator.push(
+              MaterialPageRoute<void>(
+                builder: (context) => ChatScreen(
+                  thread: thread,
+                  onSendMessage: widget.onSendMessage,
+                  onOpenProduct: _openProductFromChat,
+                  currentUserId: widget.currentUserId,
+                  threadsListenable: widget.threadsListenable,
+                  resolveThread: widget.resolveThread,
+                  lastSeenForUser: widget.lastSeenForUser,
+                  actions: widget.chatActions,
+                  onOpenSellerProfile: () => _openSellerFromChat(thread),
+                  onBuyProduct: () => _buyFromChat(thread),
                 ),
-              );
-            },
-            onShare: () => widget.onShareProduct(product),
-          );
-        },
-      ),
+              ),
+            );
+          },
+          onShare: () => widget.onShareProduct(product),
+        );
+      },
     );
+    Navigator.of(context, rootNavigator: true).push(route);
+    // Recording happens only after Navigator accepted the detail route. The
+    // repository updates the local product synchronously before its first
+    // await, so the detail screen can render the new optimistic count.
+    widget.onProductViewed(product);
   }
 
   List<Product> _relatedProductsFor(Product product) {
-    return widget.products
-        .where(
-          (item) =>
-              item.id != product.id &&
-              !item.isHidden &&
-              item.category == product.category,
-        )
-        .take(8)
-        .toList();
+    return rankRelatedCatalogProducts(product, widget.products);
   }
 
   Future<void> _openReviewsForProduct(Product product) async {
@@ -871,22 +934,30 @@ class _CatalogScreenState extends State<CatalogScreen>
             },
           ),
           _SheetOption(
-            label: 'Не рекомендовать такие вещи',
-            icon: Icons.visibility_off_outlined,
-            onTap: () {
-              Navigator.pop(context);
-              _showSnackBar('Будем показывать меньше похожих товаров');
-            },
-          ),
-          _SheetOption(
             label: 'Скрыть товар',
             icon: Icons.block_outlined,
-            onTap: () {
+            onTap: () async {
               Navigator.pop(context);
-              _hideProduct(product.id);
-              _showSnackBar('Товар скрыт');
+              try {
+                await _hideProduct(product.id);
+                if (!mounted) return;
+                _showSnackBar('Товар скрыт');
+              } catch (_) {
+                if (!mounted) return;
+                _showSnackBar('Не удалось скрыть товар');
+              }
             },
           ),
+          if (product.ownerId.trim().isNotEmpty &&
+              product.ownerId != widget.currentUserId)
+            _SheetOption(
+              label: 'Заблокировать продавца',
+              icon: Icons.person_off_outlined,
+              onTap: () {
+                Navigator.pop(context);
+                _confirmBlockSeller(product);
+              },
+            ),
           _SheetOption(
             label: 'Поделиться ссылкой',
             icon: Icons.link,
@@ -926,14 +997,54 @@ class _CatalogScreenState extends State<CatalogScreen>
               _SheetButton(
                 label: 'Отправить',
                 isPrimary: true,
-                onTap: () {
+                onTap: () async {
                   Navigator.pop(context);
-                  _showSnackBar('Жалоба отправлена');
+                  final submitted = await widget.onSubmitContentReport(
+                    targetType: 'product',
+                    targetId: product.id,
+                    reason: selectedReason,
+                  );
+                  if (!mounted) return;
+                  _showSnackBar(
+                    submitted
+                        ? 'Жалоба отправлена'
+                        : 'Не удалось отправить жалобу',
+                  );
                 },
               ),
             ],
           );
         },
+      ),
+    );
+  }
+
+  void _confirmBlockSeller(Product product) {
+    _showAppSheet(
+      title: 'Заблокировать продавца?',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Объявления и сообщения ${product.sellerName.trim().isEmpty ? 'этого пользователя' : product.sellerName} будут скрыты.',
+            style: const TextStyle(fontSize: 14, height: 1.35),
+          ),
+          const SizedBox(height: 20),
+          _SheetButton(
+            label: 'Заблокировать',
+            isPrimary: true,
+            onTap: () async {
+              Navigator.pop(context);
+              final blocked = await widget.onBlockUser(product.ownerId);
+              if (!mounted) return;
+              _showSnackBar(
+                blocked
+                    ? 'Продавец заблокирован'
+                    : 'Не удалось заблокировать продавца',
+              );
+            },
+          ),
+        ],
       ),
     );
   }
@@ -1001,6 +1112,7 @@ class _CatalogScreenState extends State<CatalogScreen>
             location: product.location,
             isLiked: product.isLiked,
             shippingAddress: product.shippingAddress,
+            deliveryMethods: product.deliveryMethods,
           ),
           deliveryProfile: widget.deliveryProfile,
           onSaveProfile: widget.onSaveDeliveryProfile,
@@ -1202,6 +1314,7 @@ class ProductDetailsSheet extends StatelessWidget {
   final VoidCallback onLike;
   final VoidCallback onAddToCart;
   final VoidCallback onContactSeller;
+  final VoidCallback onShare;
 
   const ProductDetailsSheet({
     super.key,
@@ -1209,6 +1322,7 @@ class ProductDetailsSheet extends StatelessWidget {
     required this.onLike,
     required this.onAddToCart,
     required this.onContactSeller,
+    required this.onShare,
   });
 
   @override
@@ -1327,7 +1441,7 @@ class ProductDetailsSheet extends StatelessWidget {
           ),
 
           // Send
-          GestureDetector(onTap: () {}, child: _PaperPlaneIcon(size: 26)),
+          GestureDetector(onTap: onShare, child: _PaperPlaneIcon(size: 26)),
         ],
       ),
     );

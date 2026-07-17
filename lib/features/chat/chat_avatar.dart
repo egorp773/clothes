@@ -27,20 +27,16 @@ class ChatAvatar extends StatelessWidget {
     final hasProduct = thread.productImage.trim().isNotEmpty;
     return ChatAvatar(
       key: key,
-      imageUrl: hasProduct
-          ? thread.productImage
-          : thread.displayAvatar(currentUserId),
-      name: hasProduct
-          ? thread.productTitle
-          : thread.displayTitle(currentUserId),
+      imageUrl: thread.displayAvatar(currentUserId),
+      name: thread.displayTitle(currentUserId),
       size: size,
       isGroup: thread.isGroup,
       members: thread.members
           .where((member) => member.id != currentUserId)
           .toList(growable: false),
-      productImage: hasProduct ? thread.displayAvatar(currentUserId) : '',
+      productImage: hasProduct ? thread.productImage : '',
       showOnline: showOnline,
-      isProduct: hasProduct,
+      isProduct: false,
     );
   }
 
@@ -187,20 +183,25 @@ class _MemberInitial extends StatelessWidget {
     return Container(
       width: 28,
       height: 28,
+      padding: const EdgeInsets.all(1.5),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.18),
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 1.5),
+        border: Border.all(color: Colors.white, width: 1),
       ),
-      child: Center(
-        child: Text(
-          initial,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+      child: ClipOval(
+        child: member.avatarUrl.trim().isNotEmpty
+            ? AppImage(imageUrl: member.avatarUrl, fit: BoxFit.cover)
+            : Center(
+                child: Text(
+                  initial,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
       ),
     );
   }

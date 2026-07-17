@@ -3,29 +3,45 @@ import 'package:clothes/models/profile_feature.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('outfit publication time and counters round-trip without timezone loss', () {
-    final publishedAt = DateTime(2026, 7, 16, 12, 45);
-    final outfit = CreatedOutfit(
-      id: 'outfit-1',
-      authorName: 'Автор',
-      authorHandle: '@author',
-      ownerId: 'owner-1',
-      photos: const [],
-      items: const [],
-      viewsCount: 17,
-      likesCount: 4,
-      publishedAt: publishedAt,
-    );
+  test(
+    'outfit publication time and counters round-trip without timezone loss',
+    () {
+      final publishedAt = DateTime(2026, 7, 16, 12, 45);
+      final outfit = CreatedOutfit(
+        id: 'outfit-1',
+        authorName: 'Автор',
+        authorHandle: '@author',
+        authorAvatarUrl: 'https://cdn.example/avatar.jpg',
+        ownerId: 'owner-1',
+        photos: const [],
+        items: const [],
+        viewsCount: 17,
+        likesCount: 4,
+        publishedAt: publishedAt,
+      );
 
-    final json = outfit.toJson();
-    expect(json['publishedAt'], publishedAt.toUtc().toIso8601String());
-    expect(json['publishedAt'] as String, endsWith('Z'));
+      final json = outfit.toJson();
+      expect(json['publishedAt'], publishedAt.toUtc().toIso8601String());
+      expect(json['publishedAt'] as String, endsWith('Z'));
 
-    final restored = CreatedOutfit.fromJson(json);
-    expect(restored.publishedAt, publishedAt.toUtc());
-    expect(restored.viewsCount, 17);
-    expect(restored.likesCount, 4);
-  });
+      final restored = CreatedOutfit.fromJson(json);
+      expect(restored.publishedAt, publishedAt.toUtc());
+      expect(restored.viewsCount, 17);
+      expect(restored.likesCount, 4);
+      expect(restored.authorAvatarUrl, 'https://cdn.example/avatar.jpg');
+
+      final restoredFromSupabase = CreatedOutfit.fromSupabase({
+        'id': 'outfit-1',
+        'photos': const <String>[],
+        'items': const <Map<String, dynamic>>[],
+        'author_avatar_url': 'https://cdn.example/avatar.jpg',
+      });
+      expect(
+        restoredFromSupabase.authorAvatarUrl,
+        'https://cdn.example/avatar.jpg',
+      );
+    },
+  );
 
   test('notification categories persist in cache and Supabase formats', () {
     const preferences = NotificationPreferences(

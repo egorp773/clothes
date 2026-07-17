@@ -37,6 +37,177 @@ void main() {
     );
   });
 
+  test(
+    'black trousers intent excludes other categories and primary colors',
+    () {
+      final blackTrousers = _product(
+        id: 'black-trousers',
+        title: 'Базовые брюки',
+        normalizedCategory: 'trousers',
+        primaryColor: 'black',
+      );
+      final blackSneakers = _product(
+        id: 'black-sneakers',
+        title: 'Чёрные кеды',
+        normalizedCategory: 'sneakers',
+        primaryColor: 'black',
+      );
+      final blackBag = _product(
+        id: 'black-bag',
+        title: 'Чёрная сумка',
+        normalizedCategory: 'bag',
+        primaryColor: 'black',
+      );
+      final blackCap = _product(
+        id: 'black-cap',
+        title: 'Чёрная кепка',
+        normalizedCategory: 'cap',
+        primaryColor: 'black',
+      );
+      final whiteTrousers = _product(
+        id: 'white-trousers',
+        title: 'Светлые брюки',
+        normalizedCategory: 'trousers',
+        primaryColor: 'white',
+      );
+      final descriptionNoise = _product(
+        id: 'description-noise',
+        title: 'Белый свитер Saint Laurent',
+        description: 'В описании случайно указаны брюки черные',
+        brand: 'Saint Laurent',
+        normalizedCategory: 'sweater',
+        primaryColor: 'white',
+      );
+      final missingStructuredColor = _product(
+        id: 'missing-structured-color',
+        title: 'Базовые брюки',
+        description: 'В описании написано: брюки черные',
+        normalizedCategory: 'trousers',
+      );
+      final products = [
+        blackTrousers,
+        blackSneakers,
+        blackBag,
+        blackCap,
+        whiteTrousers,
+        descriptionNoise,
+        missingStructuredColor,
+      ];
+      final index = CatalogSearchIndex(products);
+
+      final matches = products
+          .where((product) => index.matches(product, 'брюки черные'))
+          .map((product) => product.id)
+          .toSet();
+
+      expect(matches, {'black-trousers'});
+    },
+  );
+
+  test('related products stay in category and rank structured similarity', () {
+    final source = _product(
+      id: 'source',
+      title: 'Исходные брюки',
+      brand: 'Nike',
+      normalizedCategory: 'trousers',
+      primaryColor: 'black',
+      material: 'cotton',
+    );
+    final closest = _product(
+      id: 'closest',
+      title: 'Максимально похожие',
+      brand: 'Nike',
+      normalizedCategory: 'trousers',
+      primaryColor: 'black',
+      material: 'cotton',
+    );
+    final sameCategory = _product(
+      id: 'same-category',
+      title: 'Другие брюки',
+      normalizedCategory: 'trousers',
+      primaryColor: 'white',
+    );
+    final wrongCategory = _product(
+      id: 'wrong-category-related',
+      title: 'Черная сумка Nike',
+      brand: 'Nike',
+      normalizedCategory: 'bag',
+      primaryColor: 'black',
+      material: 'cotton',
+    );
+
+    final related = rankRelatedCatalogProducts(source, [
+      wrongCategory,
+      sameCategory,
+      closest,
+      source,
+    ]);
+
+    expect(related.map((product) => product.id), ['closest', 'same-category']);
+  });
+
+  test('structured category intent accepts a category-id-only listing', () {
+    final product = _product(
+      id: 'category-id-only',
+      title: 'Базовая модель',
+      categoryId: 'trousers',
+      primaryColor: 'black',
+    );
+    final index = CatalogSearchIndex([product]);
+
+    expect(index.matches(product, 'черные брюки'), isTrue);
+  });
+
+  test(
+    'white Saint Laurent sweater excludes conflicting category or color',
+    () {
+      final expected = _product(
+        id: 'expected',
+        title: 'Базовая модель',
+        brand: 'Saint Laurent',
+        normalizedCategory: 'sweater',
+        primaryColor: 'white',
+      );
+      final wrongColor = _product(
+        id: 'wrong-color',
+        title: 'Белый свитер Saint Laurent',
+        description: 'Белый свитер Saint Laurent',
+        brand: 'Saint Laurent',
+        normalizedCategory: 'sweater',
+        primaryColor: 'black',
+      );
+      final wrongCategory = _product(
+        id: 'wrong-category',
+        title: 'Белый свитер Saint Laurent',
+        description: 'Белый свитер Saint Laurent',
+        brand: 'Saint Laurent',
+        normalizedCategory: 't_shirt',
+        primaryColor: 'white',
+      );
+      final descriptionOnly = _product(
+        id: 'description-only',
+        title: 'Сумка из новой коллекции',
+        description: 'Белый свитер Saint Laurent',
+        brand: 'Saint Laurent',
+        normalizedCategory: 'bag',
+        primaryColor: 'black',
+      );
+      final products = [expected, wrongColor, wrongCategory, descriptionOnly];
+      final index = CatalogSearchIndex(products);
+
+      final matches = products
+          .where(
+            (product) => index.matches(product, 'белый свитер saint laurent'),
+          )
+          .map((product) => product.id)
+          .toSet();
+
+      expect(matches, {'expected'});
+      expect(index.score(wrongColor, 'белый свитер saint laurent'), 0);
+      expect(index.score(wrongCategory, 'белый свитер saint laurent'), 0);
+    },
+  );
+
   test('supports practical Russian word forms and category synonyms', () {
     final shirt = _product(
       id: 'shirt',
@@ -136,10 +307,12 @@ void main() {
       isTrue,
     );
     expect(
-      index.suggestions('редкий').any(
-        (suggestion) =>
-            suggestion.query == 'Редкий заголовок конкретного объявления',
-      ),
+      index
+          .suggestions('редкий')
+          .any(
+            (suggestion) =>
+                suggestion.query == 'Редкий заголовок конкретного объявления',
+          ),
       isFalse,
     );
   });
@@ -161,6 +334,7 @@ Product _product({
   required String title,
   String description = '',
   String brand = '',
+  String categoryId = '',
   String normalizedCategory = '',
   String primaryColor = '',
   String material = '',
@@ -180,6 +354,7 @@ Product _product({
   color: '',
   condition: '',
   dotsOnDark: false,
+  categoryId: categoryId,
   normalizedCategory: normalizedCategory,
   normalizedBrand: brand.toLowerCase(),
   primaryColor: primaryColor,

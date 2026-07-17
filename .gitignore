@@ -56,3 +56,15 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Signing credentials and local build-time configuration
+/android/key.properties
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+*.dart-defines.json
+!*.dart-defines.example.json
+.env
+.env.*
+!.env.example

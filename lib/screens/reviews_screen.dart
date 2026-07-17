@@ -42,6 +42,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   bool _onlyPhoto = false;
   bool _isLoading = true;
   bool _isReloading = false;
+  bool _isSubmittingReview = false;
   String? _loadError;
 
   bool get _canWriteReview =>
@@ -138,7 +139,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 18,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                           ),
                         ),
                       ),
@@ -179,6 +180,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   }
 
   Future<void> _createReview() async {
+    if (_isSubmittingReview) return;
     final sourceProduct = widget.sourceProduct;
     final onCreateReview = widget.onCreateReview;
     if (sourceProduct == null || onCreateReview == null) return;
@@ -193,16 +195,44 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
       builder: (context) => const _ReviewEditor(),
     );
     if (draft == null) return;
-    await onCreateReview(
-      sellerId: widget.seller.id,
-      productId: sourceProduct.id,
-      productTitle: sourceProduct.title,
-      productImage: sourceProduct.image,
-      rating: draft.rating,
-      text: draft.text,
-      hasPhoto: draft.hasPhoto,
-    );
-    await _load();
+    setState(() => _isSubmittingReview = true);
+    try {
+      await onCreateReview(
+        sellerId: widget.seller.id,
+        productId: sourceProduct.id,
+        productTitle: sourceProduct.title,
+        productImage: sourceProduct.image,
+        rating: draft.rating,
+        text: draft.text,
+        hasPhoto: draft.hasPhoto,
+      );
+      await _load();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Отзыв опубликован'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } on SellerReviewSubmissionException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.message),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось опубликовать отзыв. Попробуйте ещё раз.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSubmittingReview = false);
+    }
   }
 
   void _showSignInRequired() {
@@ -249,7 +279,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                                   style: TextStyle(
                                     fontSize: 22,
                                     height: 1,
-                                    fontWeight: FontWeight.w800,
+                                    fontWeight: FontWeight.w700,
                                   ),
                                 ),
                               ],
@@ -344,7 +374,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                     width: double.infinity,
                     height: 50,
                     child: ElevatedButton(
-                      onPressed: _createReview,
+                      onPressed: _isSubmittingReview ? null : _createReview,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.black,
                         foregroundColor: Colors.white,
@@ -352,9 +382,9 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                           borderRadius: BorderRadius.circular(14),
                         ),
                       ),
-                      child: const Text(
-                        'ОСТАВИТЬ ОТЗЫВ',
-                        style: TextStyle(fontWeight: FontWeight.w800),
+                      child: Text(
+                        _isSubmittingReview ? 'ОТПРАВЛЯЕМ' : 'ОСТАВИТЬ ОТЗЫВ',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
                     ),
                   ),
@@ -402,7 +432,7 @@ class _ReviewsSummary extends StatelessWidget {
                 style: const TextStyle(
                   fontSize: 36,
                   height: 0.95,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               const SizedBox(height: 6),
@@ -519,7 +549,7 @@ class _EmptyReviews extends StatelessWidget {
               style: TextStyle(
                 fontSize: 16,
                 height: 1.1,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
                 letterSpacing: 0,
                 color: Colors.black,
               ),
@@ -635,7 +665,7 @@ class _FilterChipButton extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 12,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                   color: selected ? Colors.white : Colors.black,
                 ),
               ),
@@ -691,7 +721,7 @@ class _ReviewTile extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 15,
                         height: 1.05,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 5),
@@ -734,7 +764,7 @@ class _ReviewTile extends StatelessWidget {
             style: const TextStyle(
               fontSize: 13,
               height: 1.15,
-              fontWeight: FontWeight.w800,
+              fontWeight: FontWeight.w700,
             ),
           ),
           if (review.productImage.trim().isNotEmpty) ...[
@@ -813,7 +843,6 @@ class _ReviewEditor extends StatefulWidget {
 class _ReviewEditorState extends State<_ReviewEditor> {
   final _controller = TextEditingController();
   int _rating = 5;
-  bool _hasPhoto = false;
 
   @override
   void dispose() {
@@ -833,7 +862,7 @@ class _ReviewEditorState extends State<_ReviewEditor> {
           const Text(
             'оставить отзыв',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 18),
           Row(
@@ -857,12 +886,26 @@ class _ReviewEditorState extends State<_ReviewEditor> {
             maxLines: 5,
             decoration: const InputDecoration(hintText: 'Текст отзыва'),
           ),
-          CheckboxListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _hasPhoto,
-            onChanged: (value) => setState(() => _hasPhoto = value ?? false),
-            title: const Text('с фото'),
-            controlAffinity: ListTileControlAffinity.leading,
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.photo_outlined, size: 19, color: Color(0xFF8A8A8F)),
+                SizedBox(width: 9),
+                Expanded(
+                  child: Text(
+                    'Фото к отзыву станет доступно после подключения защищённого хранилища отзывов.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.35,
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF8A8A8F),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
           SizedBox(
             height: 48,
@@ -873,7 +916,7 @@ class _ReviewEditorState extends State<_ReviewEditor> {
                   _ReviewDraft(
                     rating: _rating,
                     text: _controller.text,
-                    hasPhoto: _hasPhoto,
+                    hasPhoto: false,
                   ),
                 );
               },
@@ -905,7 +948,7 @@ class _ReviewDraft {
 
 String _sortTitle(ReviewSort sort) {
   return switch (sort) {
-    ReviewSort.helpful => 'сначала полезные',
+    ReviewSort.helpful => 'сначала с высокой оценкой',
     ReviewSort.newest => 'сначала новые',
     ReviewSort.oldest => 'сначала старые',
     ReviewSort.positive => 'сначала положительные',

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 class LoginScreen extends StatelessWidget {
@@ -7,12 +9,16 @@ class LoginScreen extends StatelessWidget {
     required this.onYandexTap,
     required this.onVkTap,
     required this.onPhoneTap,
+    required this.isSigningIn,
+    this.authError,
   });
 
   final VoidCallback onClose;
-  final VoidCallback onYandexTap;
-  final VoidCallback onVkTap;
+  final Future<void> Function() onYandexTap;
+  final Future<void> Function() onVkTap;
   final VoidCallback onPhoneTap;
+  final bool isSigningIn;
+  final String? authError;
 
   @override
   Widget build(BuildContext context) {
@@ -66,20 +72,58 @@ class LoginScreen extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   _ServiceLoginButton(
+                    key: const Key('login-yandex'),
                     label: 'Яндекс ID',
                     logo: 'Я',
-                    onTap: onYandexTap,
+                    onTap: isSigningIn ? null : onYandexTap,
                   ),
                   const SizedBox(width: 22),
                   _ServiceLoginButton(
+                    key: const Key('login-vk'),
                     label: 'VK ID',
                     logo: 'VK',
-                    onTap: onVkTap,
+                    onTap: isSigningIn ? null : onVkTap,
                   ),
                 ],
               ),
+              const SizedBox(height: 16),
+              SizedBox(
+                height: 42,
+                child: isSigningIn
+                    ? const Center(
+                        child: SizedBox(
+                          key: Key('login-auth-loading'),
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.black,
+                          ),
+                        ),
+                      )
+                    : authError?.trim().isNotEmpty == true
+                    ? Center(
+                        child: Text(
+                          authError!.trim(),
+                          key: const Key('login-auth-error'),
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            height: 1.3,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFFB3261E),
+                          ),
+                        ),
+                      )
+                    : null,
+              ),
               const Spacer(flex: 5),
-              _PhoneLoginButton(onTap: onPhoneTap),
+              _PhoneLoginButton(
+                key: const Key('login-phone'),
+                onTap: isSigningIn ? null : onPhoneTap,
+              ),
               const SizedBox(height: 11),
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
@@ -104,6 +148,7 @@ class LoginScreen extends StatelessWidget {
 
 class _ServiceLoginButton extends StatelessWidget {
   const _ServiceLoginButton({
+    super.key,
     required this.label,
     required this.logo,
     required this.onTap,
@@ -111,13 +156,13 @@ class _ServiceLoginButton extends StatelessWidget {
 
   final String label;
   final String logo;
-  final VoidCallback onTap;
+  final Future<void> Function()? onTap;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: onTap,
+      onTap: onTap == null ? null : () => unawaited(onTap!()),
       child: SizedBox(
         width: 78,
         child: Column(
@@ -125,8 +170,8 @@ class _ServiceLoginButton extends StatelessWidget {
             Container(
               width: 68,
               height: 68,
-              decoration: const BoxDecoration(
-                color: Colors.black,
+              decoration: BoxDecoration(
+                color: onTap == null ? const Color(0xFFB6B6BA) : Colors.black,
                 shape: BoxShape.circle,
               ),
               child: Center(
@@ -148,11 +193,11 @@ class _ServiceLoginButton extends StatelessWidget {
               textAlign: TextAlign.center,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11.5,
                 height: 1,
                 fontWeight: FontWeight.w500,
-                color: Colors.black,
+                color: onTap == null ? const Color(0xFF8E8E93) : Colors.black,
               ),
             ),
           ],
@@ -163,9 +208,9 @@ class _ServiceLoginButton extends StatelessWidget {
 }
 
 class _PhoneLoginButton extends StatelessWidget {
-  const _PhoneLoginButton({required this.onTap});
+  const _PhoneLoginButton({super.key, required this.onTap});
 
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -178,16 +223,21 @@ class _PhoneLoginButton extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(3),
-          border: Border.all(color: const Color(0xFF222222), width: 0.8),
+          border: Border.all(
+            color: onTap == null
+                ? const Color(0xFFB6B6BA)
+                : const Color(0xFF222222),
+            width: 0.8,
+          ),
         ),
-        child: const Center(
+        child: Center(
           child: Text(
             'ПО НОМЕРУ ТЕЛЕФОНА',
             style: TextStyle(
               fontSize: 13,
               height: 1,
               fontWeight: FontWeight.w500,
-              color: Colors.black,
+              color: onTap == null ? const Color(0xFF8E8E93) : Colors.black,
               letterSpacing: 0,
             ),
           ),

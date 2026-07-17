@@ -15,9 +15,9 @@ class VisualSearchScreen extends StatefulWidget {
     required this.initialImage,
     required this.onProductTap,
     required this.onToggleLike,
+    required this.onProductMenu,
+    required this.onShareProduct,
     this.catalogProducts = const [],
-    this.onProductMenu,
-    this.onShareProduct,
     this.service,
     this.initialResult,
     this.initialPreviewBytes,
@@ -27,8 +27,8 @@ class VisualSearchScreen extends StatefulWidget {
   final ValueChanged<Product> onProductTap;
   final Future<void> Function(String productId) onToggleLike;
   final List<Product> catalogProducts;
-  final ValueChanged<Product>? onProductMenu;
-  final ValueChanged<Product>? onShareProduct;
+  final ValueChanged<Product> onProductMenu;
+  final ValueChanged<Product> onShareProduct;
   final VisualSearchService? service;
   final VisualSearchResult? initialResult;
   final Uint8List? initialPreviewBytes;
@@ -45,6 +45,7 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
   VisualSearchFilters _filters = const VisualSearchFilters();
   bool _searching = false;
   String? _error;
+  final Set<String> _updatingLikeIds = <String>{};
 
   @override
   void initState() {
@@ -101,6 +102,28 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
   }
 
   void _backToCamera() => Navigator.maybePop(context);
+
+  Future<void> _toggleLike(Product product) async {
+    if (!_updatingLikeIds.add(product.id)) return;
+    try {
+      final update = widget.onToggleLike(product.id);
+      if (mounted) setState(() {});
+      await update;
+      if (mounted) setState(() {});
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось обновить избранное'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } finally {
+      _updatingLikeIds.remove(product.id);
+    }
+  }
 
   Future<void> _showFilters() async {
     final minController = TextEditingController(
@@ -409,12 +432,13 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
               itemBuilder: (context, index) {
                 final product = products[index];
                 return ProductCard(
+                  key: ValueKey<String>('visual-search-product-${product.id}'),
                   product: product,
                   scale: 1,
                   onTap: () => widget.onProductTap(product),
-                  onLike: () => widget.onToggleLike(product.id),
-                  onMenu: () => widget.onProductMenu?.call(product),
-                  onShare: () => widget.onShareProduct?.call(product),
+                  onLike: () => _toggleLike(product),
+                  onMenu: () => widget.onProductMenu(product),
+                  onShare: () => widget.onShareProduct(product),
                 );
               },
             ),

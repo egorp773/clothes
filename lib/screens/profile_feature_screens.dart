@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/app_typography.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
@@ -14,26 +15,26 @@ const _lime = Color(0xFFB6FF00);
 const _pagePadding = 18.0;
 const _darkPanel = Color(0xFF1C1C1E);
 const _featureTitleStyle = TextStyle(
-  fontFamily: 'Montserrat',
+  fontFamily: AppTypography.fontFamily,
   fontSize: 21,
   height: 1,
-  fontWeight: FontWeight.w700,
+  fontWeight: AppTypography.bold,
   letterSpacing: 0,
   color: _ink,
 );
 const _featureBodyStyle = TextStyle(
-  fontFamily: 'Montserrat',
+  fontFamily: AppTypography.fontFamily,
   fontSize: 13.5,
   height: 1.35,
-  fontWeight: FontWeight.w700,
+  fontWeight: AppTypography.medium,
   letterSpacing: 0,
   color: _ink,
 );
 const _featureSmallStyle = TextStyle(
-  fontFamily: 'Montserrat',
+  fontFamily: AppTypography.fontFamily,
   fontSize: 12,
   height: 1.2,
-  fontWeight: FontWeight.w700,
+  fontWeight: AppTypography.medium,
   letterSpacing: 0,
   color: _ink,
 );
@@ -61,6 +62,8 @@ class ProfileNotificationsScreen extends StatefulWidget {
 class _ProfileNotificationsScreenState
     extends State<ProfileNotificationsScreen> {
   late List<ProfileNotification> _notifications = [...widget.notifications];
+  final Set<String> _openingNotificationIds = <String>{};
+  bool _isMarkingAllRead = false;
 
   @override
   void didUpdateWidget(covariant ProfileNotificationsScreen oldWidget) {
@@ -71,6 +74,8 @@ class _ProfileNotificationsScreenState
   }
 
   Future<void> _markRead(ProfileNotification notification) async {
+    if (!_openingNotificationIds.add(notification.id)) return;
+    final wasUnread = !notification.isRead;
     if (!notification.isRead) {
       setState(() {
         _notifications = _notifications
@@ -81,18 +86,64 @@ class _ProfileNotificationsScreenState
             )
             .toList();
       });
-      await widget.onMarkRead(notification.id);
+      try {
+        await widget.onMarkRead(notification.id);
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _notifications = _notifications
+                .map(
+                  (item) => item.id == notification.id
+                      ? item.copyWith(isRead: false)
+                      : item,
+                )
+                .toList();
+          });
+          _showNotificationError('Не удалось отметить уведомление прочитанным');
+        }
+      }
     }
-    await widget.onNotificationTap(notification);
+    try {
+      await widget.onNotificationTap(
+        wasUnread ? notification.copyWith(isRead: true) : notification,
+      );
+    } catch (_) {
+      if (mounted) {
+        _showNotificationError('Не удалось открыть уведомление');
+      }
+    } finally {
+      _openingNotificationIds.remove(notification.id);
+    }
   }
 
   Future<void> _markAllRead() async {
+    if (_isMarkingAllRead) return;
+    final previous = [..._notifications];
+    _isMarkingAllRead = true;
     setState(() {
       _notifications = _notifications
           .map((notification) => notification.copyWith(isRead: true))
           .toList();
     });
-    await widget.onMarkAllRead();
+    try {
+      await widget.onMarkAllRead();
+    } catch (_) {
+      if (mounted) {
+        setState(() => _notifications = previous);
+        _showNotificationError('Не удалось отметить уведомления прочитанными');
+      }
+    } finally {
+      _isMarkingAllRead = false;
+    }
+  }
+
+  void _showNotificationError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
   }
 
   @override
@@ -332,57 +383,904 @@ class _NotificationSettingsScreenState
   }
 }
 
-class ProfileAddressesScreen extends StatelessWidget {
-  const ProfileAddressesScreen({super.key, required this.onOpenCatalog});
+class ProfileSettingsScreen extends StatelessWidget {
+  const ProfileSettingsScreen({
+    super.key,
+    required this.onEditProfile,
+    required this.onNotificationSettings,
+    required this.onAddresses,
+    required this.onSupport,
+    required this.onFaq,
+    required this.onDocuments,
+  });
 
-  final VoidCallback onOpenCatalog;
+  final VoidCallback onEditProfile;
+  final VoidCallback onNotificationSettings;
+  final VoidCallback onAddresses;
+  final VoidCallback onSupport;
+  final VoidCallback onFaq;
+  final VoidCallback onDocuments;
 
   @override
   Widget build(BuildContext context) {
+    return _PlainProfilePage(
+      title: 'настройки',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(height: 18),
+          const Text('профиль и аккаунт', style: _featureTitleStyle),
+          const SizedBox(height: 8),
+          _SettingsRouteTile(
+            key: const Key('profile-settings-edit-profile'),
+            icon: Icons.person_outline_rounded,
+            title: 'Редактировать профиль',
+            subtitle: 'Имя, фото, контакты и город',
+            onTap: onEditProfile,
+          ),
+          _SettingsRouteTile(
+            key: const Key('profile-settings-notifications'),
+            icon: Icons.notifications_none_rounded,
+            title: 'Уведомления',
+            subtitle: 'Push, сообщения, заказы и звук',
+            onTap: onNotificationSettings,
+          ),
+          _SettingsRouteTile(
+            key: const Key('profile-settings-addresses'),
+            icon: Icons.location_on_outlined,
+            title: 'Адреса доставки',
+            subtitle: 'Получатель, домашний адрес и выбранный ПВЗ',
+            onTap: onAddresses,
+          ),
+          const SizedBox(height: 20),
+          const Text('помощь и информация', style: _featureTitleStyle),
+          const SizedBox(height: 8),
+          _SettingsRouteTile(
+            key: const Key('profile-settings-support'),
+            icon: Icons.support_agent_rounded,
+            title: 'Поддержка',
+            subtitle: 'Каналы связи и их текущий статус',
+            onTap: onSupport,
+          ),
+          _SettingsRouteTile(
+            key: const Key('profile-settings-faq'),
+            icon: Icons.help_outline_rounded,
+            title: 'Частые вопросы',
+            subtitle: 'Просмотры, история, доставка и аккаунт',
+            onTap: onFaq,
+          ),
+          _SettingsRouteTile(
+            key: const Key('profile-settings-documents'),
+            icon: Icons.description_outlined,
+            title: 'Документы',
+            subtitle: 'Правила сервиса и статус публикации',
+            onTap: onDocuments,
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Изменение контактов, безопасность входа и удаление аккаунта находятся в разделе «Редактировать профиль».',
+            style: TextStyle(
+              fontSize: 12.5,
+              height: 1.4,
+              fontWeight: FontWeight.w500,
+              color: _muted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum ProfileInformationTopic {
+  support,
+  faq,
+  deliveryAndPayment,
+  documents,
+  careers,
+}
+
+class ProfileInformationScreen extends StatelessWidget {
+  const ProfileInformationScreen({super.key, required this.topic});
+
+  final ProfileInformationTopic topic;
+
+  @override
+  Widget build(BuildContext context) {
+    return switch (topic) {
+      ProfileInformationTopic.support => _PlainProfilePage(
+        title: 'поддержка',
+        child: const _SupportInformation(),
+      ),
+      ProfileInformationTopic.faq => _PlainProfilePage(
+        title: 'частые вопросы',
+        child: const _FaqInformation(),
+      ),
+      ProfileInformationTopic.deliveryAndPayment => _PlainProfilePage(
+        title: 'доставка и оплата',
+        child: const _DeliveryInformation(),
+      ),
+      ProfileInformationTopic.documents => _PlainProfilePage(
+        title: 'документы',
+        child: const _DocumentsInformation(),
+      ),
+      ProfileInformationTopic.careers => _PlainProfilePage(
+        title: 'вакансии',
+        child: const _CareersInformation(),
+      ),
+    };
+  }
+}
+
+class _SupportInformation extends StatelessWidget {
+  const _SupportInformation();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(height: 20),
+        _InformationLead(
+          icon: Icons.support_agent_rounded,
+          title: 'Каналы поддержки готовятся к запуску',
+          body:
+              'Официальный чат, номер телефона и email пока не опубликованы. До их появления не передавайте данные заказа и оплаты сторонним аккаунтам.',
+        ),
+        SizedBox(height: 18),
+        _InformationCard(
+          title: 'Чат в приложении',
+          body:
+              'Будет доступен здесь после подключения операторов и регламента обработки обращений.',
+          status: 'ГОТОВИТСЯ',
+        ),
+        SizedBox(height: 10),
+        _InformationCard(
+          title: 'Телефон и email',
+          body:
+              'Контакты появятся только после регистрации официальной линии поддержки.',
+          status: 'НЕ ОПУБЛИКОВАНЫ',
+        ),
+        SizedBox(height: 18),
+        Text(
+          'Если вопрос касается интерфейса, сначала проверьте раздел «Частые вопросы».',
+          style: TextStyle(
+            fontFamily: AppTypography.fontFamily,
+            fontSize: 13,
+            height: 1.4,
+            fontWeight: AppTypography.medium,
+            color: _muted,
+          ),
+        ),
+        SizedBox(height: 24),
+      ],
+    );
+  }
+}
+
+class _FaqInformation extends StatelessWidget {
+  const _FaqInformation();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(height: 12),
+        _FaqTile(
+          question: 'Когда считается просмотр?',
+          answer:
+              'Просмотр засчитывается при открытии объявления или образа. Простое пролистывание каталога и показ карточки в ленте просмотром не считаются.',
+        ),
+        _FaqTile(
+          question: 'Как очистить недавно просмотренное?',
+          answer:
+              'Откройте «Недавно просмотренное» в профиле и нажмите «Очистить» сверху. После подтверждения удалится история вещей и образов.',
+        ),
+        _FaqTile(
+          question: 'Какой адрес нужен для пункта выдачи?',
+          answer:
+              'Домашний адрес и пункт выдачи хранятся отдельно. Для доставки в ПВЗ выбирается конкретный пункт с его названием, адресом и идентификатором службы доставки.',
+        ),
+        _FaqTile(
+          question: 'Когда списываются деньги?',
+          answer:
+              'Оплата должна подтверждаться только через подключённую безопасную сделку. Пока платёжный провайдер не активирован, приложение не должно имитировать успешное списание.',
+        ),
+        _FaqTile(
+          question: 'Как связаться с продавцом?',
+          answer:
+              'Откройте объявление или профиль продавца и перейдите в сообщения. История переписки сохраняется в разделе «Сообщения».',
+        ),
+        _FaqTile(
+          question: 'Как удалить аккаунт?',
+          answer:
+              'Профиль → Настройки → Редактировать профиль → Управление аккаунтом → Удалить аккаунт. Действие требует отдельного подтверждения.',
+        ),
+        SizedBox(height: 24),
+      ],
+    );
+  }
+}
+
+class _DeliveryInformation extends StatelessWidget {
+  const _DeliveryInformation();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(height: 20),
+        _InformationLead(
+          icon: Icons.local_shipping_outlined,
+          title: 'Доставка без подмены адресов',
+          body:
+              'Домашний адрес используется для курьерской доставки. Для ПВЗ сохраняются отдельные данные выбранного пункта — служба, идентификатор, название и фактический адрес.',
+        ),
+        SizedBox(height: 18),
+        _InformationCard(
+          title: 'Расчёт доставки',
+          body:
+              'Срок и стоимость должны приходить от выбранной службы доставки. Недоступный тариф не заменяется случайным адресом или фиктивной ценой.',
+          status: 'ПРАВИЛО СЕРВИСА',
+        ),
+        SizedBox(height: 10),
+        _InformationCard(
+          title: 'Безопасная оплата',
+          body:
+              'Заказ считается оплаченным только после серверного подтверждения платёжного провайдера. Ошибка должна оставлять заказ неоплаченным и показывать понятную причину.',
+          status: 'ПОДКЛЮЧАЕТСЯ',
+        ),
+        SizedBox(height: 10),
+        _InformationCard(
+          title: 'Внешние службы',
+          body:
+              'CDEK, Почта России и Яндекс Доставка станут доступны после заключения договоров и активации рабочих ключей.',
+          status: 'ОЖИДАЮТ ДОГОВОРОВ',
+        ),
+        SizedBox(height: 24),
+      ],
+    );
+  }
+}
+
+class _DocumentsInformation extends StatelessWidget {
+  const _DocumentsInformation();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(height: 20),
+        _InformationLead(
+          icon: Icons.description_outlined,
+          title: 'Юридические тексты ещё не опубликованы',
+          body:
+              'До релиза здесь должны появиться финальные документы с публичными ссылками, реквизитами владельца сервиса и датой вступления в силу.',
+        ),
+        SizedBox(height: 18),
+        _DocumentStatusRow(title: 'Политика конфиденциальности'),
+        _DocumentStatusRow(title: 'Пользовательское соглашение'),
+        _DocumentStatusRow(title: 'Правила сообщества и модерации'),
+        _DocumentStatusRow(title: 'Условия оплаты, доставки и возврата'),
+        _DocumentStatusRow(title: 'Правила безопасной сделки и споров'),
+        SizedBox(height: 18),
+        Text(
+          'Удаление аккаунта уже доступно в настройках профиля. Публикация документов и постоянных web-ссылок остаётся обязательным условием релиза.',
+          style: TextStyle(
+            fontFamily: AppTypography.fontFamily,
+            fontSize: 13,
+            height: 1.4,
+            fontWeight: AppTypography.medium,
+            color: _muted,
+          ),
+        ),
+        SizedBox(height: 24),
+      ],
+    );
+  }
+}
+
+class _CareersInformation extends StatelessWidget {
+  const _CareersInformation();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(height: 20),
+        _InformationLead(
+          icon: Icons.work_outline_rounded,
+          title: 'Открытых вакансий сейчас нет',
+          body:
+              'Раздел сохранён для будущих вакансий. Официальный адрес для откликов будет опубликован вместе с первой позицией.',
+        ),
+        SizedBox(height: 24),
+      ],
+    );
+  }
+}
+
+class _InformationLead extends StatelessWidget {
+  const _InformationLead({
+    required this.icon,
+    required this.title,
+    required this.body,
+  });
+
+  final IconData icon;
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F3F5),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 25, color: _ink),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            style: const TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 17,
+              height: 1.15,
+              fontWeight: AppTypography.bold,
+              color: _ink,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(body, style: _featureBodyStyle.copyWith(color: _muted)),
+        ],
+      ),
+    );
+  }
+}
+
+class _InformationCard extends StatelessWidget {
+  const _InformationCard({
+    required this.title,
+    required this.body,
+    required this.status,
+  });
+
+  final String title;
+  final String body;
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border.all(color: _line),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 14,
+                    fontWeight: AppTypography.bold,
+                    color: _ink,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              _StatusBadge(label: status),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(body, style: _featureBodyStyle.copyWith(color: _muted)),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  const _StatusBadge({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F0F2),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontFamily: AppTypography.fontFamily,
+          fontSize: 9,
+          height: 1,
+          fontWeight: AppTypography.bold,
+          color: _muted,
+        ),
+      ),
+    );
+  }
+}
+
+class _FaqTile extends StatelessWidget {
+  const _FaqTile({required this.question, required this.answer});
+
+  final String question;
+  final String answer;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: _line)),
+      ),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(bottom: 16),
+        iconColor: _ink,
+        collapsedIconColor: _ink,
+        shape: const Border(),
+        collapsedShape: const Border(),
+        title: Text(
+          question,
+          style: const TextStyle(
+            fontFamily: AppTypography.fontFamily,
+            fontSize: 14,
+            height: 1.25,
+            fontWeight: AppTypography.semiBold,
+            color: _ink,
+          ),
+        ),
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              answer,
+              style: _featureBodyStyle.copyWith(color: _muted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DocumentStatusRow extends StatelessWidget {
+  const _DocumentStatusRow({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 54),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: _line)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.description_outlined, size: 19, color: _muted),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 13,
+                fontWeight: AppTypography.semiBold,
+                color: _ink,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          const _StatusBadge(label: 'ДО РЕЛИЗА'),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsRouteTile extends StatelessWidget {
+  const _SettingsRouteTile({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3F3F5),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Icon(icon, size: 21, color: _ink),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: _ink,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        height: 1.25,
+                        fontWeight: FontWeight.w500,
+                        color: _muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: _muted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class ProfileAddressesScreen extends StatefulWidget {
+  const ProfileAddressesScreen({
+    super.key,
+    required this.profile,
+    required this.onSave,
+    required this.onOpenCatalog,
+  });
+
+  final DeliveryProfile profile;
+  final Future<void> Function(DeliveryProfile profile) onSave;
+  final VoidCallback onOpenCatalog;
+
+  @override
+  State<ProfileAddressesScreen> createState() => _ProfileAddressesScreenState();
+}
+
+class _ProfileAddressesScreenState extends State<ProfileAddressesScreen> {
+  late final TextEditingController _name;
+  late final TextEditingController _phone;
+  late final TextEditingController _email;
+  late final TextEditingController _city;
+  late final TextEditingController _address;
+  late DeliveryProfile _profile;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _profile = widget.profile;
+    _name = TextEditingController(text: _profile.fullName);
+    _phone = TextEditingController(text: _profile.phone);
+    _email = TextEditingController(text: _profile.email);
+    _city = TextEditingController(text: _profile.city);
+    _address = TextEditingController(text: _profile.address);
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _phone.dispose();
+    _email.dispose();
+    _city.dispose();
+    _address.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_isSaving) return;
+    final phoneDigits = _phone.text.replaceAll(RegExp(r'\D'), '');
+    final email = _email.text.trim();
+    final error = _name.text.trim().length < 2
+        ? 'Укажите имя получателя'
+        : phoneDigits.length < 10
+        ? 'Проверьте телефон получателя'
+        : email.isNotEmpty &&
+              !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(email)
+        ? 'Проверьте email'
+        : _city.text.trim().isEmpty
+        ? 'Укажите город'
+        : _address.text.trim().length < 5
+        ? 'Укажите улицу и дом'
+        : null;
+    if (error != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    setState(() => _isSaving = true);
+    final next = _profile.copyWith(
+      fullName: _name.text.trim(),
+      phone: _phone.text.trim(),
+      email: email,
+      city: _city.text.trim(),
+      address: _address.text.trim(),
+    );
+    try {
+      await widget.onSave(next);
+      if (!mounted) return;
+      setState(() => _profile = next);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Адрес и данные получателя сохранены')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось сохранить адрес. Попробуйте ещё раз.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _clearPickupPoint() async {
+    final next = _profile.copyWith(
+      pickupProvider: '',
+      pickupPointId: '',
+      pickupPointName: '',
+      pickupPointAddress: '',
+    );
+    try {
+      await widget.onSave(next);
+      if (!mounted) return;
+      setState(() => _profile = next);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось удалить пункт. Попробуйте ещё раз.'),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPickup =
+        _profile.pickupPointId.trim().isNotEmpty &&
+        _profile.pickupPointAddress.trim().isNotEmpty;
     return _PlainProfilePage(
       title: 'мои адреса',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 24),
-          const Text(
-            'адресов пока нет',
-            style: TextStyle(
-              fontSize: 14,
-              height: 1.25,
-              fontWeight: FontWeight.w700,
-              color: _ink,
-            ),
-          ),
+          const SizedBox(height: 20),
+          const Text('адрес доставки', style: _featureTitleStyle),
           const SizedBox(height: 8),
           const Text(
-            'Адрес доставки сохранится здесь после первого заказа.',
+            'Адрес квартиры хранится отдельно от выбранного пункта выдачи.',
             style: TextStyle(
-              fontSize: 13.5,
-              height: 1.42,
-              fontWeight: FontWeight.w700,
-              color: _ink,
+              fontSize: 13,
+              height: 1.4,
+              fontWeight: FontWeight.w500,
+              color: _muted,
             ),
           ),
-          const SizedBox(height: 22),
+          const SizedBox(height: 16),
+          _ProfileAddressField(
+            key: const Key('address-recipient-name'),
+            controller: _name,
+            label: 'Имя и фамилия',
+            textInputAction: TextInputAction.next,
+          ),
+          _ProfileAddressField(
+            key: const Key('address-recipient-phone'),
+            controller: _phone,
+            label: 'Телефон',
+            keyboardType: TextInputType.phone,
+            textInputAction: TextInputAction.next,
+          ),
+          _ProfileAddressField(
+            controller: _email,
+            label: 'Email (необязательно)',
+            keyboardType: TextInputType.emailAddress,
+            textInputAction: TextInputAction.next,
+          ),
+          _ProfileAddressField(
+            key: const Key('address-city'),
+            controller: _city,
+            label: 'Город',
+            textInputAction: TextInputAction.next,
+          ),
+          _ProfileAddressField(
+            key: const Key('address-line'),
+            controller: _address,
+            label: 'Улица, дом, квартира',
+            textInputAction: TextInputAction.done,
+          ),
+          const SizedBox(height: 8),
           SizedBox(
             width: double.infinity,
             height: 52,
             child: ElevatedButton(
-              onPressed: onOpenCatalog,
+              key: const Key('save-profile-address'),
+              onPressed: _isSaving ? null : _save,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.black,
                 foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.black38,
                 elevation: 0,
-                shape: const RoundedRectangleBorder(),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
-              child: const Text(
-                'ЗА ПОКУПКАМИ',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              child: Text(
+                _isSaving ? 'СОХРАНЯЕМ' : 'СОХРАНИТЬ АДРЕС',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
+          const SizedBox(height: 28),
+          const Text('пункт выдачи', style: _featureTitleStyle),
+          const SizedBox(height: 10),
+          if (hasPickup)
+            Container(
+              key: const Key('saved-pickup-point'),
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F3F5),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.store_mall_directory_outlined, size: 21),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _profile.pickupPointName.trim().isEmpty
+                              ? 'Выбранный пункт'
+                              : _profile.pickupPointName.trim(),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _profile.pickupPointAddress.trim(),
+                          style: const TextStyle(
+                            fontSize: 13,
+                            height: 1.35,
+                            fontWeight: FontWeight.w500,
+                            color: _muted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('clear-saved-pickup-point'),
+                    tooltip: 'Удалить пункт',
+                    onPressed: _clearPickupPoint,
+                    icon: const Icon(Icons.delete_outline_rounded),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            const Text(
+              'Пункт выдачи выбирается при оформлении заказа и не заменяет домашний адрес.',
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                fontWeight: FontWeight.w500,
+                color: _muted,
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextButton.icon(
+              onPressed: widget.onOpenCatalog,
+              icon: const Icon(Icons.shopping_bag_outlined),
+              label: const Text('ПЕРЕЙТИ В КАТАЛОГ'),
+            ),
+          ],
+          const SizedBox(height: 12),
         ],
+      ),
+    );
+  }
+}
+
+class _ProfileAddressField extends StatelessWidget {
+  const _ProfileAddressField({
+    super.key,
+    required this.controller,
+    required this.label,
+    this.keyboardType,
+    this.textInputAction,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final TextInputType? keyboardType;
+  final TextInputAction? textInputAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: TextField(
+        controller: controller,
+        keyboardType: keyboardType,
+        textInputAction: textInputAction,
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+        decoration: InputDecoration(
+          labelText: label,
+          filled: true,
+          fillColor: const Color(0xFFF7F7F8),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 14,
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide.none,
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Colors.black, width: 1.3),
+          ),
+        ),
       ),
     );
   }
@@ -395,6 +1293,7 @@ class ProfileOrdersScreen extends StatefulWidget {
     required this.recommendedProducts,
     required this.currentUserId,
     required this.onProductTap,
+    required this.onShareProduct,
     required this.onToggleProductLike,
     required this.onOpenCatalog,
   });
@@ -403,6 +1302,7 @@ class ProfileOrdersScreen extends StatefulWidget {
   final List<Product> recommendedProducts;
   final String currentUserId;
   final ValueChanged<Product> onProductTap;
+  final ValueChanged<Product> onShareProduct;
   final Future<void> Function(String productId) onToggleProductLike;
   final VoidCallback onOpenCatalog;
 
@@ -472,6 +1372,7 @@ class _ProfileOrdersScreenState extends State<ProfileOrdersScreen> {
               products: widget.recommendedProducts,
               onOpenCatalog: widget.onOpenCatalog,
               onProductTap: widget.onProductTap,
+              onShareProduct: widget.onShareProduct,
               onToggleLike: widget.onToggleProductLike,
             )
           : filteredOrders.isEmpty
@@ -535,8 +1436,6 @@ class SellerDashboardScreen extends StatefulWidget {
 }
 
 class _SellerDashboardScreenState extends State<SellerDashboardScreen> {
-  int _period = 1;
-
   @override
   Widget build(BuildContext context) {
     final stats = widget.stats;
@@ -546,24 +1445,38 @@ class _SellerDashboardScreenState extends State<SellerDashboardScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 16),
-          Row(
-            children: [
-              _PeriodButton(
-                label: 'Неделя',
-                selected: _period == 0,
-                onTap: () => setState(() => _period = 0),
-              ),
-              _PeriodButton(
-                label: 'Месяц',
-                selected: _period == 1,
-                onTap: () => setState(() => _period = 1),
-              ),
-              _PeriodButton(
-                label: 'Год',
-                selected: _period == 2,
-                onTap: () => setState(() => _period = 2),
-              ),
-            ],
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F0F2),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.all_inclusive_rounded, size: 17, color: _ink),
+                SizedBox(width: 7),
+                Text(
+                  'За весь период',
+                  style: TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 12.5,
+                    fontWeight: AppTypography.semiBold,
+                    color: _ink,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Статистика рассчитана по всем заказам аккаунта.',
+            style: TextStyle(
+              fontFamily: AppTypography.fontFamily,
+              fontSize: 11.5,
+              fontWeight: AppTypography.medium,
+              color: _muted,
+            ),
           ),
           const SizedBox(height: 18),
           _SellerScoreCard(stats: stats),
@@ -598,10 +1511,8 @@ class _SellerDashboardScreenState extends State<SellerDashboardScreen> {
               const SizedBox(width: 10),
               Expanded(
                 child: _MetricCard(
-                  title: 'ВОЗВРАТЫ',
+                  title: 'ОТМЕНЫ И ВОЗВРАТЫ',
                   value: '${stats.returnsPercent.round()}%',
-                  valueColor: _lime,
-                  subtitle: 'норма < 6%',
                 ),
               ),
             ],
@@ -715,20 +1626,6 @@ class _OrdersShell extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _EmptyText extends StatelessWidget {
-  const _EmptyText(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 18),
-      child: Text(text, style: _featureBodyStyle.copyWith(height: 1.42)),
     );
   }
 }
@@ -1046,12 +1943,14 @@ class _EmptyOrders extends StatelessWidget {
     required this.products,
     required this.onOpenCatalog,
     required this.onProductTap,
+    required this.onShareProduct,
     required this.onToggleLike,
   });
 
   final List<Product> products;
   final VoidCallback onOpenCatalog;
   final ValueChanged<Product> onProductTap;
+  final ValueChanged<Product> onShareProduct;
   final Future<void> Function(String productId) onToggleLike;
 
   @override
@@ -1110,8 +2009,8 @@ class _EmptyOrders extends StatelessWidget {
                 scale: 1,
                 onTap: () => onProductTap(product),
                 onLike: () => onToggleLike(product.id),
-                onMenu: () {},
-                onShare: () {},
+                onMenu: () => onProductTap(product),
+                onShare: () => onShareProduct(product),
               );
             },
           ),
@@ -1879,42 +2778,6 @@ class _StatusOption extends StatelessWidget {
   }
 }
 
-class _PeriodButton extends StatelessWidget {
-  const _PeriodButton({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 34,
-        margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: selected ? Colors.black : const Color(0xFFF0F0F2),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(
-          label,
-          style: _featureSmallStyle.copyWith(
-            fontSize: 12.5,
-            color: selected ? Colors.white : _ink,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _SellerScoreCard extends StatelessWidget {
   const _SellerScoreCard({required this.stats});
 
@@ -1923,6 +2786,7 @@ class _SellerScoreCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rating = stats.rating.clamp(0, 5).toDouble();
+    final hasRating = stats.ordersCount > 0 && rating > 0;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
@@ -1943,7 +2807,7 @@ class _SellerScoreCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                rating.toStringAsFixed(1),
+                hasRating ? rating.toStringAsFixed(1) : '—',
                 style: _featureTitleStyle.copyWith(
                   fontSize: 34,
                   height: 1,
@@ -1954,75 +2818,13 @@ class _SellerScoreCard extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
-                  '/5.0',
+                  hasRating ? '/5.0' : 'нет завершённых сделок',
                   style: _featureBodyStyle.copyWith(
-                    fontSize: 14,
+                    fontSize: hasRating ? 14 : 12,
                     color: Colors.white,
                   ),
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Text(
-            'КОМИССИЯ ПЛАТФОРМЫ',
-            style: _featureSmallStyle.copyWith(fontSize: 10, color: _muted),
-          ),
-          Row(
-            children: [
-              Text(
-                '${stats.commissionPercent}%',
-                style: _featureTitleStyle.copyWith(
-                  fontSize: 38,
-                  height: 1,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Container(
-                height: 18,
-                padding: const EdgeInsets.symmetric(horizontal: 15),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF709300),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  'топ',
-                  style: _featureSmallStyle.copyWith(
-                    fontSize: 10,
-                    color: _lime,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Stack(
-            children: [
-              Container(
-                height: 7,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Color(0xFFFF3B6A), Color(0xFFFFB04A), _lime],
-                  ),
-                ),
-              ),
-              const Align(
-                alignment: Alignment.centerRight,
-                child: CircleAvatar(radius: 6.5, backgroundColor: _lime),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          const Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _CommissionLabel('Базовый\n18%'),
-              _CommissionLabel('Стандарт\n14%'),
-              _CommissionLabel('Хороший\n11%'),
-              _CommissionLabel('Отличный\n9%'),
-              _CommissionLabel('Топ\n7%', active: true),
             ],
           ),
           const SizedBox(height: 18),
@@ -2036,32 +2838,15 @@ class _SellerScoreCard extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.only(top: 6),
-                  child: CircleAvatar(radius: 3.5, backgroundColor: _lime),
-                ),
+                const Icon(Icons.info_outline_rounded, size: 18, color: _lime),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: RichText(
-                    text: TextSpan(
-                      style: _featureSmallStyle.copyWith(
-                        fontSize: 11.5,
-                        height: 1.35,
-                        color: Colors.white,
-                      ),
-                      children: [
-                        const TextSpan(text: 'Ваш рейтинг в '),
-                        const TextSpan(
-                          text: 'топе',
-                          style: TextStyle(color: _lime),
-                        ),
-                        const TextSpan(text: '! Ваша\nкомиссия '),
-                        TextSpan(
-                          text: '${stats.commissionPercent}%',
-                          style: const TextStyle(color: _lime),
-                        ),
-                        const TextSpan(text: ' с каждой\nпродажи.'),
-                      ],
+                  child: Text(
+                    'Комиссия платформы будет показана после утверждения тарифов и подключения безопасной сделки.',
+                    style: _featureSmallStyle.copyWith(
+                      fontSize: 11.5,
+                      height: 1.35,
+                      color: Colors.white,
                     ),
                   ),
                 ),
@@ -2074,40 +2859,16 @@ class _SellerScoreCard extends StatelessWidget {
   }
 }
 
-class _CommissionLabel extends StatelessWidget {
-  const _CommissionLabel(this.text, {this.active = false});
-
-  final String text;
-  final bool active;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      textAlign: TextAlign.center,
-      style: _featureSmallStyle.copyWith(
-        fontSize: 7,
-        height: 1.1,
-        color: active ? _lime : const Color(0xFF67676D),
-      ),
-    );
-  }
-}
-
 class _MetricCard extends StatelessWidget {
   const _MetricCard({
     required this.title,
     required this.value,
-    this.subtitle,
     this.isAccent = false,
-    this.valueColor,
   });
 
   final String title;
   final String value;
-  final String? subtitle;
   final bool isAccent;
-  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) {
@@ -2135,16 +2896,9 @@ class _MetricCard extends StatelessWidget {
             style: _featureTitleStyle.copyWith(
               fontSize: 24,
               height: 1,
-              color: valueColor ?? foreground,
+              color: foreground,
             ),
           ),
-          if (subtitle != null) ...[
-            const Spacer(),
-            Text(
-              subtitle!,
-              style: _featureSmallStyle.copyWith(fontSize: 9.5, color: _muted),
-            ),
-          ],
         ],
       ),
     );

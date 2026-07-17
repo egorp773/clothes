@@ -1,16 +1,20 @@
+import 'package:clothes/models/app_profile.dart';
 import 'package:clothes/models/product.dart';
 import 'package:clothes/models/profile_feature.dart';
 import 'package:clothes/screens/product_screen.dart';
+import 'package:clothes/widgets/app_image.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Product _product({
+  String id = 'product-1',
   DateTime? publishedAt,
   int viewsCount = 0,
   int likesCount = 0,
 }) {
   return Product(
-    id: 'product-1',
+    id: id,
     title: 'Свитер',
     detailTitle: 'Свитер',
     description: 'Описание товара',
@@ -83,7 +87,6 @@ void main() {
             isLiked: product.isLiked,
           ),
           onLike: () {},
-          onAddToCart: () {},
           onContactSeller: () {},
           onOpenSeller: () {},
           onOpenReviews: () {},
@@ -101,8 +104,88 @@ void main() {
     await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
     await tester.pumpAndSettle();
 
-    expect(find.text('16.07.2026, 12:34'), findsOneWidget);
-    expect(find.text('12 просмотров'), findsOneWidget);
-    expect(find.text('5 лайков'), findsOneWidget);
+    expect(find.text('Опубликовано: 16.07.2026, 12:34'), findsOneWidget);
+    expect(find.bySemanticsLabel('12 просмотров'), findsOneWidget);
+    expect(find.bySemanticsLabel('5 лайков'), findsOneWidget);
+    expect(find.byIcon(CupertinoIcons.clock), findsNothing);
+
+    final publicationLeft = tester.getTopLeft(
+      find.text('Опубликовано: 16.07.2026, 12:34'),
+    );
+    final viewsLeft = tester.getTopLeft(find.bySemanticsLabel('12 просмотров'));
+    final likesLeft = tester.getTopLeft(find.bySemanticsLabel('5 лайков'));
+    expect(publicationLeft.dx, lessThan(viewsLeft.dx));
+    expect(viewsLeft.dx, lessThan(likesLeft.dx));
+  });
+
+  testWidgets('seller avatar renders and related products follow compactly', (
+    tester,
+  ) async {
+    final product = _product();
+    const avatar = 'assets/mock/avatar_eva.jpg';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProductScreen(
+          isPreview: true,
+          sourceProduct: product,
+          product: ProductDetailData(
+            id: product.id,
+            title: product.title,
+            description: product.description,
+            price: product.price,
+            priceValue: product.priceValue,
+            image: product.image,
+            images: const [],
+            category: product.category,
+            brand: product.brand,
+            color: product.color,
+            sellerName: product.sellerName,
+            sellerHandle: product.sellerHandle,
+            size: product.size,
+            condition: product.condition,
+            location: product.location,
+            isLiked: product.isLiked,
+          ),
+          onLike: () {},
+          onContactSeller: () {},
+          onOpenSeller: () {},
+          onOpenReviews: () {},
+          loadSellerProfile: (_) async => const SellerProfile(
+            id: 'seller',
+            name: 'Продавец',
+            handle: '@seller',
+            avatarUrl: avatar,
+          ),
+          relatedProducts: [_product(id: 'related-product')],
+          onRelatedProductTap: (_) {},
+          deliveryProfile: const DeliveryProfile(),
+          onSaveDeliveryProfile: (_) async {},
+          onCreateDeliveryOrder:
+              ({required deliveryService, required deliveryPrice}) async =>
+                  null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is AppImage && widget.imageUrl == avatar,
+        description: 'seller profile avatar',
+      ),
+      findsOneWidget,
+    );
+
+    final avatarRect = tester.getRect(
+      find.byWidgetPredicate(
+        (widget) => widget is AppImage && widget.imageUrl == avatar,
+        description: 'seller profile avatar',
+      ),
+    );
+    final relatedTop = tester.getTopLeft(find.text('Похожие объявления')).dy;
+    expect(relatedTop - avatarRect.bottom, inInclusiveRange(10, 24));
   });
 }

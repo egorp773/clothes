@@ -29,6 +29,7 @@ class OutfitCreateScreen extends StatefulWidget {
     this.onCreateAccessory,
     this.authorName = 'Автор',
     this.authorHandle = '@user',
+    this.authorAvatarUrl = '',
     this.onPublish,
   });
 
@@ -40,6 +41,7 @@ class OutfitCreateScreen extends StatefulWidget {
   final CreateOutfitAccessory? onCreateAccessory;
   final String authorName;
   final String authorHandle;
+  final String authorAvatarUrl;
   final Future<void> Function(CreatedOutfit outfit)? onPublish;
 
   @override
@@ -439,6 +441,7 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
           items: previewItems,
           authorName: widget.authorName,
           authorHandle: widget.authorHandle,
+          authorAvatarUrl: widget.authorAvatarUrl,
           onPublish: (outfit) async {
             final publish = widget.onPublish;
             if (publish != null) {
@@ -1224,6 +1227,8 @@ class _AccessoriesPickerSheetState extends State<_AccessoriesPickerSheet> {
   List<OutfitAccessory> get _visibleAccessories =>
       _tabIndex == 0 ? widget.defaultAccessories : widget.myAccessories;
 
+  bool get _canCreateAccessory => _tabIndex == 1;
+
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
@@ -1270,7 +1275,8 @@ class _AccessoriesPickerSheetState extends State<_AccessoriesPickerSheet> {
               shrinkWrap: true,
               physics: const BouncingScrollPhysics(),
               padding: EdgeInsets.zero,
-              itemCount: _visibleAccessories.length + 1,
+              itemCount:
+                  _visibleAccessories.length + (_canCreateAccessory ? 1 : 0),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: 3,
                 crossAxisSpacing: 10,
@@ -1278,12 +1284,13 @@ class _AccessoriesPickerSheetState extends State<_AccessoriesPickerSheet> {
                 mainAxisExtent: 118,
               ),
               itemBuilder: (context, index) {
-                if (index == 0) {
+                if (_canCreateAccessory && index == 0) {
                   return _CreateClothingTile(
-                    onTap: () => widget.onCreateTap(_tabIndex == 0),
+                    onTap: () => widget.onCreateTap(false),
                   );
                 }
-                final accessory = _visibleAccessories[index - 1];
+                final accessory =
+                    _visibleAccessories[index - (_canCreateAccessory ? 1 : 0)];
                 return _AccessoryTile(
                   accessory: accessory,
                   onTap: accessory.isProcessing
@@ -1451,7 +1458,8 @@ class _BackgroundPickerSheetState extends State<_BackgroundPickerSheet> {
   }
 
   void _done() {
-    // TODO: Persist selected background settings when saving editor state.
+    // Every selection is already applied to the parent editor and is copied
+    // into CreatedOutfit.previewBackgroundColor during publication.
     Navigator.maybePop(context);
   }
 

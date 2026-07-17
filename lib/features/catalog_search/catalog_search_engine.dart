@@ -1,12 +1,7 @@
 import '../../models/product.dart';
 import '../listing_publish/data/listing_catalogs.dart';
 
-enum CatalogSearchSuggestionKind {
-  brand,
-  category,
-  characteristic,
-  composite,
-}
+enum CatalogSearchSuggestionKind { brand, category, characteristic, composite }
 
 class CatalogSearchSuggestion {
   const CatalogSearchSuggestion({
@@ -50,6 +45,8 @@ class CatalogSearchIndex {
 
   final Map<String, _ProductSearchEntry> _entries = {};
   final Map<String, _SuggestionCandidate> _suggestions = {};
+  String _cachedQueryText = '';
+  _PreparedQuery? _cachedQuery;
 
   static String normalize(String value) => value
       .trim()
@@ -74,13 +71,13 @@ class CatalogSearchIndex {
   int scoreNormalized(Product product, String normalizedQuery) {
     final entry =
         _entries[product.id] ?? _ProductSearchEntry.fromProduct(product);
-    return entry.score(_PreparedQuery(normalizedQuery));
+    return entry.score(_prepareQuery(normalizedQuery));
   }
 
   List<CatalogSearchSuggestion> suggestions(String query, {int limit = 8}) {
     final normalizedQuery = normalize(query);
     if (normalizedQuery.isEmpty || limit <= 0) return const [];
-    final preparedQuery = _PreparedQuery(normalizedQuery);
+    final preparedQuery = _prepareQuery(normalizedQuery);
     final ranked = <({CatalogSearchSuggestion value, int score})>[];
 
     for (final candidate in _suggestions.values) {
@@ -102,6 +99,15 @@ class CatalogSearchIndex {
       return a.value.label.compareTo(b.value.label);
     });
     return ranked.take(limit).map((item) => item.value).toList();
+  }
+
+  _PreparedQuery _prepareQuery(String normalizedQuery) {
+    final cached = _cachedQuery;
+    if (cached != null && _cachedQueryText == normalizedQuery) return cached;
+    final prepared = _PreparedQuery(normalizedQuery);
+    _cachedQueryText = normalizedQuery;
+    _cachedQuery = prepared;
+    return prepared;
   }
 
   static int _suggestionScore(String value, _PreparedQuery query) {
@@ -130,14 +136,28 @@ class CatalogSearchIndex {
 }
 
 class _ProductSearchEntry {
-  _ProductSearchEntry({required this.fields, required this.suggestions});
+  _ProductSearchEntry({
+    required this.fields,
+    required this.suggestions,
+    required this.categoryId,
+    required this.primaryColorId,
+  });
 
   factory _ProductSearchEntry.fromProduct(Product product) {
-    final normalizedCategory = product.normalizedCategory.isNotEmpty
-        ? product.normalizedCategory
-        : ListingCatalogs.normalizeCategory(
-            product.itemType.isNotEmpty ? product.itemType : product.category,
-          );
+    var knownCategoryId = '';
+    for (final value in <String>[
+      product.normalizedCategory,
+      product.itemType,
+      product.categoryId,
+      product.subcategory,
+      product.category,
+    ]) {
+      knownCategoryId = ListingCatalogs.normalizeCategory(value);
+      if (knownCategoryId.isNotEmpty) break;
+    }
+    final normalizedCategory = knownCategoryId.isNotEmpty
+        ? knownCategoryId
+        : product.normalizedCategory;
     final categoryName = ListingCatalogs.categoryName(
       normalizedCategory,
       fallback: product.category,
@@ -193,7 +213,9 @@ class _ProductSearchEntry {
       ...displayedSecondaryColors,
     };
     final attributeLabels = {
-      for (final definition in ListingCatalogs.attributesFor(normalizedCategory))
+      for (final definition in ListingCatalogs.attributesFor(
+        normalizedCategory,
+      ))
         definition.id: definition.label,
     };
     for (final attribute in product.importantCharacteristics.entries) {
@@ -237,8 +259,7 @@ class _ProductSearchEntry {
       _WeightedField(_FieldKind.category, product.itemType),
       _WeightedField(_FieldKind.category, subcategory),
       _WeightedField(_FieldKind.category, subcategoryName),
-      for (final value in colorValues)
-        _WeightedField(_FieldKind.color, value),
+      for (final value in colorValues) _WeightedField(_FieldKind.color, value),
       for (final value in structured)
         _WeightedField(_FieldKind.structured, value),
       _WeightedField(_FieldKind.description, product.description),
@@ -288,14 +309,19 @@ class _ProductSearchEntry {
     return _ProductSearchEntry(
       fields: fieldsByKindAndText.values.toList(),
       suggestions: suggestions,
+      categoryId: knownCategoryId,
+      primaryColorId: _SearchIntentLexicon.colorIdFor(primaryColor),
     );
   }
 
   final List<_WeightedField> fields;
   final List<CatalogSearchSuggestion> suggestions;
+  final String categoryId;
+  final String primaryColorId;
 
   int score(_PreparedQuery query) {
     if (query.tokens.isEmpty) return 0;
+    if (!_acceptsStructuredIntent(query)) return 0;
     var tokenScore = 0;
     var matchedTokens = 0;
     var primaryMatchedTokens = 0;
@@ -324,8 +350,7 @@ class _ProductSearchEntry {
     final denominator = totalTokens * totalTokens;
     var score = tokenScore;
     score += matchedTokens * matchedTokens * 1200 ~/ denominator;
-    score +=
-        primaryMatchedTokens * primaryMatchedTokens * 2600 ~/ denominator;
+    score += primaryMatchedTokens * primaryMatchedTokens * 2600 ~/ denominator;
     score += matchedPrimaryKinds.length * 220;
 
     if (matchedTokens == totalTokens) {
@@ -350,6 +375,37 @@ class _ProductSearchEntry {
     }
     score += bestPhraseScore + bestFieldCoverageScore;
     return score.clamp(1, 1 << 30).toInt();
+  }
+
+  bool _acceptsStructuredIntent(_PreparedQuery query) {
+    final intent = query.intent;
+    if (intent.categoryIds.isNotEmpty) {
+      if (categoryId.isNotEmpty) {
+        if (!intent.categoryIds.contains(categoryId)) return false;
+      } else {
+        for (final tokenIndex in intent.categoryTokenIndexes) {
+          final token = query.tokens[tokenIndex];
+          final hasCategoryEvidence = fields.any(
+            (field) =>
+                (field.kind == _FieldKind.category ||
+                    field.kind == _FieldKind.title) &&
+                field.match(token) != null,
+          );
+          if (!hasCategoryEvidence) return false;
+        }
+      }
+    }
+
+    if (intent.colorIds.isNotEmpty) {
+      // A structured colour in the query is a hard constraint. Letting a
+      // product with an unknown primary colour through would bring back the
+      // original failure mode where a phrase in the description (for example
+      // "black trousers") made an unrelated white item searchable.
+      if (primaryColorId.isEmpty || !intent.colorIds.contains(primaryColorId)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   static bool _isUsefulSuggestion(String value) {
@@ -401,18 +457,18 @@ class _ProductSearchEntry {
     if (word.endsWith('ый') || word.endsWith('ой')) {
       root = word.substring(0, word.length - 2);
       return switch (grammar) {
-        _RussianGrammar.feminine => '${root}ая',
-        _RussianGrammar.neuter => '${root}ое',
-        _RussianGrammar.plural => '${root}ые',
+        _RussianGrammar.feminine => '$rootая',
+        _RussianGrammar.neuter => '$rootое',
+        _RussianGrammar.plural => '$rootые',
         _ => word,
       };
     }
     if (word.endsWith('ий')) {
       root = word.substring(0, word.length - 2);
       return switch (grammar) {
-        _RussianGrammar.feminine => '${root}яя',
-        _RussianGrammar.neuter => '${root}ее',
-        _RussianGrammar.plural => '${root}ие',
+        _RussianGrammar.feminine => '$rootяя',
+        _RussianGrammar.neuter => '$rootее',
+        _RussianGrammar.plural => '$rootие',
         _ => word,
       };
     }
@@ -483,6 +539,93 @@ class _ProductSearchEntry {
         'jewelry' => 'Украшения',
         _ => value.trim(),
       };
+}
+
+/// Returns deterministic, catalogue-safe recommendations for [source].
+///
+/// Category is a hard boundary; brand, primary colour and structured
+/// attributes only affect ordering inside that category. This is the local
+/// fallback used while the server-side `product_similarities` result is not
+/// wired into the client.
+List<Product> rankRelatedCatalogProducts(
+  Product source,
+  Iterable<Product> candidates, {
+  int limit = 8,
+}) {
+  if (limit <= 0) return const [];
+  final sourceCategory = _relatedCategoryId(source);
+  if (sourceCategory.isEmpty) return const [];
+
+  final ranked = <({Product product, int score})>[];
+  for (final candidate in candidates) {
+    if (candidate.id == source.id ||
+        candidate.isHidden ||
+        candidate.status != 'published' ||
+        _relatedCategoryId(candidate) != sourceCategory) {
+      continue;
+    }
+
+    var score = 100;
+    if (_sameRelatedValue(_relatedBrand(source), _relatedBrand(candidate))) {
+      score += 24;
+    }
+    if (_sameRelatedValue(
+      _relatedPrimaryColor(source),
+      _relatedPrimaryColor(candidate),
+    )) {
+      score += 18;
+    }
+    if (_sameRelatedValue(source.material, candidate.material)) score += 9;
+    if (_sameRelatedValue(source.style, candidate.style)) score += 7;
+    if (_sameRelatedValue(source.fit, candidate.fit)) score += 5;
+    if (_sameRelatedValue(source.pattern, candidate.pattern)) score += 4;
+    if (_sameRelatedValue(source.size, candidate.size)) score += 2;
+    ranked.add((product: candidate, score: score));
+  }
+
+  ranked.sort((left, right) {
+    final scoreOrder = right.score.compareTo(left.score);
+    if (scoreOrder != 0) return scoreOrder;
+    final leftPublished =
+        left.product.publishedAt?.millisecondsSinceEpoch ?? -1;
+    final rightPublished =
+        right.product.publishedAt?.millisecondsSinceEpoch ?? -1;
+    final dateOrder = rightPublished.compareTo(leftPublished);
+    if (dateOrder != 0) return dateOrder;
+    return left.product.id.compareTo(right.product.id);
+  });
+  return ranked.take(limit).map((item) => item.product).toList(growable: false);
+}
+
+String _relatedCategoryId(Product product) {
+  for (final value in <String>[
+    product.normalizedCategory,
+    product.itemType,
+    product.categoryId,
+    product.category,
+  ]) {
+    final category = ListingCatalogs.normalizeCategory(value);
+    if (category.isNotEmpty) return category;
+  }
+  return '';
+}
+
+String _relatedBrand(Product product) => product.normalizedBrand.isNotEmpty
+    ? product.normalizedBrand
+    : product.brand;
+
+String _relatedPrimaryColor(Product product) {
+  final value = product.primaryColor.isNotEmpty
+      ? product.primaryColor
+      : product.color;
+  final id = _SearchIntentLexicon.colorIdFor(value);
+  return id.isNotEmpty ? id : value;
+}
+
+bool _sameRelatedValue(String left, String right) {
+  final normalizedLeft = CatalogSearchIndex.normalize(left);
+  if (normalizedLeft.isEmpty) return false;
+  return normalizedLeft == CatalogSearchIndex.normalize(right);
 }
 
 enum _RussianGrammar { masculine, feminine, neuter, plural }
@@ -561,8 +704,7 @@ class _WeightedField {
   ) {
     if (raw == query.raw) return _MatchQuality.rawExact;
     if (canonical == query.canonical) return _MatchQuality.canonicalExact;
-    if (query.canonical.length >= 2 &&
-        canonical.startsWith(query.canonical)) {
+    if (query.canonical.length >= 2 && canonical.startsWith(query.canonical)) {
       return _MatchQuality.prefix;
     }
     if (query.canonical.length >= 4 &&
@@ -607,15 +749,18 @@ class _TokenMatch {
 }
 
 class _PreparedQuery {
-  _PreparedQuery(this.rawText)
-    : tokens = rawText
-          .split(' ')
-          .where((token) => token.isNotEmpty)
-          .map(_QueryToken.new)
-          .toList();
+  _PreparedQuery(this.rawText) {
+    tokens = rawText
+        .split(' ')
+        .where((token) => token.isNotEmpty)
+        .map(_QueryToken.new)
+        .toList();
+    intent = _SearchIntentLexicon.resolve(tokens);
+  }
 
   final String rawText;
-  final List<_QueryToken> tokens;
+  late final List<_QueryToken> tokens;
+  late final _StructuredQueryIntent intent;
 
   String get canonicalText => tokens.map((token) => token.canonical).join(' ');
 }
@@ -625,6 +770,138 @@ class _QueryToken {
 
   final String raw;
   final String canonical;
+}
+
+class _StructuredQueryIntent {
+  const _StructuredQueryIntent({
+    required this.categoryIds,
+    required this.categoryTokenIndexes,
+    required this.colorIds,
+  });
+
+  final Set<String> categoryIds;
+  final Set<int> categoryTokenIndexes;
+  final Set<String> colorIds;
+}
+
+class _IntentPhrase {
+  const _IntentPhrase(this.id, this.tokens);
+
+  final String id;
+  final List<String> tokens;
+
+  bool matchesAt(List<_QueryToken> query, int start) {
+    if (start + tokens.length > query.length) return false;
+    for (var offset = 0; offset < tokens.length; offset += 1) {
+      final actual = query[start + offset].canonical;
+      final expected = tokens[offset];
+      if (actual == expected) continue;
+      if (tokens.length == 1 &&
+          actual.length >= 4 &&
+          expected.length >= 4 &&
+          _isDamerauLevenshteinDistanceOne(actual, expected)) {
+        continue;
+      }
+      return false;
+    }
+    return true;
+  }
+}
+
+abstract final class _SearchIntentLexicon {
+  static final List<_IntentPhrase> _categoryPhrases = _buildCategoryPhrases();
+  static final List<_IntentPhrase> _colorPhrases = _buildColorPhrases();
+  static final Map<String, String> _colorIdsByCanonicalText =
+      _buildColorIdsByCanonicalText();
+
+  static _StructuredQueryIntent resolve(List<_QueryToken> query) {
+    final categoryIds = <String>{};
+    final categoryTokenIndexes = <int>{};
+    final colorIds = <String>{};
+
+    for (final phrase in _categoryPhrases) {
+      for (var start = 0; start < query.length; start += 1) {
+        if (!phrase.matchesAt(query, start)) continue;
+        categoryIds.add(phrase.id);
+        for (var offset = 0; offset < phrase.tokens.length; offset += 1) {
+          categoryTokenIndexes.add(start + offset);
+        }
+      }
+    }
+    for (final phrase in _colorPhrases) {
+      for (var start = 0; start < query.length; start += 1) {
+        if (phrase.matchesAt(query, start)) colorIds.add(phrase.id);
+      }
+    }
+
+    return _StructuredQueryIntent(
+      categoryIds: categoryIds,
+      categoryTokenIndexes: categoryTokenIndexes,
+      colorIds: colorIds,
+    );
+  }
+
+  static String colorIdFor(String value) {
+    return _colorIdsByCanonicalText[_canonicalText(value)] ?? '';
+  }
+
+  static List<_IntentPhrase> _buildCategoryPhrases() {
+    final phrases = <_IntentPhrase>[];
+    final seen = <String>{};
+
+    void add(String value, String categoryId) {
+      if (categoryId.isEmpty) return;
+      final tokens = _canonicalTokens(value);
+      if (tokens.isEmpty) return;
+      final key = '$categoryId:${tokens.join(' ')}';
+      if (!seen.add(key)) return;
+      phrases.add(_IntentPhrase(categoryId, tokens));
+    }
+
+    for (final option in ListingCatalogs.finalCategories) {
+      add(option.id, option.id);
+      add(option.name, option.id);
+    }
+    for (final alias in ListingCatalogs.categoryAliases.entries) {
+      final categoryId = ListingCatalogs.normalizeCategory(alias.value);
+      add(alias.key, categoryId);
+    }
+    return phrases;
+  }
+
+  static List<_IntentPhrase> _buildColorPhrases() {
+    final phrases = <_IntentPhrase>[];
+    final seen = <String>{};
+    for (final option in ListingCatalogs.colors) {
+      for (final value in <String>[option.id, option.name]) {
+        final tokens = _canonicalTokens(value);
+        if (tokens.isEmpty) continue;
+        final key = '${option.id}:${tokens.join(' ')}';
+        if (seen.add(key)) phrases.add(_IntentPhrase(option.id, tokens));
+      }
+    }
+    return phrases;
+  }
+
+  static Map<String, String> _buildColorIdsByCanonicalText() {
+    final result = <String, String>{};
+    for (final option in ListingCatalogs.colors) {
+      result[_canonicalText(option.id)] = option.id;
+      result[_canonicalText(option.name)] = option.id;
+    }
+    result.remove('');
+    return result;
+  }
+
+  static List<String> _canonicalTokens(String value) =>
+      CatalogSearchIndex.normalize(value)
+          .split(' ')
+          .where((token) => token.isNotEmpty)
+          .map(_SearchLexicon.canonicalToken)
+          .toList(growable: false);
+
+  static String _canonicalText(String value) =>
+      _canonicalTokens(value).join(' ');
 }
 
 abstract final class _SearchLexicon {

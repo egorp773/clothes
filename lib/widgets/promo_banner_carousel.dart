@@ -20,11 +20,7 @@ class PromoBanner {
 }
 
 class PromoBannerCarousel extends StatefulWidget {
-  const PromoBannerCarousel({
-    super.key,
-    required this.banners,
-    this.height,
-  });
+  const PromoBannerCarousel({super.key, required this.banners, this.height});
 
   final List<PromoBanner> banners;
   final double? height;
@@ -111,10 +107,7 @@ class PromoBannerCard extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.transparent,
-                    Color(0xA6000000),
-                  ],
+                  colors: [Colors.transparent, Color(0xA6000000)],
                 ),
               ),
             ),

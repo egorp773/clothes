@@ -10,11 +10,16 @@ void main() {
     (tester) async {
       String? submittedService;
       int? submittedPrice;
+      DeliveryProfile? savedProfile;
       final product = _product();
 
       await _pumpCheckoutHost(
         tester,
         product: product,
+        deliveryProfile: _pickupProfile,
+        onSaveProfile: (profile) async {
+          savedProfile = profile;
+        },
         onCreateDeliveryOrder:
             ({required deliveryService, required deliveryPrice}) async {
               submittedService = deliveryService;
@@ -31,11 +36,15 @@ void main() {
       );
 
       await _openCheckoutAndSelectPickup(tester);
-      await tester.tap(find.textContaining('ОФОРМИТЬ ЗАКАЗ'));
+      await tester.tap(find.byKey(const Key('checkout-submit')));
       await tester.pumpAndSettle();
 
-      expect(submittedService, 'Пункт выдачи');
+      expect(submittedService, 'pickup_point:unassigned');
       expect(submittedPrice, 0);
+      expect(savedProfile?.city, 'Москва');
+      expect(savedProfile?.address, isEmpty);
+      expect(savedProfile?.pickupPointAddress, 'ул. Тверская, 10');
+      expect(savedProfile?.pickupPointId, startsWith('manual_'));
       expect(find.text('Оформление заказа'), findsNothing);
       expect(find.byKey(const Key('open-checkout')), findsOneWidget);
     },
@@ -59,17 +68,158 @@ void main() {
     );
 
     await _openCheckoutAndSelectPickup(tester);
-    await tester.tap(find.textContaining('ОФОРМИТЬ ЗАКАЗ'));
+    await tester.tap(find.byKey(const Key('checkout-submit')));
     await tester.pumpAndSettle();
 
-    expect(submittedService, 'Пункт выдачи');
+    expect(submittedService, 'pickup_point:unassigned');
     expect(submittedPrice, 0);
-    expect(find.text('Оформление заказа'), findsOneWidget);
+    expect(find.byKey(const Key('checkout-submit')), findsOneWidget);
     expect(
-      find.text(
-        'Не удалось оформить заказ. Проверьте вход и попробуйте ещё раз.',
-      ),
+      find.text('Не удалось оформить заказ. Попробуйте ещё раз.'),
       findsOneWidget,
+    );
+  });
+
+  testWidgets('pickup requires a selected point but not a street address', (
+    tester,
+  ) async {
+    var submitCalls = 0;
+    await _pumpCheckoutHost(
+      tester,
+      product: _product(),
+      deliveryProfile: _pickupProfile,
+      onCreateDeliveryOrder:
+          ({required deliveryService, required deliveryPrice}) async {
+            submitCalls += 1;
+            return null;
+          },
+    );
+
+    await tester.tap(find.byKey(const Key('delivery-method-pickup')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('checkout-submit')));
+    await tester.pumpAndSettle();
+
+    expect(submitCalls, 0);
+    expect(find.text('Выбор пункта выдачи'), findsOneWidget);
+    expect(find.text('Укажите город и адрес доставки'), findsNothing);
+  });
+
+  testWidgets('post delivery still requires a street address', (tester) async {
+    var submitCalls = 0;
+    await _pumpCheckoutHost(
+      tester,
+      product: _product(),
+      deliveryProfile: _pickupProfile,
+      onCreateDeliveryOrder:
+          ({required deliveryService, required deliveryPrice}) async {
+            submitCalls += 1;
+            return null;
+          },
+    );
+
+    await tester.tap(find.byKey(const Key('checkout-submit')));
+    await tester.pump();
+
+    expect(submitCalls, 0);
+    expect(find.text('Укажите город и адрес доставки'), findsOneWidget);
+    expect(find.text('Улица, дом, квартира'), findsOneWidget);
+  });
+
+  testWidgets('shows a typed server checkout error', (tester) async {
+    await _pumpCheckoutHost(
+      tester,
+      product: _product(),
+      onCreateDeliveryOrder:
+          ({required deliveryService, required deliveryPrice}) async {
+            throw const CheckoutException(
+              code: 'authentication_required',
+              message: 'Войдите в профиль, чтобы оформить заказ',
+            );
+          },
+    );
+
+    await tester.tap(find.byKey(const Key('checkout-submit')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Войдите в профиль, чтобы оформить заказ'),
+      findsOneWidget,
+    );
+    expect(find.text('Оформление заказа'), findsOneWidget);
+  });
+
+  testWidgets('recipient save failure is explained without closing checkout', (
+    tester,
+  ) async {
+    await _pumpCheckoutHost(
+      tester,
+      product: _product(),
+      onSaveProfile: (_) async => throw StateError('network unavailable'),
+      onCreateDeliveryOrder:
+          ({required deliveryService, required deliveryPrice}) async => null,
+    );
+
+    await tester.scrollUntilVisible(find.text('Изменить данные'), 300);
+    await tester.tap(find.text('Изменить данные'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Сохранить данные'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Не удалось сохранить данные получателя. Попробуйте ещё раз.'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('checkout-submit')), findsOneWidget);
+  });
+
+  testWidgets('submits only a carrier offered by the listing', (tester) async {
+    String? submittedService;
+    final product = _product(deliveryMethods: const ['russian_post']);
+    await _pumpCheckoutHost(
+      tester,
+      product: product,
+      onCreateDeliveryOrder:
+          ({required deliveryService, required deliveryPrice}) async {
+            submittedService = deliveryService;
+            return AppOrder.fromProduct(
+              product: product,
+              buyerId: 'buyer-id',
+              status: AppOrderStatus.pendingConfirmation,
+              deliveryProfile: _completeProfile,
+              deliveryService: deliveryService,
+              deliveryPrice: deliveryPrice,
+            );
+          },
+    );
+
+    await tester.tap(find.byKey(const Key('checkout-submit')));
+    await tester.pumpAndSettle();
+
+    expect(submittedService, 'address:russian_post');
+  });
+
+  testWidgets('unsupported listing delivery cannot reach order creation', (
+    tester,
+  ) async {
+    var submitCalls = 0;
+    await _pumpCheckoutHost(
+      tester,
+      product: _product(deliveryMethods: const ['personal_meeting']),
+      onCreateDeliveryOrder:
+          ({required deliveryService, required deliveryPrice}) async {
+            submitCalls += 1;
+            return null;
+          },
+    );
+
+    await tester.tap(find.byKey(const Key('checkout-submit')));
+    await tester.pumpAndSettle();
+
+    expect(submitCalls, 0);
+    expect(
+      find.text('Продавец не подключил доставку для этого объявления'),
+      findsWidgets,
     );
   });
 }
@@ -82,7 +232,14 @@ const _completeProfile = DeliveryProfile(
   address: 'ул. Тестовая, 1',
 );
 
-Product _product() => Product(
+const _pickupProfile = DeliveryProfile(
+  fullName: 'Иван Иванов',
+  phone: '+7 999 123-45-67',
+  email: 'ivan@example.test',
+  city: 'Москва',
+);
+
+Product _product({List<String> deliveryMethods = const []}) => Product(
   id: 'product-id',
   title: 'Тестовая куртка',
   detailTitle: 'Тестовая куртка',
@@ -100,6 +257,7 @@ Product _product() => Product(
   ownerId: 'seller-id',
   sellerName: 'Продавец',
   sellerHandle: '@seller',
+  deliveryMethods: deliveryMethods,
   dotsOnDark: false,
 );
 
@@ -111,6 +269,8 @@ Future<void> _pumpCheckoutHost(
     required int deliveryPrice,
   })
   onCreateDeliveryOrder,
+  DeliveryProfile deliveryProfile = _completeProfile,
+  Future<void> Function(DeliveryProfile profile)? onSaveProfile,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -139,9 +299,10 @@ Future<void> _pumpCheckoutHost(
                       condition: product.condition,
                       location: product.location,
                       isLiked: product.isLiked,
+                      deliveryMethods: product.deliveryMethods,
                     ),
-                    deliveryProfile: _completeProfile,
-                    onSaveProfile: (_) async {},
+                    deliveryProfile: deliveryProfile,
+                    onSaveProfile: onSaveProfile ?? (_) async {},
                     onSubmitOrder: onCreateDeliveryOrder,
                   ),
                 ),
@@ -160,6 +321,16 @@ Future<void> _pumpCheckoutHost(
 
 Future<void> _openCheckoutAndSelectPickup(WidgetTester tester) async {
   expect(find.text('Оформление заказа'), findsOneWidget);
-  await tester.tap(find.text('Пункт выдачи'));
+  await tester.tap(find.byKey(const Key('delivery-method-pickup')));
   await tester.pump();
+  expect(find.text('Пункт ещё не выбран'), findsOneWidget);
+  await tester.tap(find.byKey(const Key('pickup-point-selector')));
+  await tester.pumpAndSettle();
+  await tester.enterText(
+    find.byKey(const Key('pickup-point-field')),
+    'ул. Тверская, 10',
+  );
+  await tester.tap(find.byKey(const Key('pickup-point-save')));
+  await tester.pumpAndSettle();
+  expect(find.text('ул. Тверская, 10'), findsWidgets);
 }

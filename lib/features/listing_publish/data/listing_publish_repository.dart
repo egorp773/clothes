@@ -433,7 +433,13 @@ class ListingPublishRepository {
 
     draft.status = ListingStatus.published;
     draft.updatedAt = DateTime.now().toUtc();
-    await removeLocalDraft(draft.id);
+    try {
+      await removeLocalDraft(draft.id);
+    } catch (error, stackTrace) {
+      // The server publication already succeeded. A local cleanup failure must
+      // not turn that success into a second publish attempt.
+      debugPrint('Published listing cleanup error: $error\n$stackTrace');
+    }
     unawaited(_preparePublishedProduct(draft.id));
     debugPrint('Listing published: ${draft.id}');
   }

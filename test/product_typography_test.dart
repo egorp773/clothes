@@ -37,7 +37,6 @@ void main() {
               isLiked: false,
             ),
             onLike: () {},
-            onAddToCart: () {},
             onContactSeller: () {},
             onOpenSeller: () {},
             onOpenReviews: () {},

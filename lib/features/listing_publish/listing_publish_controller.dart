@@ -209,11 +209,28 @@ class ListingPublishController extends ChangeNotifier {
   }
 
   Future<void> _uploadPhoto(ListingPhoto photo) async {
+    if (photo.isUploaded ||
+        photo.uploadStatus == ListingPhotoUploadStatus.uploading) {
+      return;
+    }
     photo.uploadStatus = ListingPhotoUploadStatus.uploading;
     _safeNotify();
-    await repository.ensureRemoteDraft(draft);
-    final didUpload = await repository.uploadPhoto(draft, photo);
+    var didUpload = false;
+    try {
+      await repository.ensureRemoteDraft(draft);
+      didUpload = await repository.uploadPhoto(draft, photo);
+    } catch (error, stackTrace) {
+      photo.uploadStatus = ListingPhotoUploadStatus.failed;
+      debugPrint('Listing photo upload failed: $error\n$stackTrace');
+    }
+
+    final isStillInDraft = draft.photos.any((item) => item.id == photo.id);
+    if (!isStillInDraft) {
+      if (didUpload) await repository.deletePhoto(draft, photo);
+      return;
+    }
     if (!didUpload) {
+      photo.uploadStatus = ListingPhotoUploadStatus.failed;
       transientError = 'Фото сохранено. Загрузим при восстановлении сети';
       _scheduleRetry();
     } else if (draft.photos.every((item) => item.isUploaded)) {
@@ -1030,6 +1047,12 @@ class ListingPublishController extends ChangeNotifier {
     } on ListingPublishException catch (error) {
       transientError = error.userMessage;
       rethrow;
+    } catch (error, stackTrace) {
+      if (draft.status == ListingStatus.published) return buildProduct();
+      const message = 'Не удалось опубликовать объявление. Черновик сохранён';
+      transientError = message;
+      debugPrint('Unexpected listing publish error: $error\n$stackTrace');
+      throw ListingPublishException(message, error);
     } finally {
       isPublishing = false;
       _safeNotify();

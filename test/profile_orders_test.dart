@@ -35,6 +35,7 @@ void main() {
             recommendedProducts: const [],
             currentUserId: 'current-user',
             onProductTap: (_) {},
+            onShareProduct: (_) {},
             onToggleProductLike: (_) async {},
             onOpenCatalog: () {},
           ),

@@ -14,6 +14,9 @@ import 'package:uuid/uuid.dart';
 
 import '../core/oauth_callback.dart';
 import '../core/supabase_config.dart';
+import '../features/chat/chat_media_send_coordinator.dart';
+import '../features/chat/chat_media_url_cache.dart';
+import '../features/chat/chat_sync_coordinator.dart';
 import '../models/app_profile.dart';
 import '../models/created_outfit.dart';
 import '../models/message_thread.dart';
@@ -48,12 +51,32 @@ class AppRepository extends ChangeNotifier {
   static const _recentOutfitIdsKey = 'recent_outfit_ids_v1';
   static const _countedProductViewsKeyPrefix = 'counted_product_views_v1';
   static const _countedOutfitViewsKeyPrefix = 'counted_outfit_views_v1';
+  static const _blockedUserIdsKeyPrefix = 'blocked_user_ids_v1';
   static const _notificationsKey = 'profile_notifications_v1';
   static const _notificationPreferencesKey = 'notification_preferences_v1';
   static const _deliveryProfileKey = 'delivery_profile_v1';
   static const _ordersKey = 'orders_v1';
+  static const _checkoutAttemptKeyPrefix = 'checkout_attempt_v1';
   static const _sellerReviewsKey = 'seller_reviews_v1';
+  static const _scopedStorageMigrationKey = 'user_storage_scoped_v1';
+  static const _scopedUserStorageKeys = <String>[
+    _threadsKey,
+    _profileKey,
+    _favoriteProductIdsKey,
+    _favoriteOutfitIdsKey,
+    _recentProductIdsKey,
+    _recentOutfitIdsKey,
+    _notificationsKey,
+    _notificationPreferencesKey,
+    _deliveryProfileKey,
+    _ordersKey,
+    _sellerReviewsKey,
+  ];
   static const _bucketName = 'product-images';
+  static const _chatMediaBucketName = 'chat-media';
+  static const _maxChatImageBytes = 20 * 1024 * 1024;
+  static const _maxChatVideoBytes = 100 * 1024 * 1024;
+  static const _chatMediaSignedUrlSeconds = 60 * 60;
 
   @visibleForTesting
   static List<AppOrder> mergeOrdersForParticipant({
@@ -99,6 +122,37 @@ class AppRepository extends ChangeNotifier {
     return merged;
   }
 
+  @visibleForTesting
+  static bool hasCompletedOrderForReview({
+    required Iterable<AppOrder> orders,
+    required String buyerId,
+    required String sellerId,
+    required String productId,
+  }) {
+    final normalizedBuyerId = buyerId.trim();
+    final normalizedSellerId = sellerId.trim();
+    final normalizedProductId = productId.trim();
+    if (normalizedBuyerId.isEmpty ||
+        normalizedSellerId.isEmpty ||
+        normalizedProductId.isEmpty ||
+        normalizedBuyerId == normalizedSellerId) {
+      return false;
+    }
+    return orders.any(
+      (order) =>
+          order.buyerId == normalizedBuyerId &&
+          order.sellerId == normalizedSellerId &&
+          order.productId == normalizedProductId &&
+          order.status == AppOrderStatus.completed,
+    );
+  }
+
+  @visibleForTesting
+  static String userScopedStorageKey(String baseKey, String userId) {
+    final identity = userId.trim();
+    return '$baseKey:${identity.isEmpty ? 'guest' : identity}';
+  }
+
   late final SharedPreferences _prefs;
   final _uuid = const Uuid();
 
@@ -118,6 +172,8 @@ class AppRepository extends ChangeNotifier {
   String _countedProductViewsUserId = '';
   Set<String> _countedOutfitViewIds = {};
   String _countedOutfitViewsUserId = '';
+  Set<String> _blockedUserIds = {};
+  String _blockedUsersUserId = '';
   User? _currentUser;
   bool _isSigningIn = false;
   String? _authError;
@@ -139,16 +195,30 @@ class AppRepository extends ChangeNotifier {
   StreamSubscription<AuthState>? _authSubscription;
   StreamSubscription<String>? _pushTokenSubscription;
   RealtimeChannel? _messagesChannel;
+  int _messageSubscriptionGeneration = 0;
+  final ChatMediaUrlCache _chatMediaUrlCache = ChatMediaUrlCache(
+    timeToLive: const Duration(seconds: _chatMediaSignedUrlSeconds),
+  );
+  final ChatMediaSendCoordinator _chatMediaSendCoordinator =
+      const ChatMediaSendCoordinator();
+  final ChatSyncCoordinator _chatThreadSync = ChatSyncCoordinator();
   String? _registeredPushToken;
 
   bool get isReady => _isReady;
-  List<Product> get products => List.unmodifiable(_products);
+  List<Product> get products => List.unmodifiable(
+    _products.where(
+      (product) =>
+          product.ownerId.isEmpty || !_blockedUserIds.contains(product.ownerId),
+    ),
+  );
   List<Product> get likedProducts {
     return List.unmodifiable(
       _products
           .where(
             (product) =>
-                _favoriteProductIds.contains(product.id) && !product.isHidden,
+                _favoriteProductIds.contains(product.id) &&
+                !product.isHidden &&
+                !_blockedUserIds.contains(product.ownerId),
           )
           .toList(),
     );
@@ -160,7 +230,10 @@ class AppRepository extends ChangeNotifier {
       _recentProductIds
           .map((id) => productsById[id])
           .whereType<Product>()
-          .where((product) => !product.isHidden)
+          .where(
+            (product) =>
+                !product.isHidden && !_blockedUserIds.contains(product.ownerId),
+          )
           .toList(),
     );
   }
@@ -180,11 +253,20 @@ class AppRepository extends ChangeNotifier {
     );
   }
 
-  List<CreatedOutfit> get outfits => List.unmodifiable(_outfits);
+  List<CreatedOutfit> get outfits => List.unmodifiable(
+    _outfits.where(
+      (outfit) =>
+          outfit.ownerId.isEmpty || !_blockedUserIds.contains(outfit.ownerId),
+    ),
+  );
   List<CreatedOutfit> get likedOutfits {
     return List.unmodifiable(
       _outfits
-          .where((outfit) => _favoriteOutfitIds.contains(outfit.id))
+          .where(
+            (outfit) =>
+                _favoriteOutfitIds.contains(outfit.id) &&
+                !_blockedUserIds.contains(outfit.ownerId),
+          )
           .toList(),
     );
   }
@@ -195,8 +277,38 @@ class AppRepository extends ChangeNotifier {
       _recentOutfitIds
           .map((id) => outfitsById[id])
           .whereType<CreatedOutfit>()
+          .where((outfit) => !_blockedUserIds.contains(outfit.ownerId))
           .toList(),
     );
+  }
+
+  Future<void> clearRecentlyViewed() async {
+    _recentProductIds.clear();
+    _recentOutfitIds.clear();
+    await Future.wait([
+      _writeStringList(
+        _scopedStorageKey(_recentProductIdsKey),
+        _recentProductIds,
+      ),
+      _writeStringList(
+        _scopedStorageKey(_recentOutfitIdsKey),
+        _recentOutfitIds,
+      ),
+    ]);
+    notifyListeners();
+
+    final userId = currentUserId;
+    if (!_hasSupabase || userId.isEmpty) return;
+    try {
+      await _client.from('recent_products').delete().eq('user_id', userId);
+    } catch (e) {
+      debugPrint('Recent products clear error: $e');
+    }
+    try {
+      await _client.from('recent_outfits').delete().eq('user_id', userId);
+    } catch (e) {
+      debugPrint('Recent outfits clear error: $e');
+    }
   }
 
   List<MessageThread> get threads {
@@ -216,7 +328,8 @@ class AppRepository extends ChangeNotifier {
             thread.containsUser(currentUserId) &&
             (thread.isGroup ||
                 thread.otherPartyId(currentUserId).trim().isNotEmpty) &&
-            hasVisibleContent(thread),
+            hasVisibleContent(thread) &&
+            !_isBlockedThread(thread),
       ),
     );
   }
@@ -285,8 +398,16 @@ class AppRepository extends ChangeNotifier {
   }
 
   List<Product> productsBySellerId(String sellerId) {
-    if (sellerId.isEmpty) return const [];
+    if (sellerId.isEmpty || _blockedUserIds.contains(sellerId)) return const [];
     return _products.where((product) => product.ownerId == sellerId).toList();
+  }
+
+  bool isUserBlocked(String userId) => _blockedUserIds.contains(userId);
+
+  bool _isBlockedThread(MessageThread thread) {
+    if (_blockedUserIds.isEmpty || currentUserId.isEmpty) return false;
+    final otherPartyId = thread.otherPartyId(currentUserId);
+    return otherPartyId.isNotEmpty && _blockedUserIds.contains(otherPartyId);
   }
 
   Future<SellerProfile?> fetchSellerProfile(Product product) async {
@@ -343,15 +464,9 @@ class AppRepository extends ChangeNotifier {
           .map(Product.fromSupabase)
           .where((product) => product.status == 'published')
           .toList();
-      if (remoteProducts.isEmpty) return localProducts;
-
-      final remoteIds = remoteProducts.map((product) => product.id).toSet();
       _products = [
         ...remoteProducts,
-        ..._products.where(
-          (product) =>
-              product.ownerId != sellerId || !remoteIds.contains(product.id),
-        ),
+        ..._products.where((product) => product.ownerId != sellerId),
       ];
       _applyProductFavoriteState();
       await _saveProducts();
@@ -367,16 +482,14 @@ class AppRepository extends ChangeNotifier {
     if (sellerId.isEmpty) return const [];
     if (_hasSupabase) {
       try {
-        final response = await _fetchSellerReviewsFromSupabase(sellerId);
-        final remote = response
-            .map((item) => SellerReview.fromJson(item as Map<String, dynamic>))
-            .toList();
-        final remoteIds = remote.map((review) => review.id).toSet();
+        final response = await _client
+            .from('seller_reviews')
+            .select()
+            .eq('seller_id', sellerId)
+            .order('created_at', ascending: false);
+        final remote = response.map(SellerReview.fromJson).toList();
         _sellerReviews
-          ..removeWhere(
-            (review) =>
-                review.sellerId == sellerId && remoteIds.contains(review.id),
-          )
+          ..removeWhere((review) => review.sellerId == sellerId)
           ..addAll(remote);
         await _saveSellerReviewsLocal();
         return remote;
@@ -399,68 +512,122 @@ class AppRepository extends ChangeNotifier {
     required String text,
     bool hasPhoto = false,
   }) async {
+    final normalizedSellerId = sellerId.trim();
+    final normalizedProductId = productId.trim();
     final user = _hasSupabase
         ? await _ensureAuthSession(
             message: 'Войдите в профиль, чтобы оставить отзыв',
           )
         : null;
-    if (_hasSupabase && user == null) return;
-    final buyerId = user?.id ?? currentUserId;
-    if (sellerId.isEmpty || buyerId.isEmpty || sellerId == buyerId) return;
+    final buyerId = user?.id ?? '';
+    if (buyerId.isEmpty) {
+      throw const SellerReviewSubmissionException(
+        'Войдите в профиль, чтобы оставить отзыв',
+      );
+    }
+    if (normalizedSellerId.isEmpty || normalizedProductId.isEmpty) {
+      throw const SellerReviewSubmissionException(
+        'Не удалось определить сделку для отзыва',
+      );
+    }
+    if (normalizedSellerId == buyerId) {
+      throw const SellerReviewSubmissionException(
+        'Нельзя оставить отзыв самому себе',
+      );
+    }
 
-    final review = SellerReview(
-      id: _uuid.v4(),
-      sellerId: sellerId,
+    try {
+      final eligible = await _hasRemoteCompletedOrderForReview(
+        buyerId: buyerId,
+        sellerId: normalizedSellerId,
+        productId: normalizedProductId,
+      );
+      if (!eligible) {
+        throw const SellerReviewSubmissionException(
+          'Отзыв можно оставить только после завершённой сделки',
+        );
+      }
+    } on SellerReviewSubmissionException {
+      rethrow;
+    } catch (error) {
+      debugPrint('Seller review eligibility check error: $error');
+      throw const SellerReviewSubmissionException(
+        'Не удалось проверить завершение сделки. Попробуйте ещё раз',
+      );
+    }
+
+    final draft = SellerReview(
+      id: '',
+      sellerId: normalizedSellerId,
       buyerId: buyerId,
       buyerName: _profile.name,
       buyerAvatar: _currentAvatarUrl(),
-      productId: productId,
+      productId: normalizedProductId,
       productTitle: productTitle,
       productImage: productImage,
       rating: rating.clamp(1, 5),
       text: text.trim(),
       hasPhoto: hasPhoto,
-      createdAt: DateTime.now(),
+      createdAt: DateTime.now().toUtc(),
     );
-    _sellerReviews.removeWhere((item) => item.id == review.id);
+    late final SellerReview review;
+    try {
+      review = await _upsertSellerReviewToSupabase(draft);
+    } catch (error) {
+      debugPrint('Seller review save error: $error');
+      throw const SellerReviewSubmissionException(
+        'Не удалось сохранить отзыв. Попробуйте ещё раз',
+      );
+    }
+
+    _sellerReviews.removeWhere(
+      (item) =>
+          item.buyerId == buyerId && item.productId == normalizedProductId,
+    );
     _sellerReviews.insert(0, review);
     await _saveSellerReviewsLocal();
-    await _recalculateSellerRating(sellerId);
+    await _recalculateSellerRating(normalizedSellerId);
     notifyListeners();
-
-    if (!_hasSupabase) return;
-    try {
-      await _insertSellerReviewToSupabase(review);
-      await _pushSellerRatingToSupabase(sellerId);
-    } catch (e) {
-      debugPrint('Seller review save error: $e');
-    }
+    await _pushSellerRatingToSupabase(normalizedSellerId);
   }
 
-  Future<List<dynamic>> _fetchSellerReviewsFromSupabase(String sellerId) async {
-    try {
-      return await _client
-          .from('reviews')
-          .select()
-          .eq('seller_id', sellerId)
-          .order('created_at', ascending: false);
-    } on PostgrestException catch (e) {
-      if (e.code != 'PGRST205') rethrow;
-      return await _client
-          .from('seller_reviews')
-          .select()
-          .eq('seller_id', sellerId)
-          .order('created_at', ascending: false);
-    }
+  Future<bool> _hasRemoteCompletedOrderForReview({
+    required String buyerId,
+    required String sellerId,
+    required String productId,
+  }) async {
+    final response = await _client
+        .from('orders')
+        .select('id')
+        .eq('buyer_id', buyerId)
+        .eq('seller_id', sellerId)
+        .eq('product_id', productId)
+        .eq('status', AppOrderStatus.completed.name)
+        .limit(1);
+    return response.isNotEmpty;
   }
 
-  Future<void> _insertSellerReviewToSupabase(SellerReview review) async {
-    try {
-      await _client.from('reviews').insert(review.toSupabaseJson());
-    } on PostgrestException catch (e) {
-      if (e.code != 'PGRST205') rethrow;
-      await _client.from('seller_reviews').insert(review.toSupabaseJson());
-    }
+  Future<SellerReview> _upsertSellerReviewToSupabase(
+    SellerReview review,
+  ) async {
+    final response = await _client
+        .from('seller_reviews')
+        .upsert({
+          'seller_id': review.sellerId,
+          'buyer_id': review.buyerId,
+          'buyer_name': review.buyerName,
+          'buyer_avatar': review.buyerAvatar,
+          'product_id': review.productId,
+          'product_title': review.productTitle,
+          'product_image': review.productImage,
+          'rating': review.rating,
+          'text': review.text,
+          'has_photo': review.hasPhoto,
+          'deal_completed': true,
+        }, onConflict: 'buyer_id,product_id')
+        .select()
+        .single();
+    return SellerReview.fromJson(response);
   }
 
   List<CreatedOutfit> get myOutfits {
@@ -521,69 +688,33 @@ class AppRepository extends ChangeNotifier {
 
   Future<void> load() async {
     _prefs = await SharedPreferences.getInstance();
+    if (_hasSupabase) _currentUser = _client.auth.currentUser;
 
     // Load from local cache first for instant UI
     _products = _readList(_productsKey, Product.fromJson);
+    final removedLegacyDemo = _products.any(
+      (product) => product.id == 'product-uploaded-be8b281a',
+    );
+    _products.removeWhere(
+      (product) => product.id == 'product-uploaded-be8b281a',
+    );
     _accessories = _readList(_accessoriesKey, OutfitAccessory.fromJson);
     _outfits = _readList(_outfitsKey, CreatedOutfit.fromJson);
-    _threads = _readList(_threadsKey, MessageThread.fromJson);
-    _notifications = _readList(
-      _notificationsKey,
-      ProfileNotification.fromJson,
-    ).where((notification) => notification.kind != 'message').toList();
-    _orders = _readList(_ordersKey, AppOrder.fromJson);
-    _sellerReviews = _readList(_sellerReviewsKey, SellerReview.fromJson);
-    final notificationPreferencesJson = _prefs.getString(
-      _notificationPreferencesKey,
-    );
-    if (notificationPreferencesJson != null) {
-      _notificationPreferences = NotificationPreferences.fromJson(
-        jsonDecode(notificationPreferencesJson) as Map<String, dynamic>,
-      );
-    }
-    final deliveryProfileJson = _prefs.getString(_deliveryProfileKey);
-    if (deliveryProfileJson != null) {
-      _deliveryProfile = DeliveryProfile.fromJson(
-        jsonDecode(deliveryProfileJson) as Map<String, dynamic>,
-      );
-    }
-    _favoriteProductIds = _readStringSet(_favoriteProductIdsKey);
-    if (_favoriteProductIds.isEmpty) {
-      _favoriteProductIds = _products
-          .where((product) => product.isLiked)
-          .map((product) => product.id)
-          .toSet();
-    }
-    _favoriteOutfitIds = _readStringSet(_favoriteOutfitIdsKey);
-    if (_favoriteOutfitIds.isEmpty) {
-      _favoriteOutfitIds = _outfits
-          .where((outfit) => outfit.isLiked)
-          .map((outfit) => outfit.id)
-          .toSet();
-    }
-    _recentProductIds = _readStringList(_recentProductIdsKey);
-    _recentOutfitIds = _readStringList(_recentOutfitIdsKey);
-    _applyProductFavoriteState();
-    _applyOutfitFavoriteState();
-    final profileJson = _prefs.getString(_profileKey);
-    if (profileJson != null) {
-      _profile = AppProfile.fromJson(
-        jsonDecode(profileJson) as Map<String, dynamic>,
-      );
-    }
+    await _migrateLegacyUserStorage();
+    _loadLocalUserState();
     if (_hasSupabase) {
-      _currentUser = _client.auth.currentUser;
+      _activateBlockedUserIdentity(_currentUser?.id ?? '');
       await _applyUserProfile(_currentUser, notify: false);
       if (_currentUser != null) {
         unawaited(_registerPushToken(_currentUser!.id));
-        _subscribeToMessages();
+        await _subscribeToMessages();
       }
       _authSubscription = _client.auth.onAuthStateChange.listen((state) {
         unawaited(_handleAuthState(state.session?.user));
       });
     }
 
-    if (_ensureUploadedAssetProduct()) {
+    if (removedLegacyDemo) {
       await _saveProducts();
     }
     _sortThreads();
@@ -595,66 +726,24 @@ class AppRepository extends ChangeNotifier {
       _syncFromSupabase();
       _syncAccessoriesFromSupabase();
       _syncOutfitsFromSupabase();
+      _syncBlockedUsers();
       _syncUserCollectionsFromSupabase();
       _syncProfileFeaturesFromSupabase();
       _updatePresence();
-      _syncThreadsFromSupabase();
-      _syncTimer ??= Timer.periodic(const Duration(seconds: 4), (timer) {
-        if (timer.tick % 3 == 0) {
+      unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
+      _syncTimer ??= Timer.periodic(const Duration(seconds: 15), (timer) {
+        if (timer.tick % 4 == 0) {
           _syncFromSupabase();
           _syncAccessoriesFromSupabase();
           _syncOutfitsFromSupabase();
+          _syncBlockedUsers();
           _syncUserCollectionsFromSupabase();
           _syncProfileFeaturesFromSupabase();
           _updatePresence();
         }
-        _syncThreadsFromSupabase();
+        unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
       });
     }
-  }
-
-  bool _ensureUploadedAssetProduct() {
-    const uploadedImage =
-        'assets/products/be8b281aeb457d9e2884298331debba1c7dab8c4.png';
-    if (_products.any((product) => product.image == uploadedImage)) {
-      return false;
-    }
-
-    final sellerName = _profile.name.trim().isEmpty
-        ? 'showroom'
-        : _profile.name;
-    final sellerHandle = _profile.handle.trim().isEmpty
-        ? '@seller'
-        : _profile.handle;
-    final city = _profile.city.trim().isEmpty ? 'Москва' : _profile.city;
-
-    _products = <Product>[
-      Product(
-        id: 'product-uploaded-be8b281a',
-        title: 'Черный топ с драпировкой',
-        detailTitle: 'Черный топ с драпировкой',
-        description: 'Локальный товар из загруженной фотографии.',
-        price: '6 900 ₽',
-        detailPrice: '6 900 ₽',
-        priceValue: 6900,
-        image: uploadedImage,
-        category: 'Одежда',
-        brand: 'showroom',
-        size: 'S',
-        color: 'Черный',
-        condition: 'Новое',
-        location: city,
-        ownerId: _currentUser?.id ?? 'local-showroom',
-        sellerName: sellerName,
-        sellerHandle: sellerHandle,
-        dotsOnDark: true,
-        isLocal: true,
-        images: const [uploadedImage],
-        outfitImages: const [uploadedImage],
-      ),
-      ..._products,
-    ];
-    return true;
   }
 
   Future<void> signInWithYandex() {
@@ -669,6 +758,86 @@ class AppRepository extends ChangeNotifier {
       authUrl: SupabaseConfig.vkAuthUrl,
       providerLabel: 'VK ID',
     );
+  }
+
+  Future<String?> requestPhoneOtp(String phone) async {
+    final normalizedPhone = phone.replaceAll(RegExp(r'[^+\d]'), '');
+    if (!RegExp(r'^\+7\d{10}$').hasMatch(normalizedPhone)) {
+      return 'Введите номер телефона полностью';
+    }
+    if (!_hasSupabase) return 'Сервис входа временно недоступен';
+
+    _isSigningIn = true;
+    _authError = null;
+    notifyListeners();
+    try {
+      await _client.auth.signInWithOtp(
+        phone: normalizedPhone,
+        shouldCreateUser: true,
+      );
+      return null;
+    } on AuthException catch (error) {
+      final message = _phoneAuthErrorMessage(error.message);
+      _authError = message;
+      return message;
+    } catch (_) {
+      const message = 'Не удалось отправить код. Попробуйте ещё раз';
+      _authError = message;
+      return message;
+    } finally {
+      _isSigningIn = false;
+      notifyListeners();
+    }
+  }
+
+  Future<String?> verifyPhoneOtp(String phone, String code) async {
+    final normalizedPhone = phone.replaceAll(RegExp(r'[^+\d]'), '');
+    final normalizedCode = code.replaceAll(RegExp(r'\D'), '');
+    if (!RegExp(r'^\+7\d{10}$').hasMatch(normalizedPhone)) {
+      return 'Введите номер телефона полностью';
+    }
+    if (normalizedCode.length < 4) return 'Введите код из сообщения';
+    if (!_hasSupabase) return 'Сервис входа временно недоступен';
+
+    _isSigningIn = true;
+    _authError = null;
+    notifyListeners();
+    try {
+      final response = await _client.auth.verifyOTP(
+        phone: normalizedPhone,
+        token: normalizedCode,
+        type: OtpType.sms,
+      );
+      final user = response.user;
+      if (user == null) return 'Не удалось подтвердить номер';
+      await _handleAuthState(user);
+      return null;
+    } on AuthException catch (error) {
+      final message = _phoneAuthErrorMessage(error.message);
+      _authError = message;
+      return message;
+    } catch (_) {
+      const message = 'Не удалось подтвердить код. Попробуйте ещё раз';
+      _authError = message;
+      return message;
+    } finally {
+      _isSigningIn = false;
+      notifyListeners();
+    }
+  }
+
+  String _phoneAuthErrorMessage(String rawMessage) {
+    final message = rawMessage.toLowerCase();
+    if (message.contains('expired') || message.contains('invalid token')) {
+      return 'Код неверный или уже истёк';
+    }
+    if (message.contains('rate') || message.contains('seconds')) {
+      return 'Слишком много попыток. Подождите и попробуйте снова';
+    }
+    if (message.contains('phone') && message.contains('disabled')) {
+      return 'Вход по телефону пока недоступен';
+    }
+    return 'Не удалось выполнить вход по номеру телефона';
   }
 
   Future<void> _signInWithSocialOAuth({
@@ -774,7 +943,7 @@ class AppRepository extends ChangeNotifier {
   Future<void> signOut() async {
     if (!_hasSupabase) return;
     await _removeCurrentPushToken();
-    await _client.auth.signOut();
+    await _client.auth.signOut(scope: SignOutScope.local);
     await _handleAuthState(null);
   }
 
@@ -793,7 +962,10 @@ class AppRepository extends ChangeNotifier {
     }
 
     _profile = _profile.copyWith(name: cleanName, handle: cleanHandle);
-    await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
+    await _prefs.setString(
+      _scopedStorageKey(_profileKey),
+      jsonEncode(_profile.toJson()),
+    );
     notifyListeners();
 
     if (_hasSupabase && _client.auth.currentUser != null) {
@@ -831,20 +1003,18 @@ class AppRepository extends ChangeNotifier {
   ) async {
     var avatarUrl = updatedProfile.avatarUrl;
     if (avatarFile != null) {
-      avatarUrl =
-          await uploadImage(
-            avatarFile,
-            folder: currentUserId.isEmpty
-                ? 'avatars/local'
-                : 'avatars/$currentUserId',
-          ) ??
-          await _inlineImage(avatarFile) ??
-          '';
+      avatarUrl = _hasSupabase
+          ? await uploadImage(avatarFile, folder: 'avatars/$currentUserId') ??
+                ''
+          : await _inlineImage(avatarFile) ?? '';
       if (avatarUrl.isEmpty) return 'Не удалось сохранить фото профиля';
     }
 
     _profile = updatedProfile.copyWith(avatarUrl: avatarUrl);
-    await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
+    await _prefs.setString(
+      _scopedStorageKey(_profileKey),
+      jsonEncode(_profile.toJson()),
+    );
     notifyListeners();
 
     final user = _hasSupabase ? _client.auth.currentUser : null;
@@ -888,7 +1058,10 @@ class AppRepository extends ChangeNotifier {
         await _client.auth.updateUser(UserAttributes(email: normalized));
       }
       _profile = _profile.copyWith(email: normalized);
-      await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
+      await _prefs.setString(
+        _scopedStorageKey(_profileKey),
+        jsonEncode(_profile.toJson()),
+      );
       notifyListeners();
       return null;
     } catch (e) {
@@ -899,33 +1072,34 @@ class AppRepository extends ChangeNotifier {
 
   Future<String?> deleteAccount() async {
     if (!_hasSupabase || _client.auth.currentUser == null) {
-      await _prefs.remove(_profileKey);
-      _profile = const AppProfile(
-        name: 'Ваш профиль',
-        handle: '@seller',
-        city: 'Москва',
-        rating: 4.8,
-        salesCount: 0,
-        followersCount: 0,
-      );
+      await _clearScopedUserStorage('');
+      _loadLocalUserState();
       notifyListeners();
       return null;
     }
 
     try {
-      await _removeCurrentPushToken();
-      await _client.rpc('delete_current_user');
-      await _client.auth.signOut(scope: SignOutScope.local);
+      final deletedUserId = currentUserId;
+      final response = await _client.functions.invoke('delete-account');
+      final data = response.data;
+      final confirmed =
+          response.status == 200 && data is Map && data['deleted'] == true;
+      if (!confirmed) {
+        throw StateError('Account deletion was not confirmed by the server');
+      }
+
+      // Never clear user data or the local session until the backend confirms
+      // that Storage, owned UGC and the Auth user were deleted.
+      await _clearScopedUserStorage(deletedUserId);
+      try {
+        await _client.auth.signOut(scope: SignOutScope.local);
+      } catch (e) {
+        // The server already deleted this Auth user. Do not turn a local
+        // session cleanup problem into a false "deletion failed" result.
+        debugPrint('Deleted account local sign-out error: $e');
+      }
       _currentUser = null;
-      await _prefs.remove(_profileKey);
-      _profile = const AppProfile(
-        name: 'Ваш профиль',
-        handle: '@seller',
-        city: 'Москва',
-        rating: 4.8,
-        salesCount: 0,
-        followersCount: 0,
-      );
+      _loadLocalUserState();
       notifyListeners();
       return null;
     } catch (e) {
@@ -992,22 +1166,38 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<void> _handleAuthState(User? user) async {
+    final previousUserId = currentUserId;
     _currentUser = user;
+    if (previousUserId != currentUserId) {
+      _chatMediaUrlCache.clear();
+      _loadLocalUserState();
+    }
+    _activateBlockedUserIdentity(user?.id ?? '');
     _authError = null;
     await _applyUserProfile(user, notify: false);
     if (user != null) {
-      _subscribeToMessages();
+      await _subscribeToMessages();
       unawaited(_registerPushToken(user.id));
       unawaited(_updatePresence());
       unawaited(_syncFromSupabase());
       unawaited(_syncAccessoriesFromSupabase());
       unawaited(_syncOutfitsFromSupabase());
+      unawaited(_syncBlockedUsers());
       unawaited(_syncUserCollectionsFromSupabase());
       unawaited(_syncProfileFeaturesFromSupabase());
-      unawaited(_syncThreadsFromSupabase());
+      unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
     } else {
-      await _messagesChannel?.unsubscribe();
+      _chatThreadSync.cancelPending();
+      _messageSubscriptionGeneration++;
+      final messagesChannel = _messagesChannel;
       _messagesChannel = null;
+      if (messagesChannel != null) {
+        try {
+          await messagesChannel.unsubscribe();
+        } catch (e) {
+          debugPrint('Message channel unsubscribe error: $e');
+        }
+      }
       await _pushTokenSubscription?.cancel();
       _pushTokenSubscription = null;
       _registeredPushToken = null;
@@ -1046,7 +1236,10 @@ class AppRepository extends ChangeNotifier {
           email: _profile.email.isEmpty ? (user.email ?? '') : _profile.email,
         );
         await _loadPrivateProfileDetails(user.id);
-        await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
+        await _prefs.setString(
+          _scopedStorageKey(_profileKey),
+          jsonEncode(_profile.toJson()),
+        );
         await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
         if (notify) notifyListeners();
         return;
@@ -1083,7 +1276,10 @@ class AppRepository extends ChangeNotifier {
         email: _profile.email.isEmpty ? (user.email ?? '') : _profile.email,
         avatarUrl: _profile.avatarUrl.isEmpty ? _currentAvatarUrl() : null,
       );
-      await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
+      await _prefs.setString(
+        _scopedStorageKey(_profileKey),
+        jsonEncode(_profile.toJson()),
+      );
       await _upsertProfile(userId: user.id, profile: _profile);
       await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
     }
@@ -1227,7 +1423,12 @@ class AppRepository extends ChangeNotifier {
     }
 
     _registeredPushToken = null;
-    await PushNotificationService.deleteToken();
+    try {
+      await PushNotificationService.deleteToken();
+    } catch (error) {
+      // Push cleanup must never trap the user in an authenticated account.
+      debugPrint('Local push token delete error: $error');
+    }
   }
 
   Future<void> _updatePresence() async {
@@ -1291,6 +1492,14 @@ class AppRepository extends ChangeNotifier {
               'seller_handle': profile.handle,
             })
             .eq('seller_id', userId);
+        await _client
+            .from('outfits')
+            .update({
+              'author_name': profile.name,
+              'author_handle': profile.handle,
+              'author_avatar_url': profile.avatarUrl,
+            })
+            .eq('owner_id', userId);
       } catch (e) {
         debugPrint('Seller product sync error: $e');
       }
@@ -1310,6 +1519,25 @@ class AppRepository extends ChangeNotifier {
       );
     }).toList();
     if (changed) await _saveProducts();
+
+    var outfitsChanged = false;
+    _outfits = _outfits.map((outfit) {
+      if (outfit.ownerId != userId) return outfit;
+      if (outfit.authorName == profile.name &&
+          outfit.authorHandle == profile.handle &&
+          outfit.authorAvatarUrl == profile.avatarUrl) {
+        return outfit;
+      }
+      outfitsChanged = true;
+      return outfit.copyWith(
+        authorName: profile.name,
+        authorHandle: profile.handle,
+        authorAvatarUrl: profile.avatarUrl,
+      );
+    }).toList();
+    if (outfitsChanged) {
+      await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
+    }
   }
 
   Future<void> _syncFromSupabase() async {
@@ -1318,28 +1546,18 @@ class AppRepository extends ChangeNotifier {
       final response = await _client
           .from('products')
           .select()
+          .eq('status', 'published')
+          .eq('is_hidden', false)
           .order('created_at', ascending: false);
-      final productRows = await _attachPublicAttributes(
-        (response as List<dynamic>).whereType<Map>().toList(),
-      );
-      final fetched = productRows
-          .map((e) => Product.fromSupabase(e))
-          .where((product) => product.status == 'published')
+      final fetched = (response as List<dynamic>)
+          .whereType<Map>()
+          .map((row) => Product.fromSupabase(Map<String, dynamic>.from(row)))
           .toList();
 
-      if (fetched.isNotEmpty) {
-        final merged = <String, Product>{
-          for (final product in fetched) product.id: product,
-        };
-        for (final product in _products) {
-          merged.putIfAbsent(product.id, () => product);
-        }
-        _products = merged.values.toList();
-        _ensureUploadedAssetProduct();
-        _applyProductFavoriteState();
-        await _saveProducts();
-        notifyListeners();
-      }
+      _products = fetched;
+      _applyProductFavoriteState();
+      await _saveProducts();
+      notifyListeners();
     } catch (e) {
       debugPrint('Supabase sync error: $e');
     }
@@ -1378,26 +1596,85 @@ class AppRepository extends ChangeNotifier {
     return result;
   }
 
-  void _subscribeToMessages() {
+  Future<void> _subscribeToMessages() async {
     if (!_hasSupabase || currentUserId.isEmpty) return;
-    final channelName = 'messages:$currentUserId';
+    final subscriberId = currentUserId;
+    final generation = ++_messageSubscriptionGeneration;
+    final channelName = 'messages:$subscriberId';
     final previousChannel = _messagesChannel;
-    if (previousChannel != null) unawaited(previousChannel.unsubscribe());
+    _messagesChannel = null;
+    if (previousChannel != null) {
+      try {
+        await previousChannel.unsubscribe();
+      } catch (e) {
+        debugPrint('Previous message channel unsubscribe error: $e');
+      }
+    }
+    if (generation != _messageSubscriptionGeneration ||
+        currentUserId != subscriberId) {
+      return;
+    }
     _messagesChannel = _client
         .channel(channelName)
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'chat_messages',
-          callback: (_) => unawaited(_syncThreadsFromSupabase()),
+          callback: (_) => _chatThreadSync.schedule(_syncThreadsFromSupabase),
         )
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'message_threads',
-          callback: (_) => unawaited(_syncThreadsFromSupabase()),
+          callback: (_) => _chatThreadSync.schedule(_syncThreadsFromSupabase),
+        )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'chat_thread_member_state',
+          callback: (_) => _chatThreadSync.schedule(_syncThreadsFromSupabase),
         )
         .subscribe();
+  }
+
+  Future<List<MessageThread>> _hydrateThreadMemberState(
+    List<MessageThread> threads,
+  ) async {
+    if (threads.isEmpty || currentUserId.isEmpty) return threads;
+    try {
+      final response = await _client
+          .from('chat_thread_member_state')
+          .select('thread_id,is_pinned,is_muted,is_archived,draft,last_read_at')
+          .eq('user_id', currentUserId)
+          .inFilter('thread_id', threads.map((thread) => thread.id).toList());
+      final stateByThread = <String, Map<String, dynamic>>{};
+      for (final item in response as List<dynamic>) {
+        final row = item as Map<String, dynamic>;
+        final threadId = row['thread_id'] as String? ?? '';
+        if (threadId.isNotEmpty) stateByThread[threadId] = row;
+      }
+
+      return threads
+          .map((thread) {
+            final state = stateByThread[thread.id];
+            final rawLastReadAt = state?['last_read_at'] as String?;
+            return thread.copyWith(
+              isPinned: state?['is_pinned'] as bool? ?? false,
+              isMuted: state?['is_muted'] as bool? ?? false,
+              isArchived: state?['is_archived'] as bool? ?? false,
+              draft: state?['draft'] as String? ?? '',
+              lastReadAt: rawLastReadAt == null
+                  ? null
+                  : DateTime.tryParse(rawLastReadAt),
+            );
+          })
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('Chat member state hydration error: $e');
+      // Additive rollout fallback for a backend that has not run the member
+      // state migration yet.
+      return threads;
+    }
   }
 
   Future<List<MessageThread>> _hydrateThreadMessages(
@@ -1415,16 +1692,26 @@ class AppRepository extends ChangeNotifier {
         final row = item as Map<String, dynamic>;
         final threadId = row['thread_id'] as String? ?? '';
         if (threadId.isEmpty) continue;
-        byThread
-            .putIfAbsent(threadId, () => [])
-            .add(ChatMessage.fromJson(row, currentUserId: currentUserId));
+        final parsed = ChatMessage.fromJson(row, currentUserId: currentUserId);
+        final message = await _resolveChatMessageMedia(parsed);
+        byThread.putIfAbsent(threadId, () => []).add(message);
       }
       return threads
           .map((thread) {
-            final messages = byThread[thread.id];
-            return messages == null || messages.isEmpty
-                ? thread
-                : thread.copyWith(messages: messages);
+            final messages = byThread[thread.id] ?? const <ChatMessage>[];
+            final unreadCount = messages.where((message) {
+              if (message.senderId == currentUserId || message.isDeleted) {
+                return false;
+              }
+              if (message.readBy.contains(currentUserId)) return false;
+              final lastReadAt = thread.lastReadAt;
+              return lastReadAt == null ||
+                  message.createdAt.isAfter(lastReadAt);
+            }).length;
+            return thread.copyWith(
+              messages: messages,
+              unreadCount: unreadCount,
+            );
           })
           .toList(growable: false);
     } catch (e) {
@@ -1433,8 +1720,90 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
+  Future<List<MessageThread>> _hydrateThreadProfiles(
+    List<MessageThread> threads,
+  ) async {
+    final memberIds = threads
+        .expand((thread) => thread.memberIds)
+        .where((id) => id.isNotEmpty)
+        .toSet();
+    if (memberIds.isEmpty) return threads;
+    try {
+      final response = await _client
+          .from('profiles')
+          .select('id,name,handle,avatar_url')
+          .inFilter('id', memberIds.toList());
+      final profiles = <String, AppUserProfile>{};
+      for (final item in response as List<dynamic>) {
+        final profile = AppUserProfile.fromSupabase(
+          item as Map<String, dynamic>,
+        );
+        if (profile.id.isNotEmpty) profiles[profile.id] = profile;
+      }
+      return threads
+          .map((thread) {
+            final buyer = profiles[thread.buyerId];
+            final seller = profiles[thread.sellerId];
+            final existingMembers = {
+              for (final member in thread.members) member.id: member,
+            };
+            final hydratedMembers = thread.memberIds
+                .map((id) {
+                  final profile = profiles[id];
+                  final existing = existingMembers[id];
+                  return ConversationMember(
+                    id: id,
+                    name: profile?.name ?? existing?.name ?? '',
+                    handle: profile?.handle ?? existing?.handle ?? '',
+                    avatarUrl: profile?.avatarUrl ?? existing?.avatarUrl ?? '',
+                  );
+                })
+                .toList(growable: false);
+            return thread.copyWith(
+              buyerName: buyer?.name,
+              buyerHandle: buyer?.handle,
+              buyerAvatar: buyer?.avatarUrl,
+              sellerName: seller?.name,
+              sellerHandle: seller?.handle,
+              sellerAvatar: seller?.avatarUrl,
+              members: hydratedMembers,
+            );
+          })
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('Chat profile hydration error: $e');
+      return threads;
+    }
+  }
+
+  Future<ChatMessage> _resolveChatMessageMedia(ChatMessage message) async {
+    final attachment = message.attachment;
+    if (attachment == null || !attachment.hasRemoteObject) return message;
+    try {
+      final signedUrl = await _chatMediaUrlCache.resolve(
+        key: _chatMediaCacheKey(attachment.bucket, attachment.storagePath),
+        load: () => _client.storage
+            .from(attachment.bucket)
+            .createSignedUrl(
+              attachment.storagePath,
+              _chatMediaSignedUrlSeconds,
+            ),
+      );
+      if (signedUrl == null || signedUrl.isEmpty) return message;
+      return message.copyWith(attachment: attachment.copyWith(url: signedUrl));
+    } catch (e) {
+      debugPrint('Chat media URL refresh error: $e');
+      return message;
+    }
+  }
+
+  String _chatMediaCacheKey(String bucket, String storagePath) {
+    return '$bucket/$storagePath';
+  }
+
   Future<void> _syncThreadsFromSupabase() async {
     if (!_hasSupabase || currentUserId.isEmpty) return;
+    final syncUserId = currentUserId;
 
     try {
       final previousById = {for (final thread in _threads) thread.id: thread};
@@ -1442,8 +1811,8 @@ class AppRepository extends ChangeNotifier {
           .from('message_threads')
           .select()
           .or(
-            'buyer_id.eq.$currentUserId,seller_id.eq.$currentUserId,'
-            'member_ids.cs.{$currentUserId}',
+            'buyer_id.eq.$syncUserId,seller_id.eq.$syncUserId,'
+            'member_ids.cs.{$syncUserId}',
           )
           .order('updated_at', ascending: false);
 
@@ -1451,13 +1820,17 @@ class AppRepository extends ChangeNotifier {
           .map(
             (item) => MessageThread.fromSupabase(
               item as Map<String, dynamic>,
-              currentUserId: currentUserId,
+              currentUserId: syncUserId,
             ),
           )
           .toList();
+      fetched = await _hydrateThreadProfiles(fetched);
+      fetched = await _hydrateThreadMemberState(fetched);
       fetched = await _hydrateThreadMessages(fetched);
+      if (currentUserId != syncUserId) return;
 
       await _syncThreadPresence(fetched);
+      if (currentUserId != syncUserId) return;
 
       if (_hasCompletedThreadSync) {
         final notification = _incomingNotification(fetched, previousById);
@@ -1471,21 +1844,19 @@ class AppRepository extends ChangeNotifier {
           );
         }
       }
+      if (currentUserId != syncUserId) return;
       _hasCompletedThreadSync = true;
 
-      if (fetched.isEmpty) return;
-      final merged = <String, MessageThread>{
-        for (final thread in fetched) thread.id: thread,
-      };
-      for (final thread in _threads) {
-        merged.putIfAbsent(thread.id, () => thread);
-      }
-      _threads = merged.values.toList();
-      _sortThreads();
-      await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+      fetched.sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
+      await _writeList(
+        _scopedStorageKey(_threadsKey, syncUserId),
+        fetched.map((item) => item.toJson()),
+      );
+      if (currentUserId != syncUserId) return;
+      _threads = fetched;
       notifyListeners();
     } catch (e) {
-      _hasCompletedThreadSync = true;
+      if (currentUserId == syncUserId) _hasCompletedThreadSync = true;
       debugPrint('Threads sync error: $e');
       // Optional table. Local chats remain fully usable without it.
     }
@@ -1524,7 +1895,7 @@ class AppRepository extends ChangeNotifier {
       id: '${newestThread.id}:${newestMessage.id}',
       threadId: newestThread.id,
       senderName: senderName,
-      text: newestMessage.text,
+      text: newestMessage.previewText,
     );
   }
 
@@ -1653,50 +2024,174 @@ class AppRepository extends ChangeNotifier {
 
   Future<AppOrder?> createDeliveryOrder(
     Product product, {
-    String deliveryService = 'Почта России',
-    int deliveryPrice = 122,
+    String deliveryService = 'address:unassigned',
+    int deliveryPrice = 0,
   }) async {
     final user = _hasSupabase
         ? await _ensureAuthSession(message: 'Войдите в профиль, чтобы купить')
         : null;
-    if (_hasSupabase && user == null) return null;
+    if (_hasSupabase && user == null) {
+      throw const CheckoutException(
+        code: 'authentication_required',
+        message: 'Войдите в профиль, чтобы оформить заказ',
+      );
+    }
 
     final buyerId = user?.id ?? currentUserId;
     if (buyerId.isEmpty) {
       _authError = 'Войдите в профиль, чтобы купить';
       notifyListeners();
-      return null;
+      throw const CheckoutException(
+        code: 'authentication_required',
+        message: 'Войдите в профиль, чтобы оформить заказ',
+      );
     }
     if (product.ownerId.isNotEmpty && product.ownerId == buyerId) {
       _authError = 'Это ваше объявление';
       notifyListeners();
-      return null;
+      throw const CheckoutException(
+        code: 'cannot_buy_own_listing',
+        message: 'Нельзя купить собственное объявление',
+      );
     }
 
+    final delivery = _normalizeCheckoutDelivery(deliveryService);
+    final deliveryType = delivery.$1;
+    final deliveryProvider = delivery.$2;
+    final isPickup = deliveryType == 'pickup_point';
+    final destination = isPickup
+        ? deliveryProfile.pickupPointAddress.trim()
+        : [
+            deliveryProfile.city.trim(),
+            deliveryProfile.address.trim(),
+          ].where((part) => part.isNotEmpty).join(', ');
+    if (deliveryProfile.fullName.trim().isEmpty) {
+      throw const CheckoutException(
+        code: 'recipient_name_required',
+        message: 'Укажите имя получателя',
+      );
+    }
+    if (deliveryProfile.phone.trim().isEmpty) {
+      throw const CheckoutException(
+        code: 'recipient_phone_required',
+        message: 'Укажите телефон получателя',
+      );
+    }
+    if (destination.isEmpty ||
+        (isPickup && deliveryProfile.pickupPointId.trim().isEmpty)) {
+      throw CheckoutException(
+        code: isPickup
+            ? 'pickup_point_required'
+            : 'delivery_destination_required',
+        message: isPickup ? 'Выберите пункт выдачи' : 'Укажите адрес доставки',
+      );
+    }
+
+    final displayDeliveryService = _deliveryServiceLabel(
+      deliveryType,
+      deliveryProvider,
+    );
+    final orderProfile = deliveryProfile.copyWith(address: destination);
     final pendingOrder = AppOrder.fromProduct(
       product: product,
       buyerId: buyerId,
       status: AppOrderStatus.pendingConfirmation,
-      deliveryProfile: deliveryProfile,
-      deliveryService: deliveryService,
+      deliveryProfile: orderProfile,
+      deliveryService: displayDeliveryService,
       deliveryPrice: deliveryPrice,
     );
+    // Persist the active attempt before calling the server. If the app loses
+    // the response or restarts, a retry receives the same authoritative order
+    // instead of creating a duplicate. The key is rotated only after success.
+    final attemptStorageKey = _scopedStorageKey(
+      '$_checkoutAttemptKeyPrefix:${product.id}',
+      buyerId,
+    );
+    late String idempotencyKey;
+    try {
+      idempotencyKey = _prefs.getString(attemptStorageKey)?.trim() ?? '';
+      if (idempotencyKey.isEmpty) {
+        idempotencyKey = _uuid.v4();
+        final persisted = await _prefs.setString(
+          attemptStorageKey,
+          idempotencyKey,
+        );
+        if (!persisted) {
+          throw const CheckoutException(
+            code: 'checkout_attempt_save_failed',
+            message: 'Не удалось начать оформление. Попробуйте ещё раз.',
+            isRetryable: true,
+          );
+        }
+      }
+    } on CheckoutException {
+      rethrow;
+    } catch (error, stackTrace) {
+      debugPrint('Checkout attempt save error: $error\n$stackTrace');
+      throw const CheckoutException(
+        code: 'checkout_attempt_save_failed',
+        message: 'Не удалось начать оформление. Попробуйте ещё раз.',
+        isRetryable: true,
+      );
+    }
 
     var committedOrder = pendingOrder;
     if (_hasSupabase) {
       try {
-        final response = await _client
-            .from('orders')
-            .insert(pendingOrder.toSupabaseJson())
-            .select()
-            .single();
-        committedOrder = AppOrder.fromJson(Map<String, dynamic>.from(response));
+        final response = await _client.rpc(
+          'create_order',
+          params: {
+            'p_checkout': {
+              'product_id': product.id,
+              'idempotency_key': idempotencyKey,
+              'delivery': {
+                'type': deliveryType,
+                'provider': deliveryProvider,
+                'address': {
+                  'city': deliveryProfile.city.trim(),
+                  'line1': isPickup ? '' : deliveryProfile.address.trim(),
+                },
+                'pickup_point': isPickup
+                    ? {
+                        'id': deliveryProfile.pickupPointId.trim(),
+                        'name': deliveryProfile.pickupPointName.trim(),
+                        'address': deliveryProfile.pickupPointAddress.trim(),
+                      }
+                    : null,
+              },
+              'recipient': {
+                'name': orderProfile.fullName.trim(),
+                'phone': orderProfile.phone.trim(),
+                'email': orderProfile.email.trim(),
+              },
+            },
+          },
+        );
+        Object? row = response;
+        if (row is List && row.isNotEmpty) row = row.first;
+        if (row is! Map) {
+          throw const FormatException('Invalid checkout response');
+        }
+        committedOrder = AppOrder.fromJson(Map<String, dynamic>.from(row));
+      } on PostgrestException catch (e, stackTrace) {
+        debugPrint('Order create error: $e\n$stackTrace');
+        final failure = _checkoutFailure(e.message, code: e.code);
+        _authError = failure.message;
+        notifyListeners();
+        throw failure;
+      } on CheckoutException {
+        rethrow;
       } catch (e, stackTrace) {
         debugPrint('Order create error: $e\n$stackTrace');
         _authError =
             'Не удалось создать заказ. Проверьте подключение и попробуйте ещё раз.';
         notifyListeners();
-        return null;
+        throw const CheckoutException(
+          code: 'checkout_unavailable',
+          message:
+              'Не удалось оформить заказ. Проверьте подключение и попробуйте ещё раз.',
+          isRetryable: true,
+        );
       }
     }
 
@@ -1713,10 +2208,21 @@ class AppRepository extends ChangeNotifier {
         _orders.removeWhere((item) => item.id == committedOrder.id);
         _authError = 'Не удалось сохранить заказ. Попробуйте ещё раз.';
         notifyListeners();
-        return null;
+        throw const CheckoutException(
+          code: 'order_local_save_failed',
+          message: 'Не удалось сохранить заказ. Попробуйте ещё раз.',
+          isRetryable: true,
+        );
       }
     }
     _authError = null;
+    try {
+      await _prefs.remove(attemptStorageKey);
+    } catch (error, stackTrace) {
+      // The server order is already committed. Keep the success path intact;
+      // a retained key is safer than telling the buyer that checkout failed.
+      debugPrint('Checkout attempt cleanup error: $error\n$stackTrace');
+    }
     notifyListeners();
     unawaited(_addOrderCreatedNotification(committedOrder));
     return committedOrder;
@@ -1733,6 +2239,144 @@ class AppRepository extends ChangeNotifier {
     } catch (e, stackTrace) {
       debugPrint('Order notification error: $e\n$stackTrace');
     }
+  }
+
+  CheckoutException _checkoutFailure(String rawMessage, {String? code}) {
+    final message = rawMessage.toLowerCase();
+    if (message.contains('authentication_required')) {
+      return const CheckoutException(
+        code: 'authentication_required',
+        message: 'Войдите в профиль, чтобы оформить заказ',
+      );
+    }
+    if (message.contains('cannot_buy_own_listing')) {
+      return const CheckoutException(
+        code: 'cannot_buy_own_listing',
+        message: 'Нельзя купить собственное объявление',
+      );
+    }
+    if (message.contains('product_unavailable')) {
+      return const CheckoutException(
+        code: 'product_unavailable',
+        message: 'Объявление уже недоступно',
+      );
+    }
+    if (message.contains('listing_seller_required')) {
+      return const CheckoutException(
+        code: 'listing_seller_required',
+        message: 'У объявления не указан продавец',
+      );
+    }
+    if (message.contains('recipient_name_required')) {
+      return const CheckoutException(
+        code: 'recipient_name_required',
+        message: 'Укажите имя получателя',
+      );
+    }
+    if (message.contains('recipient_phone_required')) {
+      return const CheckoutException(
+        code: 'recipient_phone_required',
+        message: 'Укажите телефон получателя',
+      );
+    }
+    if (message.contains('recipient_email_invalid')) {
+      return const CheckoutException(
+        code: 'recipient_email_invalid',
+        message: 'Проверьте email получателя',
+      );
+    }
+    if (message.contains('delivery_destination_required')) {
+      return const CheckoutException(
+        code: 'delivery_destination_required',
+        message: 'Выберите адрес или пункт выдачи',
+      );
+    }
+    if (message.contains('pickup_point_required')) {
+      return const CheckoutException(
+        code: 'pickup_point_required',
+        message: 'Выберите пункт выдачи',
+      );
+    }
+    if (message.contains('unsupported_delivery_service')) {
+      return const CheckoutException(
+        code: 'unsupported_delivery_service',
+        message: 'Этот способ доставки пока недоступен',
+      );
+    }
+    if (message.contains('delivery_method_not_offered')) {
+      return const CheckoutException(
+        code: 'delivery_method_not_offered',
+        message: 'Продавец не подключил выбранную службу доставки',
+      );
+    }
+    if (message.contains('checkout_temporarily_disabled')) {
+      return const CheckoutException(
+        code: 'checkout_temporarily_disabled',
+        message: 'Оформление временно приостановлено. Попробуйте позже.',
+        isRetryable: true,
+      );
+    }
+    if (message.contains('live_checkout_not_configured')) {
+      return const CheckoutException(
+        code: 'live_checkout_not_configured',
+        message: 'Безопасная оплата и доставка ещё не подключены.',
+      );
+    }
+    if (message.contains('verified_delivery_selection_required')) {
+      return const CheckoutException(
+        code: 'verified_delivery_selection_required',
+        message: 'Выберите подтверждённый адрес службы доставки',
+      );
+    }
+    if (code == 'PGRST202' ||
+        code == '42883' ||
+        message.contains('create_order')) {
+      return const CheckoutException(
+        code: 'checkout_not_deployed',
+        message: 'Оформление временно недоступно. Попробуйте немного позже.',
+        isRetryable: true,
+      );
+    }
+    return const CheckoutException(
+      code: 'checkout_unavailable',
+      message:
+          'Не удалось оформить заказ. Проверьте подключение и попробуйте ещё раз.',
+      isRetryable: true,
+    );
+  }
+
+  (String, String) _normalizeCheckoutDelivery(String rawValue) {
+    final normalized = rawValue.trim();
+    if (normalized == 'Почта России') return ('address', 'russian_post');
+    if (normalized == 'Пункт выдачи') return ('pickup_point', 'unassigned');
+    final parts = normalized.split(':');
+    final type = switch (parts.firstOrNull) {
+      'pickup_point' => 'pickup_point',
+      _ => 'address',
+    };
+    final rawProvider = parts.length > 1 ? parts[1].trim() : 'unassigned';
+    final provider =
+        const {
+          'cdek',
+          'russian_post',
+          'yandex_delivery',
+          'unassigned',
+        }.contains(rawProvider)
+        ? rawProvider
+        : 'unassigned';
+    return (type, provider);
+  }
+
+  String _deliveryServiceLabel(String type, String provider) {
+    final providerLabel = switch (provider) {
+      'cdek' => 'СДЭК',
+      'russian_post' => 'Почта России',
+      'yandex_delivery' => 'Яндекс Доставка',
+      _ => 'служба доставки',
+    };
+    return type == 'pickup_point'
+        ? 'Пункт выдачи · $providerLabel'
+        : 'До адреса · $providerLabel';
   }
 
   Future<void> markNotificationRead(String notificationId) async {
@@ -1828,28 +2472,19 @@ class AppRepository extends ChangeNotifier {
           .map((item) => CreatedOutfit.fromSupabase(item))
           .toList();
 
-      if (fetched.isEmpty) return;
       final localById = <String, CreatedOutfit>{
         for (final outfit in _outfits) outfit.id: outfit,
       };
-      final merged = <String, CreatedOutfit>{};
-      for (final remote in fetched) {
+      _outfits = fetched.map((remote) {
         final local = localById[remote.id];
-        merged[remote.id] = local == null
+        return local == null
             ? remote
             : remote.copyWith(
-                viewsCount: local.viewsCount > remote.viewsCount
-                    ? local.viewsCount
-                    : remote.viewsCount,
-                likesCount: local.likesCount > remote.likesCount
-                    ? local.likesCount
-                    : remote.likesCount,
+                isLiked: local.isLiked,
+                viewsCount: remote.viewsCount < 0 ? 0 : remote.viewsCount,
+                likesCount: remote.likesCount < 0 ? 0 : remote.likesCount,
               );
-      }
-      for (final outfit in _outfits) {
-        merged.putIfAbsent(outfit.id, () => outfit);
-      }
-      _outfits = merged.values.toList();
+      }).toList();
       _applyOutfitFavoriteState();
       await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
       notifyListeners();
@@ -1859,6 +2494,29 @@ class AppRepository extends ChangeNotifier {
   }
 
   // ─── Image Upload ───
+
+  Future<void> _syncBlockedUsers() async {
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+    try {
+      final response = await _client
+          .from('blocked_users')
+          .select('blocked_id')
+          .eq('blocker_id', currentUserId);
+      final remoteIds = (response as List<dynamic>)
+          .whereType<Map>()
+          .map((row) => row['blocked_id']?.toString() ?? '')
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      if (setEquals(remoteIds, _blockedUserIds)) return;
+      _blockedUserIds = remoteIds;
+      await _saveBlockedUsers();
+      notifyListeners();
+    } on PostgrestException catch (e) {
+      if (e.code != 'PGRST205' && e.code != '42P01') rethrow;
+    } catch (e) {
+      debugPrint('Blocked users sync error: $e');
+    }
+  }
 
   Future<void> _syncUserCollectionsFromSupabase() async {
     if (!_hasSupabase || currentUserId.isEmpty) return;
@@ -2061,14 +2719,7 @@ class AppRepository extends ChangeNotifier {
       return url;
     } catch (e) {
       debugPrint('Upload error: $e');
-      try {
-        final bytes = await imageFile.readAsBytes();
-        final mimeType = _mimeTypeForImage(imageFile.name, imageFile.path);
-        return 'data:$mimeType;base64,${base64Encode(bytes)}';
-      } catch (fallbackError) {
-        debugPrint('Inline image fallback error: $fallbackError');
-        return null;
-      }
+      return null;
     }
   }
 
@@ -2159,6 +2810,11 @@ class AppRepository extends ChangeNotifier {
     required bool isDefault,
     required String title,
   }) async {
+    if (isDefault) {
+      _authError = 'Общие аксессуары добавляются после модерации';
+      notifyListeners();
+      return null;
+    }
     final id = _uuid.v4();
     final user = _hasSupabase ? await _ensureAuthSession() : null;
     if (_hasSupabase && user == null) return null;
@@ -2170,7 +2826,7 @@ class AppRepository extends ChangeNotifier {
       title: cleanTitle,
       image: localImage,
       cutoutImage: '',
-      scope: isDefault ? 'default' : 'private',
+      scope: 'private',
       ownerId: user?.id ?? currentUserId,
       isLocal: true,
     );
@@ -2185,13 +2841,13 @@ class AppRepository extends ChangeNotifier {
     try {
       final imageUrl = await uploadImage(
         imageFile,
-        folder: isDefault ? 'accessories/default' : 'accessories/${user!.id}',
+        folder: 'accessories/${user!.id}',
       );
       if (imageUrl == null) return fallback;
 
       final accessory = fallback.copyWith(
         image: imageUrl,
-        ownerId: user!.id,
+        ownerId: user.id,
         isLocal: false,
       );
 
@@ -2229,6 +2885,7 @@ class AppRepository extends ChangeNotifier {
 
   Future<void> toggleProductLike(String productId) async {
     final willLike = !_favoriteProductIds.contains(productId);
+    final previousLikesCount = _productMetric(productId, metric: 'likes_count');
     if (willLike) {
       _favoriteProductIds.add(productId);
     } else {
@@ -2241,7 +2898,10 @@ class AppRepository extends ChangeNotifier {
           .clamp(0, 1 << 31)
           .toInt();
     }
-    await _saveStringSet(_favoriteProductIdsKey, _favoriteProductIds);
+    await _saveStringSet(
+      _scopedStorageKey(_favoriteProductIdsKey),
+      _favoriteProductIds,
+    );
     await _saveProducts();
     notifyListeners();
 
@@ -2260,14 +2920,39 @@ class AppRepository extends ChangeNotifier {
             .eq('user_id', currentUserId)
             .eq('product_id', productId);
       }
-      await _refreshProductMetric(productId, metric: 'likes_count');
     } catch (e) {
       debugPrint('Product favorite sync error: $e');
+      if (willLike) {
+        _favoriteProductIds.remove(productId);
+      } else {
+        _favoriteProductIds.add(productId);
+      }
+      for (final product in _products) {
+        product.isLiked = _favoriteProductIds.contains(product.id);
+        if (product.id == productId) product.likesCount = previousLikesCount;
+      }
+      await _saveStringSet(
+        _scopedStorageKey(_favoriteProductIdsKey),
+        _favoriteProductIds,
+      );
+      await _saveProducts();
+      _authError = 'Не удалось обновить избранное. Попробуйте ещё раз.';
+      notifyListeners();
+      return;
+    }
+    try {
+      await _refreshProductMetric(productId, metric: 'likes_count');
+    } catch (e) {
+      debugPrint('Product favorite metric refresh error: $e');
     }
   }
 
   Future<void> toggleOutfitLike(String outfitId) async {
     final willLike = !_favoriteOutfitIds.contains(outfitId);
+    final previousOutfit = _outfits
+        .where((outfit) => outfit.id == outfitId)
+        .firstOrNull;
+    final previousLikesCount = previousOutfit?.likesCount ?? 0;
     if (willLike) {
       _favoriteOutfitIds.add(outfitId);
     } else {
@@ -2282,7 +2967,10 @@ class AppRepository extends ChangeNotifier {
       if (nextLikesCount < 0) nextLikesCount = 0;
       return outfit.copyWith(isLiked: willLike, likesCount: nextLikesCount);
     }).toList();
-    await _saveStringSet(_favoriteOutfitIdsKey, _favoriteOutfitIds);
+    await _saveStringSet(
+      _scopedStorageKey(_favoriteOutfitIdsKey),
+      _favoriteOutfitIds,
+    );
     await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
     notifyListeners();
 
@@ -2303,6 +2991,44 @@ class AppRepository extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint('Outfit favorite sync error: $e');
+      if (willLike) {
+        _favoriteOutfitIds.remove(outfitId);
+      } else {
+        _favoriteOutfitIds.add(outfitId);
+      }
+      _outfits = _outfits
+          .map(
+            (outfit) => outfit.id == outfitId
+                ? outfit.copyWith(
+                    isLiked: !willLike,
+                    likesCount: previousLikesCount,
+                  )
+                : outfit.copyWith(
+                    isLiked: _favoriteOutfitIds.contains(outfit.id),
+                  ),
+          )
+          .toList();
+      await _saveStringSet(
+        _scopedStorageKey(_favoriteOutfitIdsKey),
+        _favoriteOutfitIds,
+      );
+      await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
+      _authError = 'Не удалось обновить избранное. Попробуйте ещё раз.';
+      notifyListeners();
+      return;
+    }
+    try {
+      final response = await _client
+          .from('outfits')
+          .select('likes_count')
+          .eq('id', outfitId)
+          .maybeSingle();
+      final authoritative = (response?['likes_count'] as num?)?.toInt();
+      if (authoritative != null) {
+        await _applyAuthoritativeOutfitLikes(outfitId, authoritative);
+      }
+    } catch (e) {
+      debugPrint('Outfit favorite metric refresh error: $e');
     }
   }
 
@@ -2310,8 +3036,16 @@ class AppRepository extends ChangeNotifier {
     if (productId.isEmpty) return 0;
     final viewerId = currentUserId;
     _activateProductViewIdentity(viewerId);
+    final isOwnListing = _products.any(
+      (product) =>
+          product.id == productId &&
+          viewerId.isNotEmpty &&
+          product.ownerId == viewerId,
+    );
     final isFirstAuthorizedView =
-        viewerId.isNotEmpty && _countedProductViewIds.add(productId);
+        viewerId.isNotEmpty &&
+        !isOwnListing &&
+        _countedProductViewIds.add(productId);
     _recentProductIds.remove(productId);
     _recentProductIds.insert(0, productId);
     if (_recentProductIds.length > 24) {
@@ -2324,7 +3058,10 @@ class AppRepository extends ChangeNotifier {
         break;
       }
     }
-    await _writeStringList(_recentProductIdsKey, _recentProductIds);
+    await _writeStringList(
+      _scopedStorageKey(_recentProductIdsKey),
+      _recentProductIds,
+    );
     if (isFirstAuthorizedView) await _saveCountedProductViews();
     if (isFirstAuthorizedView) await _saveProducts();
     notifyListeners();
@@ -2340,15 +3077,38 @@ class AppRepository extends ChangeNotifier {
     String viewerId,
   ) async {
     try {
-      await _client.from('recent_products').upsert({
-        'user_id': viewerId,
-        'product_id': productId,
-        'viewed_at': DateTime.now().toUtc().toIso8601String(),
-      }, onConflict: 'user_id,product_id');
-      await _refreshProductMetric(productId, metric: 'views_count');
+      final response = await _client.rpc(
+        'record_product_view',
+        params: {'p_product_id': productId},
+      );
+      Object? row = response;
+      if (row is List && row.isNotEmpty) row = row.first;
+      final authoritative = row is Map
+          ? (row['views_count'] as num?)?.toInt()
+          : null;
+      if (authoritative != null && currentUserId == viewerId) {
+        await _applyAuthoritativeProductViews(productId, authoritative);
+      }
     } catch (e) {
-      debugPrint('Recent product sync error: $e');
+      debugPrint('Product view sync error: $e');
     }
+  }
+
+  Future<void> _applyAuthoritativeProductViews(
+    String productId,
+    int remoteCount,
+  ) async {
+    final safeCount = remoteCount < 0 ? 0 : remoteCount;
+    var changed = false;
+    for (final product in _products) {
+      if (product.id != productId || product.viewsCount == safeCount) continue;
+      product.viewsCount = safeCount;
+      changed = true;
+      break;
+    }
+    if (!changed) return;
+    await _saveProducts();
+    notifyListeners();
   }
 
   int _productMetric(String productId, {required String metric}) {
@@ -2388,8 +3148,16 @@ class AppRepository extends ChangeNotifier {
     if (outfitId.isEmpty) return 0;
     final viewerId = currentUserId;
     _activateOutfitViewIdentity(viewerId);
+    final isOwnOutfit = _outfits.any(
+      (outfit) =>
+          outfit.id == outfitId &&
+          viewerId.isNotEmpty &&
+          outfit.ownerId == viewerId,
+    );
     final isFirstAuthorizedView =
-        viewerId.isNotEmpty && _countedOutfitViewIds.add(outfitId);
+        viewerId.isNotEmpty &&
+        !isOwnOutfit &&
+        _countedOutfitViewIds.add(outfitId);
     _recentOutfitIds.remove(outfitId);
     _recentOutfitIds.insert(0, outfitId);
     if (_recentOutfitIds.length > 24) {
@@ -2406,7 +3174,10 @@ class AppRepository extends ChangeNotifier {
       await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
       await _saveCountedOutfitViews();
     }
-    await _writeStringList(_recentOutfitIdsKey, _recentOutfitIds);
+    await _writeStringList(
+      _scopedStorageKey(_recentOutfitIdsKey),
+      _recentOutfitIds,
+    );
     notifyListeners();
 
     if (!_hasSupabase || viewerId.isEmpty) {
@@ -2442,11 +3213,29 @@ class AppRepository extends ChangeNotifier {
     final safeRemoteCount = remoteCount < 0 ? 0 : remoteCount;
     var changed = false;
     _outfits = _outfits.map((outfit) {
-      if (outfit.id != outfitId || safeRemoteCount <= outfit.viewsCount) {
+      if (outfit.id != outfitId || safeRemoteCount == outfit.viewsCount) {
         return outfit;
       }
       changed = true;
       return outfit.copyWith(viewsCount: safeRemoteCount);
+    }).toList();
+    if (!changed) return;
+    await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
+    notifyListeners();
+  }
+
+  Future<void> _applyAuthoritativeOutfitLikes(
+    String outfitId,
+    int remoteCount,
+  ) async {
+    final safeRemoteCount = remoteCount < 0 ? 0 : remoteCount;
+    var changed = false;
+    _outfits = _outfits.map((outfit) {
+      if (outfit.id != outfitId || outfit.likesCount == safeRemoteCount) {
+        return outfit;
+      }
+      changed = true;
+      return outfit.copyWith(likesCount: safeRemoteCount);
     }).toList();
     if (!changed) return;
     await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
@@ -2484,7 +3273,6 @@ class AppRepository extends ChangeNotifier {
       debugPrint('Recent outfit sync error: $e');
       return null;
     }
-    return null;
   }
 
   Future<void> hideProduct(String productId) async {
@@ -2494,21 +3282,125 @@ class AppRepository extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<bool> submitContentReport({
+    required String targetType,
+    required String targetId,
+    required String reason,
+    String details = '',
+  }) async {
+    final normalizedType = targetType.trim();
+    final normalizedTargetId = targetId.trim();
+    final normalizedReason = reason.trim();
+    if (normalizedTargetId.isEmpty || normalizedReason.isEmpty) return false;
+    if (!_hasSupabase) return true;
+    final user = await _ensureAuthSession(
+      message: 'Войдите в профиль, чтобы отправить жалобу',
+    );
+    if (user == null) return false;
+    try {
+      await _client.from('content_reports').insert({
+        'reporter_id': user.id,
+        'target_type': normalizedType,
+        'target_id': normalizedTargetId,
+        'reason': normalizedReason,
+        'details': details.trim(),
+      });
+      return true;
+    } on PostgrestException catch (e) {
+      // Repeated taps on an already open report are idempotent for the user.
+      if (e.code == '23505') return true;
+      debugPrint('Content report error: $e');
+      return false;
+    } catch (e) {
+      debugPrint('Content report error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> blockUser(String userId) async {
+    final blockedId = userId.trim();
+    if (blockedId.isEmpty || blockedId == currentUserId) return false;
+    if (_hasSupabase) {
+      final user = await _ensureAuthSession(
+        message: 'Войдите в профиль, чтобы заблокировать пользователя',
+      );
+      if (user == null) return false;
+    }
+
+    _blockedUserIds.add(blockedId);
+    await _saveBlockedUsers();
+    notifyListeners();
+
+    if (!_hasSupabase) return true;
+    try {
+      await _client.from('blocked_users').upsert({
+        'blocker_id': currentUserId,
+        'blocked_id': blockedId,
+      }, onConflict: 'blocker_id,blocked_id');
+      return true;
+    } catch (e) {
+      _blockedUserIds.remove(blockedId);
+      await _saveBlockedUsers();
+      notifyListeners();
+      debugPrint('Block user error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> unblockUser(String userId) async {
+    final blockedId = userId.trim();
+    if (blockedId.isEmpty) return false;
+    final existed = _blockedUserIds.remove(blockedId);
+    if (!existed) return true;
+    await _saveBlockedUsers();
+    notifyListeners();
+    if (!_hasSupabase || currentUserId.isEmpty) return true;
+    try {
+      await _client
+          .from('blocked_users')
+          .delete()
+          .eq('blocker_id', currentUserId)
+          .eq('blocked_id', blockedId);
+      return true;
+    } catch (e) {
+      _blockedUserIds.add(blockedId);
+      await _saveBlockedUsers();
+      notifyListeners();
+      debugPrint('Unblock user error: $e');
+      return false;
+    }
+  }
+
   Future<void> deleteProduct(String productId) async {
+    if (_hasSupabase) {
+      try {
+        final deleted = await _client
+            .from('products')
+            .delete()
+            .eq('id', productId)
+            .select('id');
+        if ((deleted as List<dynamic>).isEmpty) {
+          throw StateError('product_delete_not_permitted');
+        }
+      } catch (e) {
+        debugPrint('Product delete error: $e');
+        rethrow;
+      }
+    }
+
     _products.removeWhere((item) => item.id == productId);
     _favoriteProductIds.remove(productId);
     _recentProductIds.remove(productId);
     await _saveProducts();
-    await _saveStringSet(_favoriteProductIdsKey, _favoriteProductIds);
-    await _writeStringList(_recentProductIdsKey, _recentProductIds);
+    await _saveStringSet(
+      _scopedStorageKey(_favoriteProductIdsKey),
+      _favoriteProductIds,
+    );
+    await _writeStringList(
+      _scopedStorageKey(_recentProductIdsKey),
+      _recentProductIds,
+    );
     notifyListeners();
-
-    if (!_hasSupabase) return;
-    try {
-      await _client.from('products').delete().eq('id', productId);
-    } catch (e) {
-      debugPrint('Product delete error: $e');
-    }
   }
 
   // ─── Outfits ───
@@ -2522,32 +3414,38 @@ class AppRepository extends ChangeNotifier {
       ownerId: user?.id ?? currentUserId,
       authorName: _profile.name,
       authorHandle: _profile.handle,
+      authorAvatarUrl: _profile.avatarUrl,
       publishedAt: publishedAt,
     );
 
+    if (_hasSupabase) {
+      try {
+        await _client.from('outfits').insert({
+          'id': ownedOutfit.id,
+          'owner_id': ownedOutfit.ownerId,
+          'author_name': ownedOutfit.authorName,
+          'author_handle': ownedOutfit.authorHandle,
+          'author_avatar_url': ownedOutfit.authorAvatarUrl,
+          'photos': ownedOutfit.photos,
+          'items': ownedOutfit.items.map((i) => i.toJson()).toList(),
+          'preview_layout': {
+            'backgroundColor': ownedOutfit.previewBackgroundColor,
+            'items': ownedOutfit.layoutItems.map((i) => i.toJson()).toList(),
+          },
+          'created_at': publishedAt.toIso8601String(),
+        });
+      } catch (e) {
+        debugPrint('Outfit publish error: $e');
+        _authError = 'Не удалось опубликовать образ. Попробуйте ещё раз';
+        notifyListeners();
+        rethrow;
+      }
+    }
+
+    _outfits.removeWhere((item) => item.id == ownedOutfit.id);
     _outfits.insert(0, ownedOutfit);
     await _writeList(_outfitsKey, _outfits.map((item) => item.toJson()));
     notifyListeners();
-
-    if (!_hasSupabase) return;
-
-    try {
-      await _client.from('outfits').insert({
-        'id': ownedOutfit.id,
-        'owner_id': ownedOutfit.ownerId,
-        'author_name': ownedOutfit.authorName,
-        'author_handle': ownedOutfit.authorHandle,
-        'photos': ownedOutfit.photos,
-        'items': ownedOutfit.items.map((i) => i.toJson()).toList(),
-        'preview_layout': {
-          'backgroundColor': ownedOutfit.previewBackgroundColor,
-          'items': ownedOutfit.layoutItems.map((i) => i.toJson()).toList(),
-        },
-        'created_at': publishedAt.toIso8601String(),
-      });
-    } catch (e) {
-      debugPrint('Outfit publish error: $e');
-    }
   }
 
   // ─── Messages ───
@@ -2589,7 +3487,7 @@ class AppRepository extends ChangeNotifier {
         productImage: product.image,
       );
       _upsertLocalThread(updated);
-      await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+      await _saveThreadsLocal();
       await _saveThreadOrShowError(updated);
       notifyListeners();
       return updated;
@@ -2603,7 +3501,7 @@ class AppRepository extends ChangeNotifier {
             )
           : remoteExisting;
       _upsertLocalThread(thread);
-      await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+      await _saveThreadsLocal();
       if (imageOnly) {
         await _saveThreadOrShowError(thread);
       }
@@ -2612,9 +3510,14 @@ class AppRepository extends ChangeNotifier {
     }
 
     final now = DateTime.now();
-    final sellerName = product.sellerName.trim().isEmpty
-        ? 'Продавец'
-        : product.sellerName;
+    final publicSeller = await fetchSellerProfile(product);
+    final sellerName = publicSeller?.name.trim().isNotEmpty == true
+        ? publicSeller!.name
+        : (product.sellerName.trim().isEmpty ? 'Продавец' : product.sellerName);
+    final sellerHandle = publicSeller?.handle.trim().isNotEmpty == true
+        ? publicSeller!.handle
+        : product.sellerHandle;
+    final sellerAvatar = publicSeller?.avatarUrl.trim() ?? '';
     const firstMessage = 'Здравствуйте! Вещь ещё доступна?';
     _threads.removeWhere((thread) => thread.id == threadId);
     _threads.insert(
@@ -2623,9 +3526,10 @@ class AppRepository extends ChangeNotifier {
         id: threadId,
         sellerName: sellerName,
         buyerName: _profile.name,
-        sellerHandle: product.sellerHandle,
+        sellerHandle: sellerHandle,
         buyerHandle: _profile.handle,
         buyerAvatar: _currentAvatarUrl(),
+        sellerAvatar: sellerAvatar,
         productTitle: imageOnly ? '' : product.title,
         lastMessage: firstMessage,
         updatedAt: now,
@@ -2643,7 +3547,8 @@ class AppRepository extends ChangeNotifier {
           ConversationMember(
             id: sellerId,
             name: sellerName,
-            handle: product.sellerHandle,
+            handle: sellerHandle,
+            avatarUrl: sellerAvatar,
           ),
         ],
         unreadCount: 0,
@@ -2661,7 +3566,7 @@ class AppRepository extends ChangeNotifier {
       ),
     );
     _sortThreads();
-    await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+    await _saveThreadsLocal();
     final createdThread = threadById(threadId) ?? _threads.first;
     await _saveThreadOrShowError(
       createdThread,
@@ -2726,7 +3631,7 @@ class AppRepository extends ChangeNotifier {
     final remoteExisting = await _fetchThreadFromSupabase(threadId);
     if (remoteExisting != null) {
       _upsertLocalThread(remoteExisting);
-      await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+      await _saveThreadsLocal();
       notifyListeners();
       return remoteExisting;
     }
@@ -2760,7 +3665,7 @@ class AppRepository extends ChangeNotifier {
     _threads.removeWhere((item) => item.id == threadId);
     _threads.insert(0, thread);
     _sortThreads();
-    await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+    await _saveThreadsLocal();
     await _saveThreadOrShowError(thread);
     notifyListeners();
     return thread;
@@ -2833,7 +3738,7 @@ class AppRepository extends ChangeNotifier {
       messages: [systemMessage],
     );
     _upsertLocalThread(thread);
-    await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+    await _saveThreadsLocal();
     await _saveThreadOrShowError(thread, newMessages: [systemMessage]);
     notifyListeners();
     return thread;
@@ -2880,31 +3785,21 @@ class AppRepository extends ChangeNotifier {
         price: product.price,
         sellerHandle: product.sellerHandle,
       ),
+      isPending: _hasSupabase,
     );
-    _threads[index] = thread.copyWith(
-      lastMessage: message.text,
-      updatedAt: now,
-      messages: [...thread.messages, message],
-    );
-    _sortThreads();
-    await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
-    final updated = _threads.firstWhere((item) => item.id == threadId);
-    final saved = await _upsertThread(updated, newMessages: [message]);
-    if (saved) unawaited(_notifyMessageRecipient(updated, message));
-    notifyListeners();
-    return saved;
+    return _appendOutgoingMessage(thread, message);
   }
 
-  Future<void> sendMessage(String threadId, String text) async {
+  Future<bool> sendChatText(String threadId, String text) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
+    if (trimmed.isEmpty) return false;
 
     final user = _hasSupabase
         ? await _ensureAuthSession(
             message: 'Войдите в профиль, чтобы отправить сообщение',
           )
         : null;
-    if (_hasSupabase && user == null) return;
+    if (_hasSupabase && user == null) return false;
 
     if (_hasSupabase) {
       final remoteThread = await _fetchThreadFromSupabase(threadId);
@@ -2914,13 +3809,13 @@ class AppRepository extends ChangeNotifier {
     }
 
     final index = _threads.indexWhere((thread) => thread.id == threadId);
-    if (index == -1) return;
+    if (index == -1) return false;
 
     final now = DateTime.now();
     final thread = _threads[index];
     final senderId = user?.id ?? currentUserId;
     if (_hasSupabase && !thread.containsUser(senderId)) {
-      return;
+      return false;
     }
 
     final message = ChatMessage(
@@ -2931,22 +3826,14 @@ class AppRepository extends ChangeNotifier {
       senderId: senderId,
       senderName: _profile.name,
       senderAvatar: _currentAvatarUrl(),
+      isPending: _hasSupabase,
     );
 
-    _threads[index] = thread.copyWith(
-      lastMessage: trimmed,
-      updatedAt: now,
-      messages: [...thread.messages, message],
-      draft: '',
-    );
-    _sortThreads();
-    await _writeList(_threadsKey, _threads.map((item) => item.toJson()));
-    final updatedThread = _threads.firstWhere(
-      (thread) => thread.id == threadId,
-    );
-    await _saveThreadOrShowError(updatedThread, newMessages: [message]);
-    unawaited(_notifyMessageRecipient(updatedThread, message));
-    notifyListeners();
+    return _appendOutgoingMessage(thread, message);
+  }
+
+  Future<void> sendMessage(String threadId, String text) async {
+    await sendChatText(threadId, text);
   }
 
   Future<bool> sendReply(
@@ -2998,8 +3885,26 @@ class AppRepository extends ChangeNotifier {
     String caption = '',
     ChatMessage? replyTo,
   }) async {
+    return sendChatMedia(
+      threadId,
+      imageFile,
+      kind: ChatMediaKind.image,
+      caption: caption,
+      replyTo: replyTo,
+    );
+  }
+
+  Future<bool> sendChatMedia(
+    String threadId,
+    XFile mediaFile, {
+    required ChatMediaKind kind,
+    String caption = '',
+    ChatMessage? replyTo,
+  }) async {
     final actorId = await _resolveChatActor(
-      message: 'Войдите в профиль, чтобы отправить фотографию',
+      message: kind == ChatMediaKind.video
+          ? 'Войдите в профиль, чтобы отправить видео'
+          : 'Войдите в профиль, чтобы отправить фотографию',
     );
     if (actorId == null) return false;
 
@@ -3019,43 +3924,252 @@ class AppRepository extends ChangeNotifier {
       if (target == null) return false;
     }
 
-    final imageUrl =
-        await uploadImage(imageFile, folder: 'chat/$threadId') ??
-        await _inlineImage(imageFile);
-    if (imageUrl == null || imageUrl.isEmpty) return false;
+    final initialThread = thread;
+    ChatMessage? outgoingMessage;
+    return _chatMediaSendCoordinator.send(
+      ensureRemoteThread: () async {
+        final ready = await _upsertThread(initialThread);
+        if (!ready) {
+          _authError = 'Не удалось подготовить чат. Проверьте подключение.';
+          notifyListeners();
+        }
+        return ready;
+      },
+      upload: () => _uploadChatMedia(
+        threadId: threadId,
+        actorId: actorId,
+        mediaFile: mediaFile,
+        kind: kind,
+      ),
+      persist: (attachment) async {
+        // Auth or membership may have changed while a large file uploaded.
+        final latestThread = threadById(threadId);
+        if (latestThread == null ||
+            (_hasSupabase &&
+                (currentUserId != actorId ||
+                    !latestThread.containsUser(actorId)))) {
+          return false;
+        }
 
-    // The thread may have changed while the image was uploading.
-    thread = threadById(threadId);
-    if (thread == null) return false;
-    var imageSize = 0;
+        ChatMessage? latestReplyTarget;
+        if (target != null) {
+          for (final message in latestThread.messages) {
+            if (message.id == target.id && !message.isDeleted) {
+              latestReplyTarget = message;
+              break;
+            }
+          }
+          if (latestReplyTarget == null) return false;
+        }
+
+        final now = DateTime.now();
+        final message = ChatMessage(
+          id: _uuid.v4(),
+          text: caption.trim(),
+          createdAt: now,
+          isMine: true,
+          senderId: actorId,
+          senderName: _profile.name,
+          senderAvatar: _currentAvatarUrl(),
+          type: kind == ChatMediaKind.video ? 'video' : 'image',
+          attachment: attachment,
+          replyToId: latestReplyTarget?.id ?? '',
+          replyToText: latestReplyTarget?.previewText ?? '',
+          replyToSenderName: latestReplyTarget == null
+              ? ''
+              : _replySenderName(latestThread, latestReplyTarget),
+          isPending: _hasSupabase,
+        );
+        outgoingMessage = message;
+        return _appendOutgoingMessage(latestThread, message);
+      },
+      markFailed: (attachment) async {
+        final message = outgoingMessage;
+        if (message == null || (_hasSupabase && currentUserId != actorId)) {
+          return;
+        }
+        final localAttachment = _chatMediaSendCoordinator
+            .localFailureAttachment(attachment, localUrl: mediaFile.path);
+        await _markLocalOutgoingMessageFailed(
+          threadId,
+          message.copyWith(attachment: localAttachment),
+          actorId: actorId,
+        );
+      },
+      cleanup: (attachment) => _removeRemoteChatMedia(
+        attachment.bucket,
+        attachment.storagePath,
+        logContext: 'Failed chat media cleanup',
+      ),
+    );
+  }
+
+  Future<ChatAttachment?> _uploadChatMedia({
+    required String threadId,
+    required String actorId,
+    required XFile mediaFile,
+    required ChatMediaKind kind,
+  }) async {
+    int size;
     try {
-      imageSize = await imageFile.length();
+      size = await mediaFile.length();
     } catch (e) {
-      debugPrint('Chat image size read error: $e');
+      debugPrint('Chat media size read error: $e');
+      return null;
     }
 
-    final now = DateTime.now();
-    final message = ChatMessage(
-      id: _uuid.v4(),
-      text: caption.trim(),
-      createdAt: now,
-      isMine: true,
-      senderId: actorId,
-      senderName: _profile.name,
-      senderAvatar: _currentAvatarUrl(),
-      type: 'image',
-      attachment: ChatAttachment(
-        url: imageUrl,
-        name: imageFile.name,
-        mimeType: _mimeTypeForImage(imageFile.name, imageFile.path),
-        size: imageSize,
-      ),
-      replyToId: target?.id ?? '',
-      replyToText: target?.previewText ?? '',
-      replyToSenderName: target == null ? '' : _replySenderName(thread, target),
-      isPending: _hasSupabase,
+    final maxBytes = kind == ChatMediaKind.video
+        ? _maxChatVideoBytes
+        : _maxChatImageBytes;
+    if (size <= 0 || size > maxBytes) {
+      _authError = kind == ChatMediaKind.video
+          ? 'Видео должно быть не больше 100 МБ'
+          : 'Фотография должна быть не больше 20 МБ';
+      notifyListeners();
+      return null;
+    }
+
+    final mimeType = _mimeTypeForChatMedia(
+      mediaFile.name,
+      mediaFile.path,
+      kind,
     );
-    return _appendOutgoingMessage(thread, message);
+    if (mimeType == null) {
+      _authError = kind == ChatMediaKind.video
+          ? 'Поддерживаются MP4, MOV и WebM'
+          : 'Поддерживаются JPEG, PNG, WebP, GIF и HEIC';
+      notifyListeners();
+      return null;
+    }
+
+    if (!_hasSupabase) {
+      final localUrl = kind == ChatMediaKind.image
+          ? await _inlineImage(mediaFile)
+          : mediaFile.path;
+      if (localUrl == null || localUrl.isEmpty) return null;
+      return ChatAttachment(
+        url: localUrl,
+        name: mediaFile.name,
+        mimeType: mimeType,
+        size: size,
+      );
+    }
+
+    final extension = _chatMediaExtension(mediaFile.name, mediaFile.path, kind);
+    final storagePath = 'threads/$threadId/$actorId/${_uuid.v4()}$extension';
+    final storage = _client.storage.from(_chatMediaBucketName);
+    var uploadStarted = false;
+    try {
+      final options = FileOptions(
+        cacheControl: '3600',
+        upsert: false,
+        contentType: mimeType,
+      );
+      if (kIsWeb || mediaFile.path.isEmpty) {
+        uploadStarted = true;
+        await storage.uploadBinary(
+          storagePath,
+          await mediaFile.readAsBytes(),
+          fileOptions: options,
+        );
+      } else {
+        uploadStarted = true;
+        await storage.upload(
+          storagePath,
+          File(mediaFile.path),
+          fileOptions: options,
+        );
+      }
+      final signedUrl = await storage.createSignedUrl(
+        storagePath,
+        _chatMediaSignedUrlSeconds,
+      );
+      return ChatAttachment(
+        url: signedUrl,
+        name: mediaFile.name,
+        mimeType: mimeType,
+        size: size,
+        bucket: _chatMediaBucketName,
+        storagePath: storagePath,
+      );
+    } catch (e) {
+      debugPrint('Chat media upload error: $e');
+      if (uploadStarted) {
+        await _removeRemoteChatMedia(
+          _chatMediaBucketName,
+          storagePath,
+          logContext: 'Incomplete chat media upload cleanup',
+        );
+      }
+      _authError = 'Не удалось загрузить медиа. Проверьте подключение.';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<void> _removeRemoteChatMedia(
+    String bucket,
+    String storagePath, {
+    required String logContext,
+  }) async {
+    final cleanBucket = bucket.trim();
+    final cleanPath = storagePath.trim();
+    if (!_hasSupabase || cleanBucket.isEmpty || cleanPath.isEmpty) return;
+    _chatMediaUrlCache.invalidate(_chatMediaCacheKey(cleanBucket, cleanPath));
+    try {
+      await _client.storage.from(cleanBucket).remove([cleanPath]);
+    } catch (e) {
+      debugPrint('$logContext error: $e');
+    }
+  }
+
+  String _chatMediaExtension(
+    String name,
+    String fallbackPath,
+    ChatMediaKind kind,
+  ) {
+    final fromName = path.extension(name).toLowerCase();
+    if (fromName.isNotEmpty) return fromName;
+    final fromPath = path.extension(fallbackPath).toLowerCase();
+    if (fromPath.isNotEmpty) return fromPath;
+    return kind == ChatMediaKind.video ? '.mp4' : '.jpg';
+  }
+
+  String? _mimeTypeForChatMedia(
+    String name,
+    String fallbackPath,
+    ChatMediaKind kind,
+  ) {
+    final extension = _chatMediaExtension(name, fallbackPath, kind);
+    if (kind == ChatMediaKind.image) {
+      switch (extension) {
+        case '.jpg':
+        case '.jpeg':
+          return 'image/jpeg';
+        case '.png':
+          return 'image/png';
+        case '.webp':
+          return 'image/webp';
+        case '.gif':
+          return 'image/gif';
+        case '.heic':
+        case '.heif':
+          return 'image/heic';
+        default:
+          return null;
+      }
+    }
+    switch (extension) {
+      case '.mp4':
+      case '.m4v':
+        return 'video/mp4';
+      case '.mov':
+        return 'video/quicktime';
+      case '.webm':
+        return 'video/webm';
+      default:
+        return null;
+    }
   }
 
   Future<bool> toggleMessageReaction(
@@ -3084,8 +4198,9 @@ class AppRepository extends ChangeNotifier {
     }
 
     final reactionActor = actorId.isEmpty ? 'local-user' : actorId;
+    final originalMessage = thread.messages[messageIndex];
     final reactions = <String, List<String>>{
-      for (final entry in thread.messages[messageIndex].reactions.entries)
+      for (final entry in originalMessage.reactions.entries)
         entry.key: List<String>.from(entry.value),
     };
     final users = reactions.putIfAbsent(cleanEmoji, () => <String>[]);
@@ -3098,7 +4213,7 @@ class AppRepository extends ChangeNotifier {
 
     await _replaceLocalMessage(
       threadId,
-      thread.messages[messageIndex].copyWith(reactions: reactions),
+      originalMessage.copyWith(reactions: reactions),
     );
 
     if (_hasSupabase) {
@@ -3113,6 +4228,8 @@ class AppRepository extends ChangeNotifier {
         );
       } catch (e) {
         debugPrint('Message reaction sync error: $e');
+        await _replaceLocalMessage(threadId, originalMessage);
+        return false;
       }
     }
     return true;
@@ -3148,18 +4265,18 @@ class AppRepository extends ChangeNotifier {
 
     if (_hasSupabase) {
       try {
-        await _client
-            .from('chat_messages')
-            .update({
-              'text': trimmed,
-              'edited_at': editedAt.toUtc().toIso8601String(),
-            })
-            .eq('thread_id', threadId)
-            .eq('id', messageId)
-            .eq('sender_id', actorId);
-        await _syncLastMessagePreview(threadId);
+        await _client.rpc(
+          'edit_chat_message',
+          params: {
+            'p_thread_id': threadId,
+            'p_message_id': messageId,
+            'p_text': trimmed,
+          },
+        );
       } catch (e) {
         debugPrint('Message edit sync error: $e');
+        await _replaceLocalMessage(threadId, original, updateLastPreview: true);
+        return false;
       }
     }
     return true;
@@ -3198,22 +4315,22 @@ class AppRepository extends ChangeNotifier {
 
     if (_hasSupabase) {
       try {
-        await _client
-            .from('chat_messages')
-            .update({
-              'text': '',
-              'type': 'text',
-              'product': null,
-              'attachment': null,
-              'deleted_at': deletedAt.toUtc().toIso8601String(),
-              'reactions': const <String, List<String>>{},
-            })
-            .eq('thread_id', threadId)
-            .eq('id', messageId)
-            .eq('sender_id', actorId);
-        await _syncLastMessagePreview(threadId);
+        await _client.rpc(
+          'delete_chat_message',
+          params: {'p_thread_id': threadId, 'p_message_id': messageId},
+        );
       } catch (e) {
         debugPrint('Message delete sync error: $e');
+        await _replaceLocalMessage(threadId, original, updateLastPreview: true);
+        return false;
+      }
+      final attachment = original.attachment;
+      if (attachment?.hasRemoteObject == true) {
+        await _removeRemoteChatMedia(
+          attachment!.bucket,
+          attachment.storagePath,
+          logContext: 'Deleted chat media cleanup',
+        );
       }
     }
     return true;
@@ -3232,32 +4349,40 @@ class AppRepository extends ChangeNotifier {
     if (thread == null || (_hasSupabase && !thread.containsUser(actorId))) {
       return false;
     }
+    final cleanTitle = title?.trim();
+    if (_hasSupabase &&
+        cleanTitle != null &&
+        (!thread.isGroup || thread.createdBy != actorId)) {
+      return false;
+    }
 
     final updated = thread.copyWith(
       isPinned: isPinned,
       isMuted: isMuted,
       isArchived: isArchived,
-      title: title?.trim(),
+      title: cleanTitle,
     );
     _upsertLocalThread(updated);
     await _saveThreadsLocal();
     notifyListeners();
 
     if (_hasSupabase) {
-      final payload = <String, dynamic>{
-        'is_pinned': ?isPinned,
-        'is_muted': ?isMuted,
-        'is_archived': ?isArchived,
-        if (title != null) 'title': title.trim(),
+      final params = <String, dynamic>{
+        'p_thread_id': threadId,
+        'p_is_pinned': ?isPinned,
+        'p_is_muted': ?isMuted,
+        'p_is_archived': ?isArchived,
+        'p_title': ?cleanTitle,
       };
-      if (payload.isNotEmpty) {
+      if (params.length > 1) {
         try {
-          await _client
-              .from('message_threads')
-              .update(payload)
-              .eq('id', threadId);
+          await _client.rpc('update_chat_thread_settings', params: params);
         } catch (e) {
           debugPrint('Thread preferences sync error: $e');
+          _upsertLocalThread(thread);
+          await _saveThreadsLocal();
+          notifyListeners();
+          return false;
         }
       }
     }
@@ -3274,10 +4399,10 @@ class AppRepository extends ChangeNotifier {
 
     if (!_hasSupabase || currentUserId.isEmpty) return;
     try {
-      await _client
-          .from('message_threads')
-          .update({'draft': draft})
-          .eq('id', threadId);
+      await _client.rpc(
+        'update_chat_thread_settings',
+        params: {'p_thread_id': threadId, 'p_draft': draft},
+      );
     } catch (e) {
       debugPrint('Thread draft sync error: $e');
     }
@@ -3388,21 +4513,38 @@ class AppRepository extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _syncLastMessagePreview(String threadId) async {
-    final thread = threadById(threadId);
-    if (thread == null || thread.messages.isEmpty) return;
-    try {
-      await _client
-          .from('message_threads')
-          .update({'last_message': thread.messages.last.previewText})
-          .eq('id', threadId);
-    } catch (e) {
-      debugPrint('Thread preview sync error: $e');
-    }
-  }
+  Future<void> _markLocalOutgoingMessageFailed(
+    String threadId,
+    ChatMessage message, {
+    required String actorId,
+  }) async {
+    if (_hasSupabase && currentUserId != actorId) return;
+    final threadIndex = _threads.indexWhere((thread) => thread.id == threadId);
+    if (threadIndex == -1) return;
+    final thread = _threads[threadIndex];
+    if (_hasSupabase && !thread.containsUser(actorId)) return;
 
-  Future<void> _saveThreadsLocal() {
-    return _writeList(_threadsKey, _threads.map((item) => item.toJson()));
+    final failed = message.copyWith(isPending: false, hasError: true);
+    final messages = List<ChatMessage>.from(thread.messages);
+    final messageIndex = messages.indexWhere((item) => item.id == failed.id);
+    if (messageIndex == -1) {
+      messages.add(failed);
+    } else {
+      messages[messageIndex] = failed;
+    }
+    final isLatest = messages.isNotEmpty && messages.last.id == failed.id;
+    _threads[threadIndex] = thread.copyWith(
+      messages: messages,
+      lastMessage: isLatest ? failed.previewText : thread.lastMessage,
+      updatedAt: isLatest ? failed.createdAt : thread.updatedAt,
+    );
+    _sortThreads();
+    notifyListeners();
+    try {
+      await _saveThreadsLocal();
+    } catch (e) {
+      debugPrint('Failed chat message local save error: $e');
+    }
   }
 
   Future<void> _notifyMessageRecipient(
@@ -3445,7 +4587,9 @@ class AppRepository extends ChangeNotifier {
         rows.first as Map<String, dynamic>,
         currentUserId: currentUserId,
       );
-      final hydrated = await _hydrateThreadMessages([thread]);
+      var hydrated = await _hydrateThreadProfiles([thread]);
+      hydrated = await _hydrateThreadMemberState(hydrated);
+      hydrated = await _hydrateThreadMessages(hydrated);
       return hydrated.first;
     } catch (e) {
       debugPrint('Thread fetch error: $e');
@@ -3469,8 +4613,17 @@ class AppRepository extends ChangeNotifier {
     if (!_hasSupabase) return true;
 
     try {
-      final payload = thread.toSupabaseJson()..remove('messages');
-      await _client.from('message_threads').upsert(payload, onConflict: 'id');
+      final payload = thread.toSupabaseJson()
+        ..remove('messages')
+        ..remove('is_pinned')
+        ..remove('is_muted')
+        ..remove('is_archived')
+        ..remove('draft')
+        ..remove('last_read_at')
+        ..remove('unread_count');
+      await _client
+          .from('message_threads')
+          .upsert(payload, onConflict: 'id', ignoreDuplicates: true);
       if (newMessages.isNotEmpty) {
         await _client
             .from('chat_messages')
@@ -3484,6 +4637,7 @@ class AppRepository extends ChangeNotifier {
                   )
                   .toList(),
               onConflict: 'id',
+              ignoreDuplicates: true,
             );
       }
       return true;
@@ -3538,6 +4692,120 @@ class AppRepository extends ChangeNotifier {
 
   // ─── Helpers ───
 
+  String _scopedStorageKey(String baseKey, [String? userId]) {
+    return userScopedStorageKey(baseKey, userId ?? currentUserId);
+  }
+
+  Future<void> _migrateLegacyUserStorage() async {
+    if (_prefs.getBool(_scopedStorageMigrationKey) ?? false) return;
+    for (final key in _scopedUserStorageKeys) {
+      final value = _prefs.getString(key);
+      if (value != null && !_prefs.containsKey(_scopedStorageKey(key))) {
+        await _prefs.setString(_scopedStorageKey(key), value);
+      }
+      await _prefs.remove(key);
+    }
+
+    final favoriteProductsKey = _scopedStorageKey(_favoriteProductIdsKey);
+    if (!_prefs.containsKey(favoriteProductsKey)) {
+      await _writeStringList(
+        favoriteProductsKey,
+        _products.where((item) => item.isLiked).map((item) => item.id),
+      );
+    }
+    final favoriteOutfitsKey = _scopedStorageKey(_favoriteOutfitIdsKey);
+    if (!_prefs.containsKey(favoriteOutfitsKey)) {
+      await _writeStringList(
+        favoriteOutfitsKey,
+        _outfits.where((item) => item.isLiked).map((item) => item.id),
+      );
+    }
+    await _prefs.setBool(_scopedStorageMigrationKey, true);
+  }
+
+  Future<void> _clearScopedUserStorage(String userId) async {
+    for (final key in _scopedUserStorageKeys) {
+      await _prefs.remove(_scopedStorageKey(key, userId));
+    }
+    final checkoutSuffix = ':${userId.trim()}';
+    final attemptKeys = _prefs
+        .getKeys()
+        .where(
+          (key) =>
+              key.startsWith('$_checkoutAttemptKeyPrefix:') &&
+              key.endsWith(checkoutSuffix),
+        )
+        .toList(growable: false);
+    for (final key in attemptKeys) {
+      await _prefs.remove(key);
+    }
+  }
+
+  void _loadLocalUserState() {
+    _threads = _readList(
+      _scopedStorageKey(_threadsKey),
+      MessageThread.fromJson,
+    );
+    _notifications = _readList(
+      _scopedStorageKey(_notificationsKey),
+      ProfileNotification.fromJson,
+    ).where((notification) => notification.kind != 'message').toList();
+    _orders = _readList(_scopedStorageKey(_ordersKey), AppOrder.fromJson);
+    _sellerReviews = _readList(
+      _scopedStorageKey(_sellerReviewsKey),
+      SellerReview.fromJson,
+    );
+
+    _notificationPreferences = const NotificationPreferences();
+    final notificationPreferencesJson = _prefs.getString(
+      _scopedStorageKey(_notificationPreferencesKey),
+    );
+    if (notificationPreferencesJson != null) {
+      _notificationPreferences = NotificationPreferences.fromJson(
+        jsonDecode(notificationPreferencesJson) as Map<String, dynamic>,
+      );
+    }
+
+    _deliveryProfile = const DeliveryProfile();
+    final deliveryProfileJson = _prefs.getString(
+      _scopedStorageKey(_deliveryProfileKey),
+    );
+    if (deliveryProfileJson != null) {
+      _deliveryProfile = DeliveryProfile.fromJson(
+        jsonDecode(deliveryProfileJson) as Map<String, dynamic>,
+      );
+    }
+
+    _favoriteProductIds = _readStringSet(
+      _scopedStorageKey(_favoriteProductIdsKey),
+    );
+    _favoriteOutfitIds = _readStringSet(
+      _scopedStorageKey(_favoriteOutfitIdsKey),
+    );
+    _recentProductIds = _readStringList(
+      _scopedStorageKey(_recentProductIdsKey),
+    );
+    _recentOutfitIds = _readStringList(_scopedStorageKey(_recentOutfitIdsKey));
+    _applyProductFavoriteState();
+    _applyOutfitFavoriteState();
+
+    _profile = const AppProfile(
+      name: 'Ваш профиль',
+      handle: '@seller',
+      city: 'Москва',
+      rating: 4.8,
+      salesCount: 0,
+      followersCount: 0,
+    );
+    final profileJson = _prefs.getString(_scopedStorageKey(_profileKey));
+    if (profileJson != null) {
+      _profile = AppProfile.fromJson(
+        jsonDecode(profileJson) as Map<String, dynamic>,
+      );
+    }
+    _sortThreads();
+  }
+
   List<T> _readList<T>(
     String key,
     T Function(Map<String, dynamic> json) fromJson,
@@ -3571,11 +4839,30 @@ class AppRepository extends ChangeNotifier {
 
   Future<void> _saveCollectionState() async {
     await Future.wait([
-      _saveStringSet(_favoriteProductIdsKey, _favoriteProductIds),
-      _saveStringSet(_favoriteOutfitIdsKey, _favoriteOutfitIds),
-      _writeStringList(_recentProductIdsKey, _recentProductIds),
-      _writeStringList(_recentOutfitIdsKey, _recentOutfitIds),
+      _saveStringSet(
+        _scopedStorageKey(_favoriteProductIdsKey),
+        _favoriteProductIds,
+      ),
+      _saveStringSet(
+        _scopedStorageKey(_favoriteOutfitIdsKey),
+        _favoriteOutfitIds,
+      ),
+      _writeStringList(
+        _scopedStorageKey(_recentProductIdsKey),
+        _recentProductIds,
+      ),
+      _writeStringList(
+        _scopedStorageKey(_recentOutfitIdsKey),
+        _recentOutfitIds,
+      ),
     ]);
+  }
+
+  Future<void> _saveThreadsLocal() {
+    return _writeList(
+      _scopedStorageKey(_threadsKey),
+      _threads.map((item) => item.toJson()),
+    );
   }
 
   Future<void> _saveProducts() {
@@ -3584,25 +4871,28 @@ class AppRepository extends ChangeNotifier {
 
   Future<void> _saveNotificationsLocal() {
     return _writeList(
-      _notificationsKey,
+      _scopedStorageKey(_notificationsKey),
       _notifications.map((item) => item.toJson()),
     );
   }
 
   Future<void> _saveOrdersLocal() {
-    return _writeList(_ordersKey, _orders.map((item) => item.toJson()));
+    return _writeList(
+      _scopedStorageKey(_ordersKey),
+      _orders.map((item) => item.toJson()),
+    );
   }
 
   Future<void> _saveSellerReviewsLocal() {
     return _writeList(
-      _sellerReviewsKey,
+      _scopedStorageKey(_sellerReviewsKey),
       _sellerReviews.map((item) => item.toJson()),
     );
   }
 
   Future<void> _saveNotificationPreferencesLocal() {
     return _prefs.setString(
-      _notificationPreferencesKey,
+      _scopedStorageKey(_notificationPreferencesKey),
       jsonEncode(_notificationPreferences.toJson()),
     );
   }
@@ -3617,7 +4907,10 @@ class AppRepository extends ChangeNotifier {
         reviews.length;
     if (sellerId == currentUserId) {
       _profile = _profile.copyWith(rating: rating, salesCount: reviews.length);
-      await _prefs.setString(_profileKey, jsonEncode(_profile.toJson()));
+      await _prefs.setString(
+        _scopedStorageKey(_profileKey),
+        jsonEncode(_profile.toJson()),
+      );
     }
   }
 
@@ -3646,7 +4939,7 @@ class AppRepository extends ChangeNotifier {
 
   Future<void> _saveDeliveryProfileLocal() {
     return _prefs.setString(
-      _deliveryProfileKey,
+      _scopedStorageKey(_deliveryProfileKey),
       jsonEncode(_deliveryProfile.toJson()),
     );
   }
@@ -3725,9 +5018,29 @@ class AppRepository extends ChangeNotifier {
     );
   }
 
+  void _activateBlockedUserIdentity(String userId) {
+    if (_blockedUsersUserId == userId) return;
+    _blockedUsersUserId = userId;
+    _blockedUserIds = userId.isEmpty
+        ? <String>{}
+        : _readStringSet('${_blockedUserIdsKeyPrefix}_$userId');
+  }
+
+  Future<void> _saveBlockedUsers() {
+    final userId = _blockedUsersUserId;
+    if (userId.isEmpty) return Future<void>.value();
+    return _saveStringSet(
+      '${_blockedUserIdsKeyPrefix}_$userId',
+      _blockedUserIds,
+    );
+  }
+
   @override
   void dispose() {
     _syncTimer?.cancel();
+    _chatMediaUrlCache.clear();
+    _chatThreadSync.dispose();
+    _messageSubscriptionGeneration++;
     _authSubscription?.cancel();
     _pushTokenSubscription?.cancel();
     final messagesChannel = _messagesChannel;

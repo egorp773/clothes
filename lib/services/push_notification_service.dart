@@ -471,10 +471,9 @@ class PushNotificationService {
   }) {
     return jsonEncode(<String, dynamic>{
       ...message.data,
-      if (_nonEmptyString(message.messageId) case final messageId?)
-        _messageIdPayloadKey: messageId,
-      if (title != null) _titlePayloadKey: title,
-      if (body != null) _bodyPayloadKey: body,
+      _messageIdPayloadKey: ?_nonEmptyString(message.messageId),
+      _titlePayloadKey: ?title,
+      _bodyPayloadKey: ?body,
     });
   }
 

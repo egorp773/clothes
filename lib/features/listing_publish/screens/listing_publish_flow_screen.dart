@@ -59,6 +59,9 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
   late final bool _ownsController;
   String? _shownError;
   bool _completionSent = false;
+  Product? _publishedProduct;
+  bool _isCompletingPublication = false;
+  String? _completionError;
 
   @override
   void initState() {
@@ -227,17 +230,45 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
         try {
           final product = await _controller.publish();
           if (!mounted) return;
+          _publishedProduct = product;
           setState(() {});
           await Future<void>.delayed(const Duration(milliseconds: 900));
-          if (mounted && !_completionSent) {
-            _completionSent = true;
-            await widget.onPublished(product);
-          }
+          if (mounted) await _completePublication();
         } on ListingPublishException catch (error) {
           if (mounted) _showValidation(error.userMessage);
         }
       case ListingPublishStep.success:
         return;
+    }
+  }
+
+  Future<void> _completePublication() async {
+    final product = _publishedProduct;
+    if (product == null ||
+        _completionSent ||
+        _isCompletingPublication ||
+        !mounted) {
+      return;
+    }
+    setState(() {
+      _isCompletingPublication = true;
+      _completionError = null;
+    });
+    try {
+      await widget.onPublished(product);
+      if (!mounted) return;
+      setState(() {
+        _completionSent = true;
+        _isCompletingPublication = false;
+      });
+    } catch (error, stackTrace) {
+      debugPrint('Published listing handoff error: $error\n$stackTrace');
+      if (!mounted) return;
+      setState(() {
+        _isCompletingPublication = false;
+        _completionError =
+            'Объявление уже опубликовано, но карточку не удалось открыть.';
+      });
     }
   }
 
@@ -367,19 +398,36 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
                 ),
               ),
               const SizedBox(height: 8),
-              const SizedBox(
+              SizedBox(
                 width: double.infinity,
                 child: Text(
-                  'Открываем карточку вещи',
+                  _completionError ??
+                      (_completionSent ? 'Готово' : 'Открываем карточку вещи'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, color: Color(0xFF8F8F94)),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF8F8F94),
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
-              const CircularProgressIndicator(
-                strokeWidth: 2,
-                color: Colors.black,
-              ),
+              if (_completionError != null)
+                FilledButton(
+                  key: const Key('listing-completion-retry'),
+                  onPressed: _isCompletingPublication
+                      ? null
+                      : _completePublication,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('ОТКРЫТЬ КАРТОЧКУ'),
+                )
+              else if (!_completionSent)
+                const CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.black,
+                ),
             ],
           ),
         ),

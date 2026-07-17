@@ -40,6 +40,11 @@ type PushToken = {
   token: string;
 };
 
+type ThreadMemberState = {
+  user_id: string;
+  is_muted: boolean | null;
+};
+
 type FcmSendResult = {
   ok: boolean;
   status: number;
@@ -131,12 +136,20 @@ Deno.serve(async (req) => {
     return json({ sent: 0, skipped: "empty_recipient" });
   }
 
-  const title = message.sender_name?.trim() ||
-    (senderId === thread.buyer_id ? thread.buyer_name : thread.seller_name) ||
-    "Новое сообщение";
-  const body = message.type === "product"
+  const title = truncateNotificationText(
+    message.sender_name?.trim() ||
+      (senderId === thread.buyer_id ? thread.buyer_name : thread.seller_name) ||
+      "Новое сообщение",
+    80,
+  );
+  const rawBody = message.type === "product"
     ? `Объявление: ${message.product?.title ?? "товар"}`
+    : message.type === "image"
+    ? message.text?.trim() || "Фотография"
+    : message.type === "video"
+    ? message.text?.trim() || "Видео"
     : message.text?.trim() || "Новое сообщение";
+  const body = truncateNotificationText(rawBody, 180);
 
   const { data: settingsRows, error: settingsError } = await serviceClient
     .from("notification_settings")
@@ -147,6 +160,24 @@ Deno.serve(async (req) => {
     };
 
   if (settingsError) return json({ error: settingsError.message }, 500);
+
+  const { data: threadStateRows, error: threadStateError } = await serviceClient
+    .from("chat_thread_member_state")
+    .select("user_id,is_muted")
+    .eq("thread_id", threadId)
+    .in("user_id", recipientIds) as {
+      data: ThreadMemberState[] | null;
+      error: { message: string } | null;
+    };
+
+  if (threadStateError) {
+    return json({ error: threadStateError.message }, 500);
+  }
+  const mutedRecipientIds = new Set(
+    (threadStateRows ?? [])
+      .filter((state) => state.is_muted === true)
+      .map((state) => state.user_id),
+  );
 
   const settingsByUser = new Map(
     (settingsRows ?? []).map((settings) => [settings.user_id, settings]),
@@ -162,14 +193,17 @@ Deno.serve(async (req) => {
     };
   });
   const pushRecipients = recipients.filter(
-    (item) => item.messagesEnabled && item.pushEnabled,
+    (item) =>
+      item.messagesEnabled &&
+      item.pushEnabled &&
+      !mutedRecipientIds.has(item.userId),
   );
 
   if (pushRecipients.length === 0) {
     return json({
       sent: 0,
       total: 0,
-      skipped: "messages_or_push_disabled",
+      skipped: "messages_push_disabled_or_thread_muted",
     });
   }
 
@@ -468,6 +502,12 @@ function isUnregisteredFcmToken(responseText: string): boolean {
   } catch {
     return false;
   }
+}
+
+function truncateNotificationText(value: string, maxCharacters: number) {
+  const characters = Array.from(value.trim());
+  if (characters.length <= maxCharacters) return characters.join("");
+  return `${characters.slice(0, Math.max(1, maxCharacters - 1)).join("")}…`;
 }
 
 function pemToArrayBuffer(pem: string): ArrayBuffer {

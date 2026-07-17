@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:clothes/features/listing_publish/data/listing_publish_repository.dart';
 import 'package:clothes/features/listing_publish/data/listing_catalogs.dart';
 import 'package:clothes/features/listing_publish/listing_publish_controller.dart';
@@ -456,6 +458,86 @@ void main() {
       expect(results[0].id, results[1].id);
       controller.dispose();
     });
+
+    test(
+      'unexpected publish failure is explained and can be retried',
+      () async {
+        final repository = _RetryingPublishRepository();
+        final controller = ListingPublishController(
+          repository: repository,
+          analyzer: _FakeAnalyzer(),
+          sellerName: 'Seller',
+          sellerHandle: '@seller',
+        )..draft = _validDraft();
+
+        await expectLater(
+          controller.publish(),
+          throwsA(
+            isA<ListingPublishException>().having(
+              (error) => error.userMessage,
+              'userMessage',
+              'Не удалось опубликовать объявление. Черновик сохранён',
+            ),
+          ),
+        );
+        expect(controller.isPublishing, isFalse);
+        expect(controller.transientError, contains('Черновик сохранён'));
+
+        final product = await controller.publish();
+        expect(product.id, controller.draft.id);
+        expect(repository.publishCalls, 2);
+        controller.dispose();
+      },
+    );
+
+    test(
+      'removing an uploading photo cleans up a late remote upload',
+      () async {
+        final repository = _DelayedUploadRepository();
+        final controller = ListingPublishController(
+          repository: repository,
+          analyzer: _FakeAnalyzer(),
+          sellerName: 'Seller',
+          sellerHandle: '@seller',
+        );
+        final photo = ListingPhoto(id: 'photo', localPath: '/tmp/photo.jpg');
+        controller.draft = ListingDraft.empty(sellerId: 'seller')
+          ..photos.add(photo);
+
+        final upload = controller.retryPhotoUpload(photo);
+        await repository.uploadStarted.future;
+        await controller.removePhoto(photo);
+        repository.finishUpload.complete();
+        await upload;
+
+        expect(controller.draft.photos, isEmpty);
+        expect(repository.remoteDeletionCalls, 1);
+        controller.dispose();
+      },
+    );
+
+    test('offline photo upload becomes retryable and succeeds later', () async {
+      final repository = _RetryUploadRepository();
+      final controller = ListingPublishController(
+        repository: repository,
+        analyzer: _FakeAnalyzer(),
+        sellerName: 'Seller',
+        sellerHandle: '@seller',
+      );
+      final photo = ListingPhoto(id: 'photo', localPath: '/tmp/photo.jpg');
+      controller.draft = ListingDraft.empty(sellerId: 'seller')
+        ..photos.add(photo);
+
+      await controller.retryPhotoUpload(photo);
+      expect(photo.uploadStatus, ListingPhotoUploadStatus.failed);
+      expect(controller.transientError, contains('восстановлении сети'));
+
+      await controller.retryPhotoUpload(photo);
+      expect(photo.uploadStatus, ListingPhotoUploadStatus.uploaded);
+      expect(photo.remoteUrl, 'https://example.com/photo.jpg');
+      expect(repository.uploadCalls, 2);
+      controller.dispose();
+    });
   });
 }
 
@@ -612,5 +694,62 @@ class _FakeRepository extends ListingPublishRepository {
     publishCalls += 1;
     await Future<void>.delayed(const Duration(milliseconds: 10));
     draft.status = ListingStatus.published;
+  }
+}
+
+class _RetryingPublishRepository extends _FakeRepository {
+  var _shouldFail = true;
+
+  @override
+  Future<void> publish(ListingDraft draft) async {
+    publishCalls += 1;
+    if (_shouldFail) {
+      _shouldFail = false;
+      throw StateError('network disconnected');
+    }
+    draft.status = ListingStatus.published;
+  }
+}
+
+class _DelayedUploadRepository extends _FakeRepository {
+  final uploadStarted = Completer<void>();
+  final finishUpload = Completer<void>();
+  int remoteDeletionCalls = 0;
+
+  @override
+  Future<void> ensureRemoteDraft(ListingDraft draft) async {}
+
+  @override
+  Future<bool> uploadPhoto(ListingDraft draft, ListingPhoto photo) async {
+    if (!uploadStarted.isCompleted) uploadStarted.complete();
+    await finishUpload.future;
+    photo
+      ..remoteUrl = 'https://example.com/${photo.id}.jpg'
+      ..storagePath = 'users/seller/listings/${draft.id}/${photo.id}.jpg'
+      ..uploadStatus = ListingPhotoUploadStatus.uploaded;
+    return true;
+  }
+
+  @override
+  Future<void> deletePhoto(ListingDraft draft, ListingPhoto photo) async {
+    if (photo.remoteUrl.isNotEmpty) remoteDeletionCalls += 1;
+  }
+}
+
+class _RetryUploadRepository extends _FakeRepository {
+  int uploadCalls = 0;
+
+  @override
+  Future<void> ensureRemoteDraft(ListingDraft draft) async {}
+
+  @override
+  Future<bool> uploadPhoto(ListingDraft draft, ListingPhoto photo) async {
+    uploadCalls += 1;
+    if (uploadCalls == 1) return false;
+    photo
+      ..remoteUrl = 'https://example.com/photo.jpg'
+      ..storagePath = 'users/seller/listings/${draft.id}/photo.jpg'
+      ..uploadStatus = ListingPhotoUploadStatus.uploaded;
+    return true;
   }
 }

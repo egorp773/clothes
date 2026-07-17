@@ -302,6 +302,65 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     controller.dispose();
   });
+
+  testWidgets('published listing handoff can retry without republishing', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final repository = _FlowRepository();
+    final controller = ListingPublishController(
+      repository: repository,
+      analyzer: _UnusedAnalyzer(),
+      sellerName: 'Seller',
+      sellerHandle: '@seller',
+    );
+    var completionCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ListingPublishFlowScreen(
+          sidePadding: 18,
+          sellerName: 'Seller',
+          sellerHandle: '@seller',
+          initialCity: 'Москва',
+          onClose: () {},
+          onPublished: (_) async {
+            completionCalls += 1;
+            if (completionCalls == 1) throw StateError('handoff failed');
+          },
+          controller: controller,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    controller.draft = _readyToPublishDraft()
+      ..currentStep = ListingPublishStep.preview;
+    controller.goToStep(ListingPublishStep.preview);
+    await tester.pump();
+
+    await tester.tap(find.text('Опубликовать'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+
+    expect(repository.publishCalls, 1);
+    expect(completionCalls, 1);
+    expect(
+      find.text('Объявление уже опубликовано, но карточку не удалось открыть.'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('listing-completion-retry')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('listing-completion-retry')));
+    await tester.pumpAndSettle();
+
+    expect(repository.publishCalls, 1);
+    expect(completionCalls, 2);
+    expect(find.text('Готово'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
 }
 
 class _UnusedAnalyzer implements ProductImageAnalyzer {
@@ -315,4 +374,64 @@ class _UnusedAnalyzer implements ProductImageAnalyzer {
 
   @override
   Future<ProductAnalysisResult?> getAnalysis(String analysisId) async => null;
+}
+
+ListingDraft _readyToPublishDraft() {
+  final draft = ListingDraft.empty(sellerId: 'seller')
+    ..title = 'Худи'
+    ..price = 4500
+    ..size = 'm'
+    ..condition = 'excellent'
+    ..section = 'unisex'
+    ..category = 'clothing'
+    ..subcategory = 'tops'
+    ..itemType = 'hoodie'
+    ..normalizedCategory = 'hoodie'
+    ..gender = 'unisex'
+    ..primaryColor = 'black'
+    ..brand = 'no_brand'
+    ..defectsReviewed = true
+    ..city = 'Москва'
+    ..shippingAddress = 'Тверская, 1';
+  draft.deliveryMethods.add('cdek');
+  draft.photos.add(
+    ListingPhoto(
+      id: 'photo',
+      localPath: '/tmp/photo.jpg',
+      remoteUrl: 'https://example.com/photo.jpg',
+      storagePath: 'users/seller/listings/id/photo.jpg',
+      uploadStatus: ListingPhotoUploadStatus.uploaded,
+    ),
+  );
+  draft.mainPhotoId = 'photo';
+  return draft;
+}
+
+class _FlowRepository extends ListingPublishRepository {
+  _FlowRepository()
+    : super(sellerName: 'Seller', sellerHandle: '@seller', fallbackCity: '');
+
+  int publishCalls = 0;
+
+  @override
+  String get sellerId => 'seller';
+
+  @override
+  Future<ListingDeliveryDefaults> loadDeliveryDefaults() async =>
+      const ListingDeliveryDefaults();
+
+  @override
+  Future<List<ListingDraft>> loadLocalDrafts() async => const [];
+
+  @override
+  Future<void> saveLocalDraft(ListingDraft draft) async {}
+
+  @override
+  Future<void> syncRemoteDraft(ListingDraft draft) async {}
+
+  @override
+  Future<void> publish(ListingDraft draft) async {
+    publishCalls += 1;
+    draft.status = ListingStatus.published;
+  }
 }

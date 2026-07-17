@@ -106,6 +106,7 @@ class CreatedOutfit {
     this.ownerId = '',
     this.authorName = 'Автор',
     this.authorHandle = '@user',
+    this.authorAvatarUrl = '',
     this.previewBackgroundColor,
     this.layoutItems = const [],
     this.isLiked = false,
@@ -120,6 +121,7 @@ class CreatedOutfit {
   final String ownerId;
   final String authorName;
   final String authorHandle;
+  final String authorAvatarUrl;
   final int? previewBackgroundColor;
   final List<OutfitLayoutItem> layoutItems;
   final bool isLiked;
@@ -137,6 +139,7 @@ class CreatedOutfit {
       ownerId: json['ownerId'] as String? ?? '',
       authorName: json['authorName'] as String? ?? 'Автор',
       authorHandle: json['authorHandle'] as String? ?? '@user',
+      authorAvatarUrl: json['authorAvatarUrl'] as String? ?? '',
       previewBackgroundColor: (json['previewBackgroundColor'] as num?)?.toInt(),
       layoutItems:
           (json['layoutItems'] as List<dynamic>?)
@@ -166,6 +169,7 @@ class CreatedOutfit {
       ownerId: json['owner_id'] as String? ?? '',
       authorName: json['author_name'] as String? ?? 'Автор',
       authorHandle: json['author_handle'] as String? ?? '@user',
+      authorAvatarUrl: json['author_avatar_url'] as String? ?? '',
       previewBackgroundColor: (previewJson?['backgroundColor'] as num?)
           ?.toInt(),
       layoutItems:
@@ -191,6 +195,7 @@ class CreatedOutfit {
       'ownerId': ownerId,
       'authorName': authorName,
       'authorHandle': authorHandle,
+      'authorAvatarUrl': authorAvatarUrl,
       'previewBackgroundColor': previewBackgroundColor,
       'layoutItems': layoutItems.map((item) => item.toJson()).toList(),
       'isLiked': isLiked,
@@ -207,6 +212,7 @@ class CreatedOutfit {
     String? ownerId,
     String? authorName,
     String? authorHandle,
+    String? authorAvatarUrl,
     int? previewBackgroundColor,
     List<OutfitLayoutItem>? layoutItems,
     bool? isLiked,
@@ -221,6 +227,7 @@ class CreatedOutfit {
       ownerId: ownerId ?? this.ownerId,
       authorName: authorName ?? this.authorName,
       authorHandle: authorHandle ?? this.authorHandle,
+      authorAvatarUrl: authorAvatarUrl ?? this.authorAvatarUrl,
       previewBackgroundColor:
           previewBackgroundColor ?? this.previewBackgroundColor,
       layoutItems: layoutItems ?? this.layoutItems,

@@ -213,6 +213,10 @@ class DeliveryProfile {
     this.email = '',
     this.city = '',
     this.address = '',
+    this.pickupProvider = '',
+    this.pickupPointId = '',
+    this.pickupPointName = '',
+    this.pickupPointAddress = '',
   });
 
   final String fullName;
@@ -220,6 +224,10 @@ class DeliveryProfile {
   final String email;
   final String city;
   final String address;
+  final String pickupProvider;
+  final String pickupPointId;
+  final String pickupPointName;
+  final String pickupPointAddress;
 
   factory DeliveryProfile.fromJson(Map<String, dynamic> json) {
     return DeliveryProfile(
@@ -229,6 +237,22 @@ class DeliveryProfile {
       email: json['email'] as String? ?? '',
       city: json['city'] as String? ?? '',
       address: json['address'] as String? ?? '',
+      pickupProvider:
+          json['pickup_provider'] as String? ??
+          json['pickupProvider'] as String? ??
+          '',
+      pickupPointId:
+          json['pickup_point_id'] as String? ??
+          json['pickupPointId'] as String? ??
+          '',
+      pickupPointName:
+          json['pickup_point_name'] as String? ??
+          json['pickupPointName'] as String? ??
+          '',
+      pickupPointAddress:
+          json['pickup_point_address'] as String? ??
+          json['pickupPointAddress'] as String? ??
+          '',
     );
   }
 
@@ -239,6 +263,10 @@ class DeliveryProfile {
       'email': email,
       'city': city,
       'address': address,
+      'pickupProvider': pickupProvider,
+      'pickupPointId': pickupPointId,
+      'pickupPointName': pickupPointName,
+      'pickupPointAddress': pickupPointAddress,
     };
   }
 
@@ -250,6 +278,10 @@ class DeliveryProfile {
       'email': email,
       'city': city,
       'address': address,
+      'pickup_provider': pickupProvider,
+      'pickup_point_id': pickupPointId,
+      'pickup_point_name': pickupPointName,
+      'pickup_point_address': pickupPointAddress,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
   }
@@ -260,6 +292,10 @@ class DeliveryProfile {
     String? email,
     String? city,
     String? address,
+    String? pickupProvider,
+    String? pickupPointId,
+    String? pickupPointName,
+    String? pickupPointAddress,
   }) {
     return DeliveryProfile(
       fullName: fullName ?? this.fullName,
@@ -267,8 +303,30 @@ class DeliveryProfile {
       email: email ?? this.email,
       city: city ?? this.city,
       address: address ?? this.address,
+      pickupProvider: pickupProvider ?? this.pickupProvider,
+      pickupPointId: pickupPointId ?? this.pickupPointId,
+      pickupPointName: pickupPointName ?? this.pickupPointName,
+      pickupPointAddress: pickupPointAddress ?? this.pickupPointAddress,
     );
   }
+}
+
+/// A user-facing checkout failure returned by the server-authoritative order
+/// command. UI code may display [message]; [code] is stable for analytics and
+/// tests and must not contain provider secrets or personal data.
+class CheckoutException implements Exception {
+  const CheckoutException({
+    required this.code,
+    required this.message,
+    this.isRetryable = false,
+  });
+
+  final String code;
+  final String message;
+  final bool isRetryable;
+
+  @override
+  String toString() => 'CheckoutException($code)';
 }
 
 class AppOrder {

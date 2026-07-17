@@ -35,7 +35,6 @@ class ListingPreviewStep extends StatelessWidget {
         shippingAddress: product.shippingAddress,
       ),
       onLike: () {},
-      onAddToCart: () {},
       onContactSeller: () {},
       onOpenSeller: () {},
       onOpenReviews: () {},

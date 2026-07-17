@@ -6,11 +6,12 @@ import 'package:clothes/features/visual_search/visual_search_object_selection_sc
 import 'package:clothes/features/visual_search/visual_search_screen.dart';
 import 'package:clothes/features/visual_search/visual_search_service.dart';
 import 'package:clothes/models/product.dart';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:image/image.dart' as image_lib;
-import 'package:image_picker/image_picker.dart';
+import 'package:photo_manager/photo_manager.dart';
 
 void main() {
   test('selected object is cropped before visual search', () async {
@@ -137,6 +138,8 @@ void main() {
           service: _FakeVisualSearchService(),
           onProductTap: (_) {},
           onToggleLike: (_) async {},
+          onProductMenu: (_) {},
+          onShareProduct: (_) {},
         ),
       ),
     );
@@ -179,6 +182,8 @@ void main() {
           ],
           onProductTap: (_) {},
           onToggleLike: (_) async {},
+          onProductMenu: (_) {},
+          onShareProduct: (_) {},
         ),
       ),
     );
@@ -222,6 +227,8 @@ void main() {
           catalogProducts: [catalogProduct],
           onProductTap: (product) => openedProduct = product,
           onToggleLike: (_) async {},
+          onProductMenu: (_) {},
+          onShareProduct: (_) {},
         ),
       ),
     );
@@ -255,6 +262,8 @@ void main() {
           service: _FakeVisualSearchService(empty: true),
           onProductTap: (_) {},
           onToggleLike: (_) async {},
+          onProductMenu: (_) {},
+          onShareProduct: (_) {},
         ),
       ),
     );
@@ -287,6 +296,8 @@ void main() {
           ],
           onProductTap: (_) {},
           onToggleLike: (_) async {},
+          onProductMenu: (_) {},
+          onShareProduct: (_) {},
         ),
       ),
     );
@@ -299,6 +310,262 @@ void main() {
     expect(find.text('Смотрите похожее'), findsOneWidget);
     expect(find.text('Тестовое худи'), findsOneWidget);
   });
+
+  testWidgets('camera and gallery permission denial open app settings', (
+    tester,
+  ) async {
+    var settingsCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisualSearchCameraScreen(
+          service: _FakeVisualSearchService(),
+          cameraLoader: () async =>
+              throw CameraException('CameraAccessDenied', 'Denied'),
+          photoPermissionRequester: () async => PermissionState.denied,
+          galleryLoader: () async => const <AssetEntity>[],
+          openSettings: () async {
+            settingsCalls += 1;
+            return true;
+          },
+          onProductTap: (_) {},
+          onToggleLike: (_) async {},
+          onProductMenu: (_) {},
+          onShareProduct: (_) {},
+        ),
+      ),
+    );
+    await _pumpCameraWork(tester);
+
+    expect(find.text('Нет доступа к камере'), findsOneWidget);
+    expect(find.text('Нет доступа к фото'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('visual-search-camera-settings')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('visual-search-gallery-settings')));
+    await tester.pump();
+
+    expect(settingsCalls, 2);
+  });
+
+  testWidgets('gallery load error can be retried into an empty state', (
+    tester,
+  ) async {
+    var galleryCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisualSearchCameraScreen(
+          initializeHardware: false,
+          cameraPreviewOverride: const ColoredBox(color: Colors.black),
+          service: _FakeVisualSearchService(),
+          photoPermissionRequester: () async => PermissionState.authorized,
+          galleryLoader: () async {
+            galleryCalls += 1;
+            if (galleryCalls == 1) throw StateError('Gallery unavailable');
+            return const <AssetEntity>[];
+          },
+          onProductTap: (_) {},
+          onToggleLike: (_) async {},
+          onProductMenu: (_) {},
+          onShareProduct: (_) {},
+        ),
+      ),
+    );
+    await _pumpCameraWork(tester);
+
+    expect(find.text('Не удалось загрузить фотографии'), findsOneWidget);
+    expect(galleryCalls, 1);
+
+    await tester.tap(find.byKey(const Key('visual-search-gallery-retry')));
+    await _pumpCameraWork(tester);
+
+    expect(find.text('Нет фотографий'), findsOneWidget);
+    expect(find.text('Не удалось загрузить фотографии'), findsNothing);
+    expect(galleryCalls, 2);
+  });
+
+  testWidgets('camera capture opens manual object selection', (tester) async {
+    var captureCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisualSearchCameraScreen(
+          initializeHardware: false,
+          cameraPreviewOverride: const ColoredBox(color: Colors.black),
+          captureImage: () async {
+            captureCalls += 1;
+            return _visualSearchImage();
+          },
+          imageNormalizer: (image) async => image,
+          service: _FakeVisualSearchService(),
+          onProductTap: (_) {},
+          onToggleLike: (_) async {},
+          onProductMenu: (_) {},
+          onShareProduct: (_) {},
+        ),
+      ),
+    );
+
+    await tester.tap(find.bySemanticsLabel('Сделать фото'));
+    await _pumpCameraWork(tester, transition: true);
+
+    expect(captureCalls, 1);
+    expect(find.byType(VisualSearchObjectSelectionScreen), findsOneWidget);
+    expect(find.text('Что ищем?'), findsOneWidget);
+  });
+
+  testWidgets('gallery thumbnail opens manual object selection', (
+    tester,
+  ) async {
+    final asset = AssetEntity(
+      id: 'asset-1',
+      typeInt: AssetType.image.index,
+      width: 1200,
+      height: 1600,
+      createDateSecond: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisualSearchCameraScreen(
+          initializeHardware: false,
+          cameraPreviewOverride: const ColoredBox(color: Colors.black),
+          service: _FakeVisualSearchService(),
+          photoPermissionRequester: () async => PermissionState.authorized,
+          galleryLoader: () async => <AssetEntity>[asset],
+          thumbnailLoader: (_, _) async => _visualSearchPngBytes(),
+          onProductTap: (_) {},
+          onToggleLike: (_) async {},
+          onProductMenu: (_) {},
+          onShareProduct: (_) {},
+        ),
+      ),
+    );
+    await _pumpCameraWork(tester);
+
+    await tester.tap(find.byKey(const Key('visual-search-asset-asset-1')));
+    await _pumpCameraWork(tester, transition: true);
+
+    expect(find.byType(VisualSearchObjectSelectionScreen), findsOneWidget);
+    expect(find.text('Что ищем?'), findsOneWidget);
+  });
+
+  testWidgets('search error retries and renders the current catalog product', (
+    tester,
+  ) async {
+    final service = _FakeVisualSearchService(failuresBeforeSuccess: 1);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisualSearchScreen(
+          initialImage: _visualSearchImage(),
+          service: service,
+          catalogProducts: [
+            _catalogProduct(id: 'product', title: 'Товар после повтора'),
+          ],
+          onProductTap: (_) {},
+          onToggleLike: (_) async {},
+          onProductMenu: (_) {},
+          onShareProduct: (_) {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ошибка поиска'), findsOneWidget);
+    expect(service.searchCalls, 1);
+
+    await tester.tap(find.text('Повторить'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Товар после повтора'), findsOneWidget);
+    expect(find.text('Ошибка поиска'), findsNothing);
+    expect(service.searchCalls, 2);
+  });
+
+  testWidgets('result actions do not open detail until the card is tapped', (
+    tester,
+  ) async {
+    final product = _catalogProduct(
+      id: 'product',
+      title: 'Карточка результата',
+    );
+    var detailCalls = 0;
+    var menuCalls = 0;
+    var shareCalls = 0;
+    var likeCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: VisualSearchScreen(
+          initialImage: _visualSearchImage(),
+          service: _FakeVisualSearchService(),
+          catalogProducts: [product],
+          onProductTap: (_) => detailCalls += 1,
+          onToggleLike: (_) async {
+            likeCalls += 1;
+            product.isLiked = !product.isLiked;
+            product.likesCount += product.isLiked ? 1 : -1;
+          },
+          onProductMenu: (_) => menuCalls += 1,
+          onShareProduct: (_) => shareCalls += 1,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final card = find.byKey(const Key('visual-search-product-product'));
+    await tester.ensureVisible(card);
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(card);
+
+    await tester.tapAt(Offset(rect.right - 20, rect.top + 27));
+    await tester.pump();
+    expect(menuCalls, 1);
+    expect(detailCalls, 0);
+
+    await tester.tapAt(Offset(rect.right - 46, rect.bottom - 20));
+    await tester.pump();
+    expect(likeCalls, 1);
+    expect(product.isLiked, isTrue);
+    expect(product.likesCount, 1);
+    expect(detailCalls, 0);
+
+    await tester.tapAt(Offset(rect.right - 14, rect.bottom - 20));
+    await tester.pump();
+    expect(shareCalls, 1);
+    expect(detailCalls, 0);
+
+    await tester.tap(find.text('Карточка результата'));
+    await tester.pump();
+    expect(detailCalls, 1);
+  });
+}
+
+Uint8List _visualSearchPngBytes() => base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+);
+
+XFile _visualSearchImage() => XFile.fromData(
+  _visualSearchPngBytes(),
+  mimeType: 'image/png',
+  name: 'query.png',
+);
+
+Future<void> _pumpCameraWork(
+  WidgetTester tester, {
+  bool transition = false,
+}) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 20));
+  if (transition) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 250)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
 }
 
 class _FakeVisualSearchService extends VisualSearchService {
@@ -306,6 +573,7 @@ class _FakeVisualSearchService extends VisualSearchService {
     this.empty = false,
     this.similarOnly = false,
     this.includeUnknown = false,
+    this.failuresBeforeSuccess = 0,
   }) : super(
          baseUrl: 'https://example.test',
          client: MockClient((_) async => throw UnimplementedError()),
@@ -315,56 +583,64 @@ class _FakeVisualSearchService extends VisualSearchService {
   final bool empty;
   final bool similarOnly;
   final bool includeUnknown;
+  final int failuresBeforeSuccess;
+  int searchCalls = 0;
 
   @override
   Future<VisualSearchResult> search(
     XFile image, {
     VisualSearchFilters filters = const VisualSearchFilters(),
     Uint8List? imageBytes,
-  }) async => VisualSearchResult(
-    products: empty || similarOnly
-        ? const []
-        : [
-            Product.fromSupabase({
-              'id': 'product',
-              'title': 'Тестовое худи',
-              'price': 3500,
-              'main_image': '',
-              'images': <String>[],
-              'category': 'clothing',
-            }),
-            if (includeUnknown)
+  }) async {
+    searchCalls += 1;
+    if (searchCalls <= failuresBeforeSuccess) {
+      throw const VisualSearchException('Ошибка поиска');
+    }
+    return VisualSearchResult(
+      products: empty || similarOnly
+          ? const []
+          : [
               Product.fromSupabase({
-                'id': 'unknown-product',
-                'title': 'Неизвестный результат API',
-                'price': 10,
-                'main_image': 'https://example.test/wrong-match.jpg',
+                'id': 'product',
+                'title': 'Тестовое худи',
+                'price': 3500,
+                'main_image': '',
+                'images': <String>[],
                 'category': 'clothing',
               }),
-          ],
-    similarProducts: similarOnly
-        ? [
-            Product.fromSupabase({
-              'id': 'similar-product',
-              'title': 'Тестовое худи',
-              'price': 3500,
-              'main_image': '',
-              'images': <String>[],
-              'category': 'clothing',
-            }),
-          ]
-        : const [],
-    matchStatus: similarOnly
-        ? 'similar_only'
-        : empty
-        ? 'none'
-        : 'strong',
-    category: 'clothing',
-    categoryConfidence: 0.8,
-    timingsMs: const {'total': 700},
-    candidateCount: 40,
-    cached: false,
-  );
+              if (includeUnknown)
+                Product.fromSupabase({
+                  'id': 'unknown-product',
+                  'title': 'Неизвестный результат API',
+                  'price': 10,
+                  'main_image': 'https://example.test/wrong-match.jpg',
+                  'category': 'clothing',
+                }),
+            ],
+      similarProducts: similarOnly
+          ? [
+              Product.fromSupabase({
+                'id': 'similar-product',
+                'title': 'Тестовое худи',
+                'price': 3500,
+                'main_image': '',
+                'images': <String>[],
+                'category': 'clothing',
+              }),
+            ]
+          : const [],
+      matchStatus: similarOnly
+          ? 'similar_only'
+          : empty
+          ? 'none'
+          : 'strong',
+      category: 'clothing',
+      categoryConfidence: 0.8,
+      timingsMs: const {'total': 700},
+      candidateCount: 40,
+      cached: false,
+    );
+  }
 
   @override
   void close() {}

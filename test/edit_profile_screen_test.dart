@@ -64,4 +64,59 @@ void main() {
     expect(savedProfile?.birthDate, isEmpty);
     expect(savedProfile?.city, 'Москва');
   });
+
+  testWidgets('account deletion requires confirmation and exposes errors', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(430, 900));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var deleteCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EditProfileScreen(
+          profile: const AppProfile(
+            name: 'Ева Смирнова',
+            handle: '@eva_style',
+            city: 'Москва',
+            rating: 4.8,
+            salesCount: 3,
+            followersCount: 24,
+          ),
+          accountEmail: 'eva@example.com',
+          isSignedIn: true,
+          onUpdateIdentity: null,
+          onSave: (profile, avatar) async => null,
+          onConfirmEmail: (email) async => null,
+          onDeleteAccount: () async {
+            deleteCalls += 1;
+            return 'Сервер не подтвердил удаление аккаунта';
+          },
+        ),
+      ),
+    );
+
+    final deleteButton = find.text('Удалить аккаунт');
+    await tester.scrollUntilVisible(
+      deleteButton,
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(deleteButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Удалить аккаунт?'), findsOneWidget);
+
+    await tester.tap(find.text('ОТМЕНА'));
+    await tester.pumpAndSettle();
+    expect(deleteCalls, 0);
+
+    await tester.tap(deleteButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('УДАЛИТЬ'));
+    await tester.pumpAndSettle();
+
+    expect(deleteCalls, 1);
+    expect(find.text('Сервер не подтвердил удаление аккаунта'), findsOneWidget);
+    expect(find.byType(EditProfileScreen), findsOneWidget);
+  });
 }

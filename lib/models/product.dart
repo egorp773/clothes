@@ -187,9 +187,7 @@ class Product {
       publishedAt: DateTime.tryParse(
         json['publishedAt'] as String? ?? '',
       )?.toUtc(),
-      viewsCount: _nonNegativeCount(
-        json['viewsCount'] ?? json['views_count'],
-      ),
+      viewsCount: _nonNegativeCount(json['viewsCount'] ?? json['views_count']),
       likesCount: _nonNegativeCount(
         json['likesCount'] ?? json['likes_count'] ?? json['favorite_count'],
       ),
@@ -297,9 +295,7 @@ class Product {
       publishedAt: DateTime.tryParse(
         json['published_at'] as String? ?? '',
       )?.toUtc(),
-      viewsCount: _nonNegativeCount(
-        json['views_count'] ?? json['viewsCount'],
-      ),
+      viewsCount: _nonNegativeCount(json['views_count'] ?? json['viewsCount']),
       likesCount: _nonNegativeCount(
         json['likes_count'] ?? json['favorite_count'] ?? json['likesCount'],
       ),

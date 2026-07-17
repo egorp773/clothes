@@ -60,13 +60,18 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
       if (isArchived != null) _isArchived = isArchived;
       if (title != null && title.trim().isNotEmpty) _title = title.trim();
     });
-    final saved = await callback(
-      widget.thread.id,
-      isMuted: isMuted,
-      isPinned: isPinned,
-      isArchived: isArchived,
-      title: title,
-    );
+    var saved = false;
+    try {
+      saved = await callback(
+        widget.thread.id,
+        isMuted: isMuted,
+        isPinned: isPinned,
+        isArchived: isArchived,
+        title: title,
+      );
+    } catch (_) {
+      saved = false;
+    }
     if (!mounted) return;
     setState(() => _saving = false);
     if (!saved) {
@@ -86,7 +91,11 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
   }
 
   Future<void> _rename() async {
-    if (!widget.thread.isGroup || widget.actions?.updateThread == null) return;
+    if (!widget.thread.isGroup ||
+        widget.thread.createdBy != widget.currentUserId ||
+        widget.actions?.updateThread == null) {
+      return;
+    }
     final controller = TextEditingController(text: _title);
     final nextTitle = await showModalBottomSheet<String>(
       context: context,
@@ -222,6 +231,7 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
                           ),
                         ),
                         if (widget.thread.isGroup &&
+                            widget.thread.createdBy == widget.currentUserId &&
                             widget.actions?.updateThread != null) ...[
                           const SizedBox(width: 4),
                           IconButton(

@@ -41,9 +41,7 @@ class OutfitAccessory {
       id: json['id'] as String,
       title: json['title'] as String? ?? 'Аксессуар',
       image:
-          json['original_image'] as String? ??
-          json['image'] as String? ??
-          '',
+          json['original_image'] as String? ?? json['image'] as String? ?? '',
       cutoutImage: json['cutout_image'] as String? ?? '',
       scope: json['scope'] as String? ?? 'private',
       ownerId: json['owner_id'] as String? ?? '',

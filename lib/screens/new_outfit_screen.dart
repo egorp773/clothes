@@ -40,6 +40,7 @@ class NewOutfitScreen extends StatefulWidget {
     required this.items,
     required this.authorName,
     required this.authorHandle,
+    this.authorAvatarUrl = '',
     required this.onPublish,
   });
 
@@ -47,6 +48,7 @@ class NewOutfitScreen extends StatefulWidget {
   final List<NewOutfitPreviewItem> items;
   final String authorName;
   final String authorHandle;
+  final String authorAvatarUrl;
   final Future<void> Function(CreatedOutfit outfit) onPublish;
 
   @override
@@ -77,6 +79,7 @@ class _NewOutfitScreenState extends State<NewOutfitScreen> {
           .toList(),
       authorName: widget.authorName,
       authorHandle: widget.authorHandle,
+      authorAvatarUrl: widget.authorAvatarUrl,
       previewBackgroundColor: widget.backgroundColor.toARGB32(),
       layoutItems: widget.items
           .map(
@@ -115,6 +118,7 @@ class _NewOutfitScreenState extends State<NewOutfitScreen> {
                   items: widget.items,
                   authorName: widget.authorName,
                   authorHandle: widget.authorHandle,
+                  authorAvatarUrl: widget.authorAvatarUrl,
                 ),
               ),
             ),
@@ -188,12 +192,14 @@ class _ResponsiveOutfitCard extends StatelessWidget {
     required this.items,
     required this.authorName,
     required this.authorHandle,
+    required this.authorAvatarUrl,
   });
 
   final Color backgroundColor;
   final List<NewOutfitPreviewItem> items;
   final String authorName;
   final String authorHandle;
+  final String authorAvatarUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -209,6 +215,7 @@ class _ResponsiveOutfitCard extends StatelessWidget {
               items: items,
               authorName: authorName,
               authorHandle: authorHandle,
+              authorAvatarUrl: authorAvatarUrl,
             ),
           ),
         );
@@ -224,6 +231,7 @@ class _PreviewOutfitCard extends StatelessWidget {
     required this.items,
     required this.authorName,
     required this.authorHandle,
+    required this.authorAvatarUrl,
   });
 
   final double scale;
@@ -231,6 +239,7 @@ class _PreviewOutfitCard extends StatelessWidget {
   final List<NewOutfitPreviewItem> items;
   final String authorName;
   final String authorHandle;
+  final String authorAvatarUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -268,6 +277,7 @@ class _PreviewOutfitCard extends StatelessWidget {
               scale: scale,
               authorName: authorName,
               authorHandle: authorHandle,
+              authorAvatarUrl: authorAvatarUrl,
             ),
           ),
         ],
@@ -360,11 +370,13 @@ class _AuthorCard extends StatelessWidget {
     required this.scale,
     required this.authorName,
     required this.authorHandle,
+    required this.authorAvatarUrl,
   });
 
   final double scale;
   final String authorName;
   final String authorHandle;
+  final String authorAvatarUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -384,17 +396,26 @@ class _AuthorCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Container(
-            width: 38 * scale,
-            height: 38 * scale,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Color(0xFFE9E9EC),
-            ),
-            child: Icon(
-              Icons.person_outline,
-              size: 20 * scale,
-              color: const Color(0xFF8F8F94),
+          ClipOval(
+            child: Container(
+              width: 38 * scale,
+              height: 38 * scale,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Color(0xFFE9E9EC),
+              ),
+              child: authorAvatarUrl.trim().isEmpty
+                  ? Icon(
+                      Icons.person_outline,
+                      size: 20 * scale,
+                      color: const Color(0xFF8F8F94),
+                    )
+                  : AppImage(
+                      imageUrl: authorAvatarUrl,
+                      width: 38 * scale,
+                      height: 38 * scale,
+                      fit: BoxFit.cover,
+                    ),
             ),
           ),
           SizedBox(width: 10 * scale),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../core/app_typography.dart';
 import '../models/app_profile.dart';
 import '../models/created_outfit.dart';
 import '../models/product.dart';
@@ -43,8 +44,10 @@ class ProfileScreen extends StatelessWidget {
     required this.onDeleteAccount,
     required this.onToggleProductLike,
     required this.onToggleOutfitLike,
+    required this.onClearRecentlyViewed,
     required this.onDeleteProduct,
     required this.onProductTap,
+    required this.onShareProduct,
     required this.onOutfitAuthorTap,
     required this.onMarkNotificationRead,
     required this.onMarkAllNotificationsRead,
@@ -52,6 +55,8 @@ class ProfileScreen extends StatelessWidget {
     required this.onUpdateNotificationPreferences,
     required this.onLoadReviews,
     required this.onOpenCatalog,
+    this.deliveryProfile = const DeliveryProfile(),
+    this.onSaveDeliveryProfile,
   });
 
   final AppProfile profile;
@@ -82,8 +87,10 @@ class ProfileScreen extends StatelessWidget {
   final Future<String?> Function() onDeleteAccount;
   final Future<void> Function(String productId) onToggleProductLike;
   final Future<void> Function(String outfitId) onToggleOutfitLike;
+  final Future<void> Function() onClearRecentlyViewed;
   final Future<void> Function(String productId) onDeleteProduct;
   final ValueChanged<Product> onProductTap;
+  final ValueChanged<Product> onShareProduct;
   final ValueChanged<CreatedOutfit> onOutfitAuthorTap;
   final Future<void> Function(String notificationId) onMarkNotificationRead;
   final Future<void> Function() onMarkAllNotificationsRead;
@@ -93,6 +100,8 @@ class ProfileScreen extends StatelessWidget {
   onUpdateNotificationPreferences;
   final Future<List<SellerReview>> Function(String sellerId) onLoadReviews;
   final VoidCallback onOpenCatalog;
+  final DeliveryProfile deliveryProfile;
+  final Future<void> Function(DeliveryProfile profile)? onSaveDeliveryProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -104,8 +113,7 @@ class ProfileScreen extends StatelessWidget {
       return belongsToCurrentUser &&
           order.status != AppOrderStatus.completed &&
           order.status != AppOrderStatus.canceled;
-    }).toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    }).toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     final topInset = MediaQuery.of(context).viewPadding.top;
 
     return Scaffold(
@@ -121,7 +129,7 @@ class ProfileScreen extends StatelessWidget {
                 (notification) => !notification.isRead,
               ),
               onNotificationsTap: () => _openNotifications(context),
-              onSettingsTap: () => _openEditProfile(context),
+              onSettingsTap: () => _openSettings(context),
             ),
             const SizedBox(height: 16),
             _ProfileOverviewCard(
@@ -185,7 +193,6 @@ class ProfileScreen extends StatelessWidget {
                   _ProfileMenuAction.notificationSettings,
                 ),
                 _MenuRowData('мои адреса', _ProfileMenuAction.addresses),
-                _MenuRowData('подарочная карта', _ProfileMenuAction.giftCard),
                 _MenuRowData(
                   'дашборд продавца',
                   _ProfileMenuAction.sellerDashboard,
@@ -194,8 +201,22 @@ class ProfileScreen extends StatelessWidget {
               onSelected: (action) => _openProfileMenu(context, action),
             ),
             const _CountrySection(),
-            const _SupportSection(),
-            const _InfoSection(),
+            _SupportSection(
+              onSupportTap: () =>
+                  _openInformation(context, ProfileInformationTopic.support),
+              onFaqTap: () =>
+                  _openInformation(context, ProfileInformationTopic.faq),
+            ),
+            _InfoSection(
+              onDeliveryTap: () => _openInformation(
+                context,
+                ProfileInformationTopic.deliveryAndPayment,
+              ),
+              onDocumentsTap: () =>
+                  _openInformation(context, ProfileInformationTopic.documents),
+              onCareersTap: () =>
+                  _openInformation(context, ProfileInformationTopic.careers),
+            ),
             const SizedBox(height: 10),
             _LogoutBlock(onSignOut: onSignOut),
           ],
@@ -225,6 +246,37 @@ class ProfileScreen extends StatelessWidget {
           onConfirmEmail: onConfirmEmail,
           onDeleteAccount: onDeleteAccount,
         ),
+      ),
+    );
+  }
+
+  void _openSettings(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (settingsContext) => ProfileSettingsScreen(
+          onEditProfile: () => _openEditProfile(settingsContext),
+          onNotificationSettings: () =>
+              _openNotificationSettings(settingsContext),
+          onAddresses: () => _openAddresses(settingsContext),
+          onSupport: () => _openInformation(
+            settingsContext,
+            ProfileInformationTopic.support,
+          ),
+          onFaq: () =>
+              _openInformation(settingsContext, ProfileInformationTopic.faq),
+          onDocuments: () => _openInformation(
+            settingsContext,
+            ProfileInformationTopic.documents,
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openInformation(BuildContext context, ProfileInformationTopic topic) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => ProfileInformationScreen(topic: topic),
       ),
     );
   }
@@ -265,6 +317,7 @@ class ProfileScreen extends StatelessWidget {
           onToggleProductLike: onToggleProductLike,
           onToggleOutfitLike: onToggleOutfitLike,
           onProductTap: onProductTap,
+          onShareProduct: onShareProduct,
           onOutfitAuthorTap: onOutfitAuthorTap,
         ),
       ),
@@ -283,7 +336,9 @@ class ProfileScreen extends StatelessWidget {
           allProducts: allProducts,
           onToggleProductLike: onToggleProductLike,
           onToggleOutfitLike: onToggleOutfitLike,
+          onClear: onClearRecentlyViewed,
           onProductTap: onProductTap,
+          onShareProduct: onShareProduct,
           onOutfitAuthorTap: onOutfitAuthorTap,
         ),
       ),
@@ -305,6 +360,7 @@ class ProfileScreen extends StatelessWidget {
           onDeleteProduct: onDeleteProduct,
           onToggleLike: onToggleProductLike,
           onProductTap: onProductTap,
+          onShareProduct: onShareProduct,
         ),
       ),
     );
@@ -339,16 +395,6 @@ class ProfileScreen extends StatelessWidget {
         break;
       case _ProfileMenuAction.addresses:
         _openAddresses(context);
-        break;
-      case _ProfileMenuAction.giftCard:
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Раздел сохраняется в профиле и будет доступен после добавления данных.',
-            ),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
         break;
     }
   }
@@ -393,6 +439,7 @@ class ProfileScreen extends StatelessWidget {
           recommendedProducts: allProducts,
           currentUserId: currentUserId,
           onProductTap: onProductTap,
+          onShareProduct: onShareProduct,
           onToggleProductLike: onToggleProductLike,
           onOpenCatalog: () => _openCatalogFromFeature(context),
         ),
@@ -404,6 +451,8 @@ class ProfileScreen extends StatelessWidget {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => ProfileAddressesScreen(
+          profile: deliveryProfile,
+          onSave: onSaveDeliveryProfile ?? (_) async {},
           onOpenCatalog: () => _openCatalogFromFeature(context),
         ),
       ),
@@ -434,6 +483,7 @@ class _ProfileTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
+      key: const Key('profile-header-row'),
       height: 44,
       child: Row(
         children: [
@@ -441,9 +491,9 @@ class _ProfileTopBar extends StatelessWidget {
             child: Text(
               'профиль',
               style: TextStyle(
-                fontFamily: 'Montserrat',
+                fontFamily: AppTypography.fontFamily,
                 fontSize: 22,
-                fontWeight: FontWeight.w800,
+                fontWeight: AppTypography.bold,
                 height: 1,
                 letterSpacing: -0.4,
                 color: Color(0xFF070707),
@@ -457,6 +507,7 @@ class _ProfileTopBar extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           _ProfileActionButton(
+            key: const Key('profile-settings-button'),
             icon: Icons.settings_outlined,
             onTap: onSettingsTap,
           ),
@@ -468,6 +519,7 @@ class _ProfileTopBar extends StatelessWidget {
 
 class _ProfileActionButton extends StatelessWidget {
   const _ProfileActionButton({
+    super.key,
     required this.icon,
     required this.onTap,
     this.hasIndicator = false,
@@ -557,7 +609,7 @@ class _ProfileOverviewCard extends StatelessWidget {
                       style: const TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 19,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: AppTypography.bold,
                         height: 1.15,
                         letterSpacing: -0.35,
                         color: _profileInk,
@@ -788,7 +840,7 @@ class _ProfileStatTile extends StatelessWidget {
                 style: const TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 14,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: AppTypography.bold,
                   height: 1,
                   color: _profileInk,
                 ),
@@ -831,11 +883,7 @@ class _ProfileEditButton extends StatelessWidget {
           constraints: const BoxConstraints.tightFor(width: 36, height: 36),
           padding: const EdgeInsets.all(7),
           splashRadius: 18,
-          icon: const Icon(
-            Icons.edit_outlined,
-            size: 20,
-            color: _profileInk,
-          ),
+          icon: const Icon(Icons.edit_outlined, size: 20, color: _profileInk),
         ),
       ),
     );
@@ -998,17 +1046,14 @@ class _ActiveOrderRow extends StatelessWidget {
 
 String _profileOrderStatus(AppOrderStatus status, {required bool isSeller}) {
   return switch (status) {
-    AppOrderStatus.pendingConfirmation => isSeller
-        ? 'Подтвердите заказ'
-        : 'Ждём подтверждения продавца',
-    AppOrderStatus.pendingShipment => isSeller
-        ? 'Пора отправить заказ'
-        : 'Продавец готовит отправку',
+    AppOrderStatus.pendingConfirmation =>
+      isSeller ? 'Подтвердите заказ' : 'Ждём подтверждения продавца',
+    AppOrderStatus.pendingShipment =>
+      isSeller ? 'Пора отправить заказ' : 'Продавец готовит отправку',
     AppOrderStatus.inTransit => 'Заказ в пути',
     AppOrderStatus.deliveredToPickup => 'Можно получать',
-    AppOrderStatus.awaitingPayment => isSeller
-        ? 'Доступна выплата'
-        : 'Ожидается оплата',
+    AppOrderStatus.awaitingPayment =>
+      isSeller ? 'Доступна выплата' : 'Ожидается оплата',
     AppOrderStatus.returning => 'Оформляется возврат',
     AppOrderStatus.disputed => 'Открыт спор',
     AppOrderStatus.completed => 'Заказ завершён',
@@ -1455,7 +1500,9 @@ class _ProfileCollectionScreen extends StatefulWidget {
     required this.allProducts,
     required this.onToggleProductLike,
     required this.onToggleOutfitLike,
+    this.onClear,
     required this.onProductTap,
+    required this.onShareProduct,
     required this.onOutfitAuthorTap,
   });
 
@@ -1467,7 +1514,9 @@ class _ProfileCollectionScreen extends StatefulWidget {
   final List<Product> allProducts;
   final Future<void> Function(String productId) onToggleProductLike;
   final Future<void> Function(String outfitId) onToggleOutfitLike;
+  final Future<void> Function()? onClear;
   final ValueChanged<Product> onProductTap;
+  final ValueChanged<Product> onShareProduct;
   final ValueChanged<CreatedOutfit> onOutfitAuthorTap;
 
   @override
@@ -1477,20 +1526,106 @@ class _ProfileCollectionScreen extends StatefulWidget {
 
 class _ProfileCollectionScreenState extends State<_ProfileCollectionScreen> {
   int _selectedTab = 0;
+  late List<Product> _products;
+  late List<CreatedOutfit> _outfits;
+  bool _isClearing = false;
 
   bool get _showsProducts => _selectedTab == 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _products = [...widget.products];
+    _outfits = [...widget.outfits];
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfileCollectionScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.products, widget.products)) {
+      _products = [...widget.products];
+    }
+    if (!identical(oldWidget.outfits, widget.outfits)) {
+      _outfits = [...widget.outfits];
+    }
+  }
+
+  Future<void> _confirmClear() async {
+    final clear = widget.onClear;
+    if (clear == null || (_products.isEmpty && _outfits.isEmpty)) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Очистить историю?'),
+        content: const Text(
+          'Недавно просмотренные вещи и образы исчезнут из профиля.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            key: const Key('confirm-clear-recent-history'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Очистить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    setState(() => _isClearing = true);
+    try {
+      await clear();
+      if (!mounted) return;
+      setState(() {
+        _products = [];
+        _outfits = [];
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('История просмотров очищена'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось очистить историю. Попробуйте ещё раз.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isClearing = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return _ProfileGridScaffold(
       title: widget.title,
-      isEmpty: _showsProducts
-          ? widget.products.isEmpty
-          : widget.outfits.isEmpty,
+      isEmpty: _showsProducts ? _products.isEmpty : _outfits.isEmpty,
       emptyText: _showsProducts
           ? widget.productEmptyText
           : widget.outfitEmptyText,
       backgroundColor: _showsProducts ? Colors.white : _outfitMediaBackground,
+      action:
+          widget.onClear != null &&
+              (_products.isNotEmpty || _outfits.isNotEmpty)
+          ? TextButton(
+              key: const Key('clear-recent-history'),
+              onPressed: _isClearing ? null : _confirmClear,
+              child: Text(
+                _isClearing ? 'очищаем' : 'очистить',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF55555C),
+                ),
+              ),
+            )
+          : null,
       header: Padding(
         padding: const EdgeInsets.fromLTRB(16, 2, 16, 10),
         child: _ProfileCollectionTabs(
@@ -1500,12 +1635,13 @@ class _ProfileCollectionScreenState extends State<_ProfileCollectionScreen> {
       ),
       child: _showsProducts
           ? _ProductsGrid(
-              products: widget.products,
+              products: _products,
               onToggleLike: widget.onToggleProductLike,
               onProductTap: widget.onProductTap,
+              onShareProduct: widget.onShareProduct,
             )
           : _OutfitsList(
-              outfits: widget.outfits,
+              outfits: _outfits,
               products: widget.allProducts,
               onToggleLike: widget.onToggleOutfitLike,
               onAuthorTap: widget.onOutfitAuthorTap,
@@ -1598,13 +1734,17 @@ class _ProductsGrid extends StatelessWidget {
     required this.products,
     required this.onToggleLike,
     required this.onProductTap,
+    required this.onShareProduct,
     this.onDeleteProduct,
+    this.deletingProductIds = const <String>{},
   });
 
   final List<Product> products;
   final Future<void> Function(String productId) onToggleLike;
   final ValueChanged<Product> onProductTap;
+  final ValueChanged<Product> onShareProduct;
   final Future<void> Function(String productId)? onDeleteProduct;
+  final Set<String> deletingProductIds;
 
   @override
   Widget build(BuildContext context) {
@@ -1622,15 +1762,15 @@ class _ProductsGrid extends StatelessWidget {
         return _CatalogProductCard(
           product: products[index],
           onTap: () => onProductTap(products[index]),
-          onMenu: onDeleteProduct == null
+          onMenu:
+              onDeleteProduct == null ||
+                  deletingProductIds.contains(products[index].id)
               ? null
               : () => onDeleteProduct!(products[index].id),
           onLike: () {
             onToggleLike(products[index].id);
           },
-          onShare: () {
-            // TODO: Share product.
-          },
+          onShare: () => onShareProduct(products[index]),
         );
       },
     );
@@ -1677,6 +1817,7 @@ class _AllProductsScreen extends StatefulWidget {
     required this.onToggleLike,
     required this.onDeleteProduct,
     required this.onProductTap,
+    required this.onShareProduct,
   });
 
   final String title;
@@ -1685,6 +1826,7 @@ class _AllProductsScreen extends StatefulWidget {
   final Future<void> Function(String productId) onToggleLike;
   final Future<void> Function(String productId) onDeleteProduct;
   final ValueChanged<Product> onProductTap;
+  final ValueChanged<Product> onShareProduct;
 
   @override
   State<_AllProductsScreen> createState() => _AllProductsScreenState();
@@ -1692,6 +1834,7 @@ class _AllProductsScreen extends StatefulWidget {
 
 class _AllProductsScreenState extends State<_AllProductsScreen> {
   late List<Product> _products;
+  final Set<String> _deletingProductIds = <String>{};
 
   @override
   void initState() {
@@ -1700,11 +1843,53 @@ class _AllProductsScreenState extends State<_AllProductsScreen> {
   }
 
   Future<void> _deleteProduct(String productId) async {
-    await widget.onDeleteProduct(productId);
-    if (!mounted) return;
-    setState(() {
-      _products.removeWhere((product) => product.id == productId);
-    });
+    if (_deletingProductIds.contains(productId)) return;
+    final productIndex = _products.indexWhere((item) => item.id == productId);
+    if (productIndex < 0) return;
+    final product = _products[productIndex];
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Удалить объявление?'),
+        content: Text(
+          '«${product.title}» исчезнет из каталога. Это действие нельзя отменить.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('ОТМЕНА'),
+          ),
+          TextButton(
+            key: const Key('confirm-delete-listing'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('УДАЛИТЬ', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _deletingProductIds.add(productId));
+    try {
+      await widget.onDeleteProduct(productId);
+      if (!mounted) return;
+      setState(() => _products.removeWhere((item) => item.id == productId));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Объявление удалено'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось удалить объявление. Попробуйте ещё раз.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _deletingProductIds.remove(productId));
+    }
   }
 
   @override
@@ -1717,7 +1902,9 @@ class _AllProductsScreenState extends State<_AllProductsScreen> {
         products: _products,
         onToggleLike: widget.onToggleLike,
         onDeleteProduct: _deleteProduct,
+        deletingProductIds: _deletingProductIds,
         onProductTap: widget.onProductTap,
+        onShareProduct: widget.onShareProduct,
       ),
     );
   }
@@ -1841,8 +2028,9 @@ class _ProfileOutfitCardState extends State<_ProfileOutfitCard> {
               authorHandle: widget.outfit.authorHandle.trim().isEmpty
                   ? '@user'
                   : widget.outfit.authorHandle,
+              authorAvatarUrl: widget.outfit.authorAvatarUrl,
               isLiked: widget.outfit.isLiked,
-              likesCount: 0,
+              likesCount: widget.outfit.likesCount,
               onLikeTap: widget.onToggleLike,
               onAuthorTap: () => widget.onAuthorTap(widget.outfit),
             ),
@@ -1967,6 +2155,7 @@ class _OutfitAuthorCard extends StatelessWidget {
   const _OutfitAuthorCard({
     required this.authorName,
     required this.authorHandle,
+    required this.authorAvatarUrl,
     required this.isLiked,
     required this.likesCount,
     required this.onLikeTap,
@@ -1975,6 +2164,7 @@ class _OutfitAuthorCard extends StatelessWidget {
 
   final String authorName;
   final String authorHandle;
+  final String authorAvatarUrl;
   final bool isLiked;
   final int likesCount;
   final VoidCallback onLikeTap;
@@ -2001,17 +2191,26 @@ class _OutfitAuthorCard extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: Color(0xFFE9E9EC),
-              ),
-              child: const Icon(
-                Icons.person_outline,
-                size: 20,
-                color: Color(0xFF8F8F94),
+            ClipOval(
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0xFFE9E9EC),
+                ),
+                child: authorAvatarUrl.trim().isEmpty
+                    ? const Icon(
+                        Icons.person_outline,
+                        size: 20,
+                        color: Color(0xFF8F8F94),
+                      )
+                    : AppImage(
+                        imageUrl: authorAvatarUrl,
+                        width: 38,
+                        height: 38,
+                        fit: BoxFit.cover,
+                      ),
               ),
             ),
             const SizedBox(width: 10),
@@ -2201,6 +2400,7 @@ class _ProfileGridScaffold extends StatelessWidget {
     this.backgroundColor = Colors.white,
     this.topPadding = 12,
     this.header,
+    this.action,
   });
 
   final String title;
@@ -2210,6 +2410,7 @@ class _ProfileGridScaffold extends StatelessWidget {
   final Color backgroundColor;
   final double topPadding;
   final Widget? header;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -2253,6 +2454,7 @@ class _ProfileGridScaffold extends StatelessWidget {
                       ),
                     ),
                   ),
+                  ?action,
                 ],
               ),
             ),
@@ -2435,7 +2637,7 @@ class _CatalogInfo extends StatelessWidget {
                 price,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 13.5,
                   fontWeight: FontWeight.w700,
@@ -2563,7 +2765,6 @@ enum _ProfileMenuAction {
   notifications,
   notificationSettings,
   addresses,
-  giftCard,
   sellerDashboard,
 }
 
@@ -2605,11 +2806,11 @@ class _MenuRow extends StatelessWidget {
                   fontWeight: textWeight,
                   height: 1,
                   letterSpacing: 0,
-                  color: Colors.black,
+                  color: onTap == null ? const Color(0xFF9A9AA1) : Colors.black,
                 ),
               ),
             ),
-            if (showChevron)
+            if (showChevron && onTap != null)
               const Icon(Icons.chevron_right, size: 19, color: Colors.black),
           ],
         ),
@@ -2630,9 +2831,7 @@ class _CountrySection extends StatelessWidget {
           title: 'Россия',
           height: 54,
           leading: const _RussiaFlag(),
-          onTap: () {
-            // TODO: Open country selector.
-          },
+          showChevron: false,
         ),
       ],
     );
@@ -2661,7 +2860,10 @@ class _RussiaFlag extends StatelessWidget {
 }
 
 class _SupportSection extends StatelessWidget {
-  const _SupportSection();
+  const _SupportSection({required this.onSupportTap, required this.onFaqTap});
+
+  final VoidCallback onSupportTap;
+  final VoidCallback onFaqTap;
 
   @override
   Widget build(BuildContext context) {
@@ -2671,26 +2873,20 @@ class _SupportSection extends StatelessWidget {
         _SupportRow(
           icon: Icons.chat_bubble_outline,
           title: 'написать в поддержку',
-          meta: 'онлайн',
-          onTap: () {
-            // TODO: Open support chat.
-          },
+          meta: 'статус',
+          onTap: onSupportTap,
         ),
         _SupportRow(
           icon: Icons.phone_outlined,
           title: 'позвонить',
-          meta: 'в сети 24/7',
-          onTap: () {
-            // TODO: Start support call.
-          },
+          meta: 'статус',
+          onTap: onSupportTap,
         ),
         _SupportRow(
           icon: Icons.help_outline,
           title: 'FAQ',
-          meta: 'частые вопросы',
-          onTap: () {
-            // TODO: Open FAQ.
-          },
+          meta: '6 ответов',
+          onTap: onFaqTap,
         ),
       ],
     );
@@ -2702,13 +2898,13 @@ class _SupportRow extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.meta,
-    required this.onTap,
+    this.onTap,
   });
 
   final IconData icon;
   final String title;
   final String meta;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -2719,20 +2915,24 @@ class _SupportRow extends StatelessWidget {
         height: 50,
         child: Row(
           children: [
-            Icon(icon, size: 20, color: Colors.black),
+            Icon(
+              icon,
+              size: 20,
+              color: onTap == null ? const Color(0xFF9A9AA1) : Colors.black,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 13.5,
                   fontWeight: FontWeight.w500,
                   height: 1,
                   letterSpacing: 0,
-                  color: Colors.black,
+                  color: onTap == null ? const Color(0xFF9A9AA1) : Colors.black,
                 ),
               ),
             ),
@@ -2748,7 +2948,8 @@ class _SupportRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
-            const Icon(Icons.chevron_right, size: 19, color: Colors.black),
+            if (onTap != null)
+              const Icon(Icons.chevron_right, size: 19, color: Colors.black),
           ],
         ),
       ),
@@ -2757,30 +2958,38 @@ class _SupportRow extends StatelessWidget {
 }
 
 class _InfoSection extends StatelessWidget {
-  const _InfoSection();
+  const _InfoSection({
+    required this.onDeliveryTap,
+    required this.onDocumentsTap,
+    required this.onCareersTap,
+  });
+
+  final VoidCallback onDeliveryTap;
+  final VoidCallback onDocumentsTap;
+  final VoidCallback onCareersTap;
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       children: [
-        _SectionDivider(),
+        const _SectionDivider(),
         _MenuRow(
           title: 'доставка и оплата',
           height: 48,
           textWeight: FontWeight.w500,
-          showChevron: true,
+          onTap: onDeliveryTap,
         ),
         _MenuRow(
           title: 'документы',
           height: 48,
           textWeight: FontWeight.w500,
-          showChevron: true,
+          onTap: onDocumentsTap,
         ),
         _MenuRow(
           title: 'вакансии',
           height: 48,
           textWeight: FontWeight.w500,
-          showChevron: true,
+          onTap: onCareersTap,
         ),
       ],
     );

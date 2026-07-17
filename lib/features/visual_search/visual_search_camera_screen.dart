@@ -11,27 +11,44 @@ import 'visual_search_object_selection_screen.dart';
 import 'visual_search_screen.dart';
 import 'visual_search_service.dart';
 
+typedef VisualSearchThumbnailLoader =
+    Future<Uint8List?> Function(AssetEntity asset, ThumbnailSize size);
+
 class VisualSearchCameraScreen extends StatefulWidget {
   const VisualSearchCameraScreen({
     super.key,
     required this.onProductTap,
     required this.onToggleLike,
+    required this.onProductMenu,
+    required this.onShareProduct,
     this.catalogProducts = const [],
-    this.onProductMenu,
-    this.onShareProduct,
     this.service,
     this.initializeHardware = true,
     this.cameraPreviewOverride,
+    this.cameraLoader,
+    this.captureImage,
+    this.imageNormalizer,
+    this.photoPermissionRequester,
+    this.galleryLoader,
+    this.thumbnailLoader,
+    this.openSettings,
   });
 
   final ValueChanged<Product> onProductTap;
   final Future<void> Function(String productId) onToggleLike;
   final List<Product> catalogProducts;
-  final ValueChanged<Product>? onProductMenu;
-  final ValueChanged<Product>? onShareProduct;
+  final ValueChanged<Product> onProductMenu;
+  final ValueChanged<Product> onShareProduct;
   final VisualSearchService? service;
   final bool initializeHardware;
   final Widget? cameraPreviewOverride;
+  final Future<List<CameraDescription>> Function()? cameraLoader;
+  final Future<XFile> Function()? captureImage;
+  final Future<XFile> Function(XFile image)? imageNormalizer;
+  final Future<PermissionState> Function()? photoPermissionRequester;
+  final Future<List<AssetEntity>> Function()? galleryLoader;
+  final VisualSearchThumbnailLoader? thumbnailLoader;
+  final Future<bool> Function()? openSettings;
 
   @override
   State<VisualSearchCameraScreen> createState() =>
@@ -66,6 +83,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
   int _cameraGeneration = 0;
   int _searchGeneration = 0;
   String? _cameraError;
+  String? _galleryError;
   Uint8List? _searchPreview;
 
   bool get _busy => _capturing || _detectingObjects || _searching;
@@ -91,7 +109,13 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       _initializeHardware();
     } else {
       _cameraInitializing = false;
-      _galleryLoading = false;
+      if (widget.photoPermissionRequester != null ||
+          widget.galleryLoader != null) {
+        _loadGallery();
+      } else {
+        _photoPermission = PermissionState.authorized;
+        _galleryLoading = false;
+      }
     }
   }
 
@@ -124,11 +148,14 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
     if (mounted) {
       setState(() {
         _cameraInitializing = true;
+        _cameraPermissionDenied = false;
         _cameraError = null;
       });
     }
     try {
-      final cameras = _cameras.isEmpty ? await availableCameras() : _cameras;
+      final cameras = _cameras.isEmpty
+          ? await (widget.cameraLoader?.call() ?? availableCameras())
+          : _cameras;
       if (cameras.isEmpty) {
         throw CameraException('NoCamera', 'Камера не найдена');
       }
@@ -199,40 +226,55 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
   }
 
   Future<void> _loadGallery() async {
-    if (mounted) setState(() => _galleryLoading = true);
+    if (mounted) {
+      setState(() {
+        _galleryLoading = true;
+        _galleryError = null;
+      });
+    }
     try {
-      final permission = await PhotoManager.requestPermissionExtend(
-        requestOption: _photoRequest,
-      );
+      final permission =
+          await (widget.photoPermissionRequester?.call() ??
+              PhotoManager.requestPermissionExtend(
+                requestOption: _photoRequest,
+              ));
       if (!permission.hasAccess) {
         if (!mounted) return;
         setState(() {
           _photoPermission = permission;
           _galleryLoading = false;
+          _galleryError = null;
           _assets = const [];
         });
         return;
       }
-      final paths = await PhotoManager.getAssetPathList(
-        onlyAll: true,
-        type: RequestType.image,
-      );
-      final assets = paths.isEmpty
-          ? const <AssetEntity>[]
-          : await paths.first.getAssetListPaged(page: 0, size: 240);
+      final assets = widget.galleryLoader != null
+          ? await widget.galleryLoader!()
+          : await _loadDeviceGalleryAssets();
       if (!mounted) return;
       setState(() {
         _photoPermission = permission;
         _assets = assets;
         _galleryLoading = false;
+        _galleryError = null;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _galleryLoading = false;
         _assets = const [];
+        _galleryError = 'Не удалось загрузить фотографии';
       });
     }
+  }
+
+  Future<List<AssetEntity>> _loadDeviceGalleryAssets() async {
+    final paths = await PhotoManager.getAssetPathList(
+      onlyAll: true,
+      type: RequestType.image,
+    );
+    if (paths.isEmpty) return const [];
+    return paths.first.getAssetListPaged(page: 0, size: 240);
   }
 
   Future<void> _disposeCamera() async {
@@ -294,15 +336,24 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
 
   Future<void> _capture() async {
     final controller = _cameraController;
-    if (_busy || controller == null || !controller.value.isInitialized) return;
+    final captureImage = widget.captureImage;
+    final hardwareReady = controller != null && controller.value.isInitialized;
+    if (_busy || (captureImage == null && !hardwareReady)) return;
     setState(() => _capturing = true);
     try {
-      final captured = await controller.takePicture();
-      final image = await normalizeVisualSearchImage(captured);
+      final captured = captureImage == null
+          ? await controller!.takePicture()
+          : await captureImage();
+      final image =
+          await (widget.imageNormalizer?.call(captured) ??
+              normalizeVisualSearchImage(captured));
       await _prepareSearch(image);
     } on CameraException {
       if (!mounted) return;
       _showError('Не удалось сделать фото');
+    } catch (_) {
+      if (!mounted) return;
+      _showError('Не удалось обработать фото');
     } finally {
       if (mounted) setState(() => _capturing = false);
     }
@@ -312,11 +363,14 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
     if (_busy) return;
     setState(() => _capturing = true);
     try {
-      final bytes = await asset.thumbnailDataWithSize(
-        _searchThumbnailSize(asset),
-        format: ThumbnailFormat.jpeg,
-        quality: 88,
-      );
+      final thumbnailSize = _searchThumbnailSize(asset);
+      final bytes = widget.thumbnailLoader != null
+          ? await widget.thumbnailLoader!(asset, thumbnailSize)
+          : await asset.thumbnailDataWithSize(
+              thumbnailSize,
+              format: ThumbnailFormat.jpeg,
+              quality: 88,
+            );
       if (bytes == null || bytes.isEmpty) {
         throw StateError('Photo data is unavailable');
       }
@@ -506,6 +560,14 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       );
   }
 
+  Future<void> _openAppSettings() async {
+    try {
+      await (widget.openSettings?.call() ?? PhotoManager.openSetting());
+    } catch (_) {
+      if (mounted) _showError('Не удалось открыть настройки');
+    }
+  }
+
   void _setPanelExpanded(bool expanded) {
     if (_busy) return;
     if (expanded) {
@@ -529,39 +591,42 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
         fit: StackFit.expand,
         children: [
           _buildCameraLayer(),
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Color(0x66000000),
-                  Colors.transparent,
-                  Color(0x4D000000),
-                ],
-                stops: [0, 0.42, 1],
+          const IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x66000000),
+                    Colors.transparent,
+                    Color(0x4D000000),
+                  ],
+                  stops: [0, 0.42, 1],
+                ),
               ),
             ),
           ),
-          if (!_panelExpanded) _buildFocusWave(),
+          if (!_panelExpanded && _cameraError == null) _buildFocusWave(),
           _buildTopControls(),
           _buildSearchIntro(),
           _buildSideControls(),
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 280),
-            curve: Curves.easeOutCubic,
-            left: 0,
-            right: 0,
-            bottom: panelHeight + 18,
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 160),
-              opacity: _panelExpanded ? 0 : 1,
-              child: IgnorePointer(
-                ignoring: _panelExpanded,
-                child: _buildCaptureArea(),
+          if (_cameraError == null)
+            AnimatedPositioned(
+              duration: const Duration(milliseconds: 280),
+              curve: Curves.easeOutCubic,
+              left: 0,
+              right: 0,
+              bottom: panelHeight + 18,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 160),
+                opacity: _panelExpanded ? 0 : 1,
+                child: IgnorePointer(
+                  ignoring: _panelExpanded,
+                  child: _buildCaptureArea(),
+                ),
               ),
             ),
-          ),
           Align(
             alignment: Alignment.bottomCenter,
             child: _buildGalleryPanel(panelHeight),
@@ -609,8 +674,13 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
                 ),
                 const SizedBox(height: 12),
                 TextButton(
+                  key: ValueKey<String>(
+                    _cameraPermissionDenied
+                        ? 'visual-search-camera-settings'
+                        : 'visual-search-camera-retry',
+                  ),
                   onPressed: _cameraPermissionDenied
-                      ? PhotoManager.openSetting
+                      ? _openAppSettings
                       : _initializeCamera,
                   child: Text(
                     _cameraPermissionDenied ? 'Открыть настройки' : 'Повторить',
@@ -725,7 +795,10 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
         button: true,
         label: 'Сделать фото',
         child: GestureDetector(
-          onTap: _busy || _cameraController?.value.isInitialized != true
+          onTap:
+              _busy ||
+                  (widget.captureImage == null &&
+                      _cameraController?.value.isInitialized != true)
               ? null
               : _capture,
           child: AnimatedContainer(
@@ -836,6 +909,29 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
         ),
       );
     }
+    if (_galleryError != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _galleryError!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 4),
+            TextButton(
+              key: const Key('visual-search-gallery-retry'),
+              onPressed: _busy ? null : _loadGallery,
+              child: const Text(
+                'Повторить',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     if (_photoPermission?.hasAccess != true) {
       return Center(
         child: Row(
@@ -847,7 +943,8 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
             ),
             const SizedBox(width: 8),
             TextButton(
-              onPressed: PhotoManager.openSetting,
+              key: const Key('visual-search-gallery-settings'),
+              onPressed: _openAppSettings,
               child: const Text(
                 'Настройки',
                 style: TextStyle(color: Colors.white),
@@ -874,6 +971,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
           child: _AssetThumbnail(
             asset: assets[index],
             onTap: _busy ? null : () => _selectAsset(assets[index]),
+            thumbnailLoader: widget.thumbnailLoader,
           ),
         ),
       );
@@ -894,6 +992,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       itemBuilder: (context, index) => _AssetThumbnail(
         asset: assets[index],
         onTap: _busy ? null : () => _selectAsset(assets[index]),
+        thumbnailLoader: widget.thumbnailLoader,
       ),
     );
   }
@@ -998,10 +1097,15 @@ class _RoundControl extends StatelessWidget {
 }
 
 class _AssetThumbnail extends StatefulWidget {
-  const _AssetThumbnail({required this.asset, required this.onTap});
+  const _AssetThumbnail({
+    required this.asset,
+    required this.onTap,
+    this.thumbnailLoader,
+  });
 
   final AssetEntity asset;
   final VoidCallback? onTap;
+  final VisualSearchThumbnailLoader? thumbnailLoader;
 
   @override
   State<_AssetThumbnail> createState() => _AssetThumbnailState();
@@ -1019,17 +1123,26 @@ class _AssetThumbnailState extends State<_AssetThumbnail> {
   @override
   void didUpdateWidget(covariant _AssetThumbnail oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.asset.id != widget.asset.id) _thumbnail = _load();
+    if (oldWidget.asset.id != widget.asset.id ||
+        oldWidget.thumbnailLoader != widget.thumbnailLoader) {
+      _thumbnail = _load();
+    }
   }
 
-  Future<Uint8List?> _load() => widget.asset.thumbnailDataWithSize(
-    const ThumbnailSize.square(320),
-    format: ThumbnailFormat.jpeg,
-    quality: 82,
-  );
+  Future<Uint8List?> _load() {
+    const size = ThumbnailSize.square(320);
+    final loader = widget.thumbnailLoader;
+    if (loader != null) return loader(widget.asset, size);
+    return widget.asset.thumbnailDataWithSize(
+      size,
+      format: ThumbnailFormat.jpeg,
+      quality: 82,
+    );
+  }
 
   @override
   Widget build(BuildContext context) => GestureDetector(
+    key: ValueKey<String>('visual-search-asset-${widget.asset.id}'),
     onTap: widget.onTap,
     child: ClipRRect(
       borderRadius: BorderRadius.circular(3),

@@ -1,5 +1,7 @@
 const Object _chatUnset = Object();
 
+enum ChatMediaKind { image, video }
+
 class ChatAttachment {
   const ChatAttachment({
     required this.url,
@@ -8,6 +10,10 @@ class ChatAttachment {
     this.size = 0,
     this.width,
     this.height,
+    this.durationMs,
+    this.bucket = '',
+    this.storagePath = '',
+    this.thumbnailUrl = '',
   });
 
   final String url;
@@ -16,10 +22,26 @@ class ChatAttachment {
   final int size;
   final int? width;
   final int? height;
+  final int? durationMs;
+  final String bucket;
+  final String storagePath;
+  final String thumbnailUrl;
 
   bool get isImage =>
-      mimeType.startsWith('image/') ||
-      RegExp(r'\.(jpe?g|png|webp|gif)$', caseSensitive: false).hasMatch(url);
+      mimeType.toLowerCase().startsWith('image/') ||
+      RegExp(
+        r'\.(jpe?g|png|webp|gif|heic|heif)$',
+        caseSensitive: false,
+      ).hasMatch(name.isNotEmpty ? name : url);
+
+  bool get isVideo =>
+      mimeType.toLowerCase().startsWith('video/') ||
+      RegExp(
+        r'\.(mp4|mov|m4v|webm)$',
+        caseSensitive: false,
+      ).hasMatch(name.isNotEmpty ? name : url);
+
+  bool get hasRemoteObject => bucket.isNotEmpty && storagePath.isNotEmpty;
 
   factory ChatAttachment.fromJson(Map<String, dynamic> json) {
     return ChatAttachment(
@@ -30,6 +52,46 @@ class ChatAttachment {
       size: (json['size'] as num?)?.toInt() ?? 0,
       width: (json['width'] as num?)?.toInt(),
       height: (json['height'] as num?)?.toInt(),
+      durationMs:
+          (json['duration_ms'] as num?)?.toInt() ??
+          (json['durationMs'] as num?)?.toInt(),
+      bucket: json['bucket'] as String? ?? '',
+      storagePath:
+          json['storage_path'] as String? ??
+          json['storagePath'] as String? ??
+          '',
+      thumbnailUrl:
+          json['thumbnail_url'] as String? ??
+          json['thumbnailUrl'] as String? ??
+          '',
+    );
+  }
+
+  ChatAttachment copyWith({
+    String? url,
+    String? name,
+    String? mimeType,
+    int? size,
+    Object? width = _chatUnset,
+    Object? height = _chatUnset,
+    Object? durationMs = _chatUnset,
+    String? bucket,
+    String? storagePath,
+    String? thumbnailUrl,
+  }) {
+    return ChatAttachment(
+      url: url ?? this.url,
+      name: name ?? this.name,
+      mimeType: mimeType ?? this.mimeType,
+      size: size ?? this.size,
+      width: identical(width, _chatUnset) ? this.width : width as int?,
+      height: identical(height, _chatUnset) ? this.height : height as int?,
+      durationMs: identical(durationMs, _chatUnset)
+          ? this.durationMs
+          : durationMs as int?,
+      bucket: bucket ?? this.bucket,
+      storagePath: storagePath ?? this.storagePath,
+      thumbnailUrl: thumbnailUrl ?? this.thumbnailUrl,
     );
   }
 
@@ -40,6 +102,21 @@ class ChatAttachment {
     'size': size,
     if (width != null) 'width': width,
     if (height != null) 'height': height,
+    if (durationMs != null) 'duration_ms': durationMs,
+    if (bucket.isNotEmpty) 'bucket': bucket,
+    if (storagePath.isNotEmpty) 'storage_path': storagePath,
+    if (thumbnailUrl.isNotEmpty) 'thumbnail_url': thumbnailUrl,
+  };
+
+  Map<String, dynamic> toSupabaseJson() => {
+    'name': name,
+    'mime_type': mimeType,
+    'size': size,
+    if (width != null) 'width': width,
+    if (height != null) 'height': height,
+    if (durationMs != null) 'duration_ms': durationMs,
+    if (bucket.isNotEmpty) 'bucket': bucket,
+    if (storagePath.isNotEmpty) 'storage_path': storagePath,
   };
 }
 
@@ -88,6 +165,8 @@ class ChatMessage {
 
   bool get isProductShare => type == 'product' && sharedProduct != null;
   bool get isImage => type == 'image' && attachment?.isImage == true;
+  bool get isVideo => type == 'video' && attachment?.isVideo == true;
+  bool get isMedia => isImage || isVideo;
   bool get isDeleted => deletedAt != null;
   bool get isEdited => editedAt != null && !isDeleted;
   bool get isReply => replyToId.isNotEmpty;
@@ -99,6 +178,7 @@ class ChatMessage {
   String get previewText {
     if (isDeleted) return 'Сообщение удалено';
     if (isImage) return text.trim().isEmpty ? 'Фотография' : text.trim();
+    if (isVideo) return text.trim().isEmpty ? 'Видео' : text.trim();
     if (isProductShare) return text.trim().isEmpty ? 'Объявление' : text.trim();
     return text.trim();
   }
@@ -144,6 +224,8 @@ class ChatMessage {
           json['type'] as String? ??
           (sharedProduct != null
               ? 'product'
+              : attachment?.isVideo == true
+              ? 'video'
               : attachment?.isImage == true
               ? 'image'
               : 'text'),
@@ -256,8 +338,7 @@ class ChatMessage {
           'sender_name': replyToSenderName,
         },
       if (editedAt != null) 'editedAt': editedAt!.toUtc().toIso8601String(),
-      if (deletedAt != null)
-        'deletedAt': deletedAt!.toUtc().toIso8601String(),
+      if (deletedAt != null) 'deletedAt': deletedAt!.toUtc().toIso8601String(),
       'readBy': readBy,
       'reactions': reactions,
       'isPending': isPending,
@@ -275,19 +356,13 @@ class ChatMessage {
       'sender_avatar': senderAvatar,
       'type': type,
       if (sharedProduct != null) 'product': sharedProduct!.toJson(),
-      if (attachment != null) 'attachment': attachment!.toJson(),
+      if (attachment != null) 'attachment': attachment!.toSupabaseJson(),
       if (isReply) 'reply_to_id': replyToId,
       if (isReply)
         'reply_snapshot': {
           'text': replyToText,
           'sender_name': replyToSenderName,
         },
-      if (editedAt != null)
-        'edited_at': editedAt!.toUtc().toIso8601String(),
-      if (deletedAt != null)
-        'deleted_at': deletedAt!.toUtc().toIso8601String(),
-      'read_by': readBy,
-      'reactions': reactions,
     };
   }
 }
@@ -312,7 +387,7 @@ class SharedProductPreview {
       id: json['id'] as String? ?? '',
       title: json['title'] as String? ?? '',
       image: json['image'] as String? ?? '',
-      price: json['price'] as String? ?? '',
+      price: json['price']?.toString() ?? '',
       sellerHandle: json['seller_handle'] as String? ?? '',
     );
   }
@@ -488,11 +563,14 @@ class MessageThread {
       groupAvatar: json['group_avatar'] as String? ?? '',
       createdBy: json['created_by'] as String? ?? '',
       members: _parseMembers(json['members']),
-      isPinned: json['is_pinned'] as bool? ?? false,
-      isMuted: json['is_muted'] as bool? ?? false,
-      isArchived: json['is_archived'] as bool? ?? false,
-      draft: json['draft'] as String? ?? '',
-      lastReadAt: ChatMessage._parseOptionalDate(json['last_read_at']),
+      // Remote preferences and drafts live in chat_thread_member_state and are
+      // hydrated by AppRepository for the authenticated participant. Never
+      // consume the deprecated shared columns from message_threads here.
+      isPinned: false,
+      isMuted: false,
+      isArchived: false,
+      draft: '',
+      lastReadAt: null,
     );
   }
 
@@ -544,6 +622,27 @@ class MessageThread {
     return isGroup ? groupAvatar : otherPartyAvatar(currentUserId);
   }
 
+  String avatarForUser(String userId) {
+    if (userId.isEmpty) return '';
+    final storedAvatar = userId == buyerId
+        ? buyerAvatar
+        : userId == sellerId
+        ? sellerAvatar
+        : '';
+    if (storedAvatar.trim().isNotEmpty) return storedAvatar.trim();
+
+    final memberAvatar = memberById(userId)?.avatarUrl.trim() ?? '';
+    if (memberAvatar.isNotEmpty) return memberAvatar;
+
+    for (final message in messages.reversed) {
+      if (message.senderId == userId &&
+          message.senderAvatar.trim().isNotEmpty) {
+        return message.senderAvatar.trim();
+      }
+    }
+    return '';
+  }
+
   ConversationMember? memberById(String userId) {
     for (final member in members) {
       if (member.id == userId) return member;
@@ -576,10 +675,7 @@ class MessageThread {
   }
 
   String otherPartyAvatar(String currentUserId) {
-    if (currentUserId.isNotEmpty && currentUserId == sellerId) {
-      return buyerAvatar;
-    }
-    return sellerAvatar;
+    return avatarForUser(otherPartyId(currentUserId));
   }
 
   String otherPartyId(String currentUserId) {
@@ -698,20 +794,12 @@ class MessageThread {
       'seller_avatar': sellerAvatar,
       'last_message': lastMessage,
       'updated_at': updatedAt.toUtc().toIso8601String(),
-      'unread_count': unreadCount,
-      'messages': messages.map((message) => message.toSupabaseJson()).toList(),
       'is_group': isGroup,
       'title': title,
       'group_avatar': groupAvatar,
       'created_by': createdBy.isEmpty ? null : createdBy,
       'member_ids': memberIds,
       'members': members.map((member) => member.toJson()).toList(),
-      'is_pinned': isPinned,
-      'is_muted': isMuted,
-      'is_archived': isArchived,
-      'draft': draft,
-      if (lastReadAt != null)
-        'last_read_at': lastReadAt!.toUtc().toIso8601String(),
     };
   }
 }

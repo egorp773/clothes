@@ -132,7 +132,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           style: TextStyle(
             fontFamily: 'Montserrat',
             fontSize: 17,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w700,
             letterSpacing: -0.25,
             color: Colors.black,
           ),
@@ -463,6 +463,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     final valid = _formKey.currentState?.validate() ?? false;
     if (!valid) {
       _showMessage('Заполните обязательные поля');
@@ -487,28 +488,33 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       email: _emailController.text.trim().toLowerCase(),
       avatarUrl: _removeAvatar ? '' : widget.profile.avatarUrl,
     );
-    final identityError = await widget.onUpdateIdentity?.call(
-      name: displayName,
-      handle: handle,
-    );
-    if (!mounted) return;
-    if (identityError != null) {
-      setState(() => _saving = false);
-      _showMessage(identityError);
-      return;
+    try {
+      final identityError = await widget.onUpdateIdentity?.call(
+        name: displayName,
+        handle: handle,
+      );
+      if (!mounted) return;
+      if (identityError != null) {
+        _showMessage(identityError);
+        return;
+      }
+      final error = await widget.onSave(updated, _pickedAvatar);
+      if (!mounted) return;
+      if (error != null) {
+        _showMessage(error);
+        return;
+      }
+      _showMessage('Данные профиля сохранены');
+      Navigator.of(context).pop();
+    } catch (_) {
+      _showMessage('Не удалось сохранить профиль. Попробуйте ещё раз.');
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
-    final error = await widget.onSave(updated, _pickedAvatar);
-    if (!mounted) return;
-    setState(() => _saving = false);
-    if (error != null) {
-      _showMessage(error);
-      return;
-    }
-    _showMessage('Данные профиля сохранены');
-    Navigator.of(context).pop();
   }
 
   Future<void> _confirmEmail() async {
+    if (_confirmingEmail) return;
     if (_emailController.text.trim().isEmpty) {
       _showMessage('Укажите email');
       return;
@@ -519,15 +525,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       return;
     }
     setState(() => _confirmingEmail = true);
-    final result = await widget.onConfirmEmail(
-      _emailController.text.trim().toLowerCase(),
-    );
-    if (!mounted) return;
-    setState(() => _confirmingEmail = false);
-    _showMessage(result ?? 'Письмо для подтверждения отправлено');
+    try {
+      final result = await widget.onConfirmEmail(
+        _emailController.text.trim().toLowerCase(),
+      );
+      if (!mounted) return;
+      _showMessage(result ?? 'Письмо для подтверждения отправлено');
+    } catch (_) {
+      _showMessage('Не удалось отправить письмо. Попробуйте ещё раз.');
+    } finally {
+      if (mounted) setState(() => _confirmingEmail = false);
+    }
   }
 
   Future<void> _askToDelete() async {
+    if (_deleting) return;
     final accepted = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -551,14 +563,19 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
     if (accepted != true || !mounted) return;
     setState(() => _deleting = true);
-    final error = await widget.onDeleteAccount();
-    if (!mounted) return;
-    setState(() => _deleting = false);
-    if (error != null) {
-      _showMessage(error);
-      return;
+    try {
+      final error = await widget.onDeleteAccount();
+      if (!mounted) return;
+      if (error != null) {
+        _showMessage(error);
+        return;
+      }
+      Navigator.of(context).pop();
+    } catch (_) {
+      _showMessage('Не удалось удалить аккаунт. Попробуйте ещё раз.');
+    } finally {
+      if (mounted) setState(() => _deleting = false);
     }
-    Navigator.of(context).pop();
   }
 
   String? _requiredValidator(String? value) {
@@ -621,7 +638,7 @@ class _SectionLabel extends StatelessWidget {
           style: const TextStyle(
             fontFamily: 'Montserrat',
             fontSize: 15,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w700,
             letterSpacing: -0.15,
           ),
         ),
@@ -872,13 +889,11 @@ class _TapValueField extends StatelessWidget {
     required this.value,
     required this.onTap,
     required this.trailing,
-    this.required = false,
   });
 
   final String value;
   final VoidCallback onTap;
   final Widget trailing;
-  final bool required;
 
   @override
   Widget build(BuildContext context) {
@@ -894,17 +909,6 @@ class _TapValueField extends StatelessWidget {
         ),
         child: Row(
           children: [
-            if (required) ...[
-              Container(
-                width: 5,
-                height: 5,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFFF001F),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 5),
-            ],
             Expanded(
               child: Text(
                 value,

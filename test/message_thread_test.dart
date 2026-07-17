@@ -83,6 +83,28 @@ void main() {
     expect(restored.toSupabaseJson()['member_ids'], hasLength(3));
   });
 
+  test('does not consume participant state from shared thread columns', () {
+    final thread = MessageThread.fromSupabase({
+      'id': 'thread-private-state',
+      'buyer_id': 'buyer-1',
+      'seller_id': 'seller-1',
+      'updated_at': '2026-07-17T12:00:00Z',
+      'is_pinned': true,
+      'is_muted': true,
+      'is_archived': true,
+      'draft': 'another participant draft',
+      'last_read_at': '2026-07-17T11:00:00Z',
+    }, currentUserId: 'buyer-1');
+
+    expect(thread.isPinned, isFalse);
+    expect(thread.isMuted, isFalse);
+    expect(thread.isArchived, isFalse);
+    expect(thread.draft, isEmpty);
+    expect(thread.lastReadAt, isNull);
+    expect(thread.toSupabaseJson().containsKey('draft'), isFalse);
+    expect(thread.toSupabaseJson().containsKey('is_pinned'), isFalse);
+  });
+
   test('serializes chat timestamps as UTC and preserves remote instants', () {
     final localCreatedAt = DateTime(2026, 7, 16, 12, 30);
     final message = ChatMessage(
@@ -97,10 +119,7 @@ void main() {
       message.toSupabaseJson()['created_at'],
       localCreatedAt.toUtc().toIso8601String(),
     );
-    expect(
-      message.toSupabaseJson()['created_at'] as String,
-      endsWith('Z'),
-    );
+    expect(message.toSupabaseJson()['created_at'] as String, endsWith('Z'));
 
     final thread = MessageThread.fromSupabase({
       'id': 'thread-timezone',
@@ -121,6 +140,58 @@ void main() {
     expect(
       thread.messages.single.createdAt.toUtc(),
       DateTime.utc(2026, 7, 16, 12),
+    );
+  });
+
+  test('resolves an avatar from profile, member, then recent messages', () {
+    final fromMember = MessageThread(
+      id: 'avatar-member',
+      sellerName: 'Seller',
+      buyerName: 'Buyer',
+      productTitle: '',
+      lastMessage: 'Hello',
+      updatedAt: DateTime.utc(2026, 7, 17),
+      buyerId: 'buyer',
+      sellerId: 'seller',
+      members: const [
+        ConversationMember(id: 'buyer', name: 'Buyer', handle: '@buyer'),
+        ConversationMember(
+          id: 'seller',
+          name: 'Seller',
+          handle: '@seller',
+          avatarUrl: 'https://example.com/member.jpg',
+        ),
+      ],
+    );
+    expect(fromMember.displayAvatar('buyer'), 'https://example.com/member.jpg');
+
+    final fromMessage = fromMember.copyWith(
+      members: const [
+        ConversationMember(id: 'buyer', name: 'Buyer', handle: '@buyer'),
+        ConversationMember(id: 'seller', name: 'Seller', handle: '@seller'),
+      ],
+      messages: [
+        ChatMessage(
+          id: 'message-avatar',
+          text: 'Hello',
+          createdAt: DateTime.utc(2026, 7, 17),
+          isMine: false,
+          senderId: 'seller',
+          senderAvatar: 'https://example.com/message.jpg',
+        ),
+      ],
+    );
+    expect(
+      fromMessage.displayAvatar('buyer'),
+      'https://example.com/message.jpg',
+    );
+
+    final fromProfile = fromMessage.copyWith(
+      sellerAvatar: 'https://example.com/profile.jpg',
+    );
+    expect(
+      fromProfile.displayAvatar('buyer'),
+      'https://example.com/profile.jpg',
     );
   });
 }

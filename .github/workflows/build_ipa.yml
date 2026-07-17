@@ -1,55 +1,272 @@
-name: Build iOS IPA
+name: Build signed iOS IPA
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+    inputs:
+      bundle_id:
+        description: Final registered iOS bundle ID
+        required: true
+        type: string
+      version:
+        description: CFBundleShortVersionString (for example 1.0.0)
+        required: true
+        default: 1.0.0
+        type: string
+      build_number:
+        description: Monotonically increasing CFBundleVersion
+        required: true
+        default: "1"
+        type: string
+      distribution_method:
+        description: App Store Connect or registered-device IPA
+        required: true
+        default: app-store-connect
+        type: choice
+        options:
+          - app-store-connect
+          - ad-hoc
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-signed-ipa-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-ios-ipa:
-    name: Build clothes.ipa
-    runs-on: macos-15
+  signed-ipa:
+    name: Archive and export signed IPA
+    # macos-15 still defaults to Xcode 16.4. App Store Connect requires
+    # Xcode/iOS SDK 26+ since 2026-04-28, so release archives use the native
+    # macOS 26 image and verify the selected toolchain below.
+    runs-on: macos-26
+    timeout-minutes: 50
+    environment: ios-release
+    env:
+      IOS_BUNDLE_ID: ${{ inputs.bundle_id }}
+      IOS_BUILD_NAME: ${{ inputs.version }}
+      IOS_BUILD_NUMBER: ${{ inputs.build_number }}
+      IOS_DISTRIBUTION_METHOD: ${{ inputs.distribution_method }}
+      IOS_TEAM_ID: ${{ vars.IOS_TEAM_ID }}
+      IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+      IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_RELEASE_DART_DEFINES_BASE64: ${{ secrets.IOS_RELEASE_DART_DEFINES_BASE64 }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          flutter-version: 3.44.4
           channel: stable
           cache: true
 
-      - name: Flutter pub get
-        run: flutter pub get
-
-      - name: Build iOS app without code signing
-        run: flutter build ios --release --no-codesign
-
-      - name: Package clothes.ipa
+      - name: Verify App Store toolchain
         shell: bash
         run: |
           set -euo pipefail
+          xcodebuild -version
+          IOS_SDK_VERSION=$(xcrun --sdk iphoneos --show-sdk-version)
+          XCODE_MAJOR=$(xcodebuild -version | awk '/Xcode/{split($2, part, "."); print part[1]}')
+          IOS_SDK_MAJOR=${IOS_SDK_VERSION%%.*}
+          if [[ -z "$XCODE_MAJOR" || "$XCODE_MAJOR" -lt 26 || "$IOS_SDK_MAJOR" -lt 26 ]]; then
+            echo "::error::App Store release requires Xcode 26+ with iOS SDK 26+"
+            exit 1
+          fi
 
-          IPA_DIR="$GITHUB_WORKSPACE/ipa apps"
-          PAYLOAD_DIR="$IPA_DIR/Payload"
+      - name: Validate release inputs and protected configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$IOS_BUNDLE_ID" =~ ^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+$ ]]; then
+            echo "::error::bundle_id must be a registered reverse-DNS identifier"
+            exit 1
+          fi
+          if [[ "$IOS_BUNDLE_ID" == com.example.* ]]; then
+            echo "::error::Placeholder bundle IDs cannot be released"
+            exit 1
+          fi
+          if [[ ! "$IOS_BUILD_NAME" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+            echo "::error::version must contain two or three numeric components"
+            exit 1
+          fi
+          if [[ ! "$IOS_BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::build_number must be a positive integer"
+            exit 1
+          fi
+          for name in IOS_TEAM_ID IOS_DISTRIBUTION_CERTIFICATE_BASE64 IOS_DISTRIBUTION_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 IOS_RELEASE_DART_DEFINES_BASE64; do
+            if [[ -z "$(printenv "$name")" ]]; then
+              echo "::error::Missing ios-release environment value: $name"
+              exit 1
+            fi
+          done
 
-          rm -rf "$PAYLOAD_DIR" "$IPA_DIR/clothes.ipa"
-          mkdir -p "$PAYLOAD_DIR"
+      - name: Install locked Flutter dependencies
+        run: flutter pub get --enforce-lockfile
 
-          cp -R "$GITHUB_WORKSPACE/build/ios/iphoneos/Runner.app" "$PAYLOAD_DIR/Runner.app"
+      - name: Run Dart quality gates
+        run: |
+          dart format --output=none --set-exit-if-changed lib test
+          flutter analyze
+          flutter test
 
-          cd "$IPA_DIR"
-          /usr/bin/zip -qry clothes.ipa Payload
-          rm -rf Payload
+      - name: Decode and validate runtime configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEFINES_PATH="$RUNNER_TEMP/release.dart-defines.json"
+          printf '%s' "$IOS_RELEASE_DART_DEFINES_BASE64" | base64 -D > "$DEFINES_PATH"
+          echo "IOS_DEFINES_PATH=$DEFINES_PATH" >> "$GITHUB_ENV"
+          ruby -rjson -ruri -e '
+            data = JSON.parse(File.read(ARGV.fetch(0)))
+            bundle_id = ARGV.fetch(1)
+            required = %w[
+              SUPABASE_URL SUPABASE_ANON_KEY APP_URL_SCHEME
+              PUBLIC_WEB_BASE_URL FIREBASE_PROJECT_ID
+              FIREBASE_MESSAGING_SENDER_ID FIREBASE_IOS_API_KEY
+              FIREBASE_IOS_APP_ID FIREBASE_IOS_BUNDLE_ID
+            ]
+            missing = required.select { |key| data[key].to_s.strip.empty? }
+            abort "Missing release dart-defines: #{missing.join(", ")}" unless missing.empty?
+            placeholders = data.select do |_key, value|
+              value.to_s.match?(/YOUR_|your-production-domain|\.example(?:\/|$)/i)
+            end.keys
+            abort "Placeholder release dart-defines: #{placeholders.join(", ")}" unless placeholders.empty?
+            abort "APP_URL_SCHEME must equal bundle_id" unless data["APP_URL_SCHEME"] == bundle_id
+            abort "FIREBASE_IOS_BUNDLE_ID must equal bundle_id" unless data["FIREBASE_IOS_BUNDLE_ID"] == bundle_id
+            %w[SUPABASE_URL PUBLIC_WEB_BASE_URL].each do |key|
+              uri = URI(data.fetch(key)) rescue nil
+              abort "#{key} must be a valid HTTPS URL" unless uri&.scheme == "https" && uri.host
+            end
+          ' "$DEFINES_PATH" "$IOS_BUNDLE_ID"
 
-          ls -lh clothes.ipa
+      - name: Apply the dispatch identity to the temporary checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -e '
+            path, bundle_id = ARGV
+            source = File.read(path)
+            abort "Expected placeholder identity was not found" unless source.include?("com.example.clothes")
+            File.write(path, source.gsub("com.example.clothes", bundle_id))
+          ' ios/Runner.xcodeproj/project.pbxproj "$IOS_BUNDLE_ID"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleURLTypes:0:CFBundleURLName $IOS_BUNDLE_ID" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleURLTypes:0:CFBundleURLSchemes:0 $IOS_BUNDLE_ID" ios/Runner/Info.plist
 
-      - name: Upload clothes.ipa artifact
-        uses: actions/upload-artifact@v4
+      - name: Install and validate manual signing assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIGNING_DIR="$RUNNER_TEMP/ios-signing"
+          CERTIFICATE_PATH="$SIGNING_DIR/distribution.p12"
+          PROFILE_PATH="$SIGNING_DIR/distribution.mobileprovision"
+          PROFILE_PLIST="$SIGNING_DIR/profile.plist"
+          KEYCHAIN_PATH="$SIGNING_DIR/release.keychain-db"
+          mkdir -p "$SIGNING_DIR" "$HOME/Library/MobileDevice/Provisioning Profiles"
+          printf '%s' "$IOS_DISTRIBUTION_CERTIFICATE_BASE64" | base64 -D > "$CERTIFICATE_PATH"
+          printf '%s' "$IOS_PROVISIONING_PROFILE_BASE64" | base64 -D > "$PROFILE_PATH"
+          security cms -D -i "$PROFILE_PATH" > "$PROFILE_PLIST"
+
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$PROFILE_PLIST")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST")
+          PROFILE_TEAM=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")
+          PROFILE_APP_ID=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST")
+          PROFILE_APS=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:aps-environment' "$PROFILE_PLIST")
+          PROFILE_DEBUG=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$PROFILE_PLIST")
+
+          [[ "$PROFILE_TEAM" == "$IOS_TEAM_ID" ]] || { echo "::error::Provisioning profile team mismatch"; exit 1; }
+          [[ "$PROFILE_APP_ID" == "$IOS_TEAM_ID.$IOS_BUNDLE_ID" ]] || { echo "::error::Provisioning profile bundle mismatch"; exit 1; }
+          [[ "$PROFILE_APS" == production ]] || { echo "::error::Provisioning profile must include production push entitlement"; exit 1; }
+          [[ "$PROFILE_DEBUG" == false ]] || { echo "::error::Development provisioning profiles are not accepted"; exit 1; }
+          if [[ "$IOS_DISTRIBUTION_METHOD" == ad-hoc ]]; then
+            /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices:0' "$PROFILE_PLIST" >/dev/null
+          elif /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices:0' "$PROFILE_PLIST" >/dev/null 2>&1; then
+            echo "::error::App Store Connect export requires an App Store distribution profile"
+            exit 1
+          fi
+
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" -P "$IOS_DISTRIBUTION_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          {
+            echo
+            echo "DEVELOPMENT_TEAM = $IOS_TEAM_ID"
+            echo "CODE_SIGN_STYLE = Manual"
+            echo "CODE_SIGN_IDENTITY = Apple Distribution"
+            echo "PROVISIONING_PROFILE_SPECIFIER = $PROFILE_NAME"
+          } >> ios/Flutter/Release.xcconfig
+
+          echo "IOS_KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          echo "IOS_PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+          echo "IOS_PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+
+      - name: Create export options
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPORT_OPTIONS="$RUNNER_TEMP/ExportOptions.plist"
+          python3 - "$EXPORT_OPTIONS" "$IOS_DISTRIBUTION_METHOD" "$IOS_TEAM_ID" "$IOS_BUNDLE_ID" "$IOS_PROFILE_NAME" <<'PY'
+          import plistlib
+          import sys
+
+          path, method, team_id, bundle_id, profile_name = sys.argv[1:]
+          with open(path, "wb") as output:
+              plistlib.dump(
+                  {
+                      "method": method,
+                      "teamID": team_id,
+                      "signingStyle": "manual",
+                      "provisioningProfiles": {bundle_id: profile_name},
+                      "manageAppVersionAndBuildNumber": False,
+                      "stripSwiftSymbols": True,
+                  },
+                  output,
+              )
+          PY
+          echo "IOS_EXPORT_OPTIONS=$EXPORT_OPTIONS" >> "$GITHUB_ENV"
+
+      - name: Build distribution-signed IPA
+        run: >-
+          flutter build ipa --release
+          --build-name="$IOS_BUILD_NAME"
+          --build-number="$IOS_BUILD_NUMBER"
+          --dart-define-from-file="$IOS_DEFINES_PATH"
+          --export-options-plist="$IOS_EXPORT_OPTIONS"
+
+      - name: Verify signature and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find build/ios/archive -path '*.xcarchive/Products/Applications/*.app' -print -quit)
+          IPA_PATH=$(find build/ios/ipa -name '*.ipa' -print -quit)
+          [[ -n "$APP_PATH" && -n "$IPA_PATH" ]] || { echo "::error::Signed app or IPA not found"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          shasum -a 256 "$IPA_PATH" > build/ios/ipa/SHA256SUMS.txt
+
+      - name: Upload signed IPA
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: clothes.ipa
-          path: ipa apps/clothes.ipa
+          name: ios-signed-ipa-${{ inputs.version }}-${{ inputs.build_number }}
+          path: |
+            build/ios/ipa/*.ipa
+            build/ios/ipa/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Remove temporary signing material
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$IOS_KEYCHAIN_PATH" 2>/dev/null || true
+          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$IOS_PROFILE_UUID.mobileprovision"
+          rm -rf "$RUNNER_TEMP/ios-signing" "$IOS_DEFINES_PATH" "$IOS_EXPORT_OPTIONS"

@@ -43,4 +43,40 @@ void main() {
     expect(markedAll, isTrue);
     expect(find.text('прочитать все'), findsNothing);
   });
+
+  testWidgets(
+    'notification still opens and rolls back unread state when marking fails',
+    (tester) async {
+      var opened = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProfileNotificationsScreen(
+            notifications: [
+              ProfileNotification(
+                id: 'notification-1',
+                title: 'Заказ доставлен',
+                body: 'Откройте заказ',
+                kind: 'order',
+                targetId: 'order-1',
+                createdAt: DateTime.now().toUtc(),
+              ),
+            ],
+            onMarkRead: (_) async => throw StateError('offline'),
+            onMarkAllRead: () async {},
+            onNotificationTap: (_) async => opened = true,
+          ),
+        ),
+      );
+
+      await tester.tap(find.text('Заказ доставлен'));
+      await tester.pumpAndSettle();
+
+      expect(opened, isTrue);
+      expect(find.text('прочитать все'), findsOneWidget);
+      expect(
+        find.text('Не удалось отметить уведомление прочитанным'),
+        findsOneWidget,
+      );
+    },
+  );
 }

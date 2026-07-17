@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/supabase_config.dart';
 import '../../models/app_profile.dart';
 import '../../models/message_thread.dart';
 import '../../models/product.dart';
@@ -115,7 +116,12 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
     }
     setState(() => _searching = true);
     _debounce = Timer(const Duration(milliseconds: 220), () async {
-      final results = await widget.searchUsers(query);
+      List<AppUserProfile> results;
+      try {
+        results = await widget.searchUsers(query);
+      } catch (_) {
+        results = const [];
+      }
       if (!mounted || _searchController.text.trim() != query) return;
       setState(() {
         _searchResults = results;
@@ -133,6 +139,11 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
   }
 
   void _toggleUser(AppUserProfile user) {
+    final directThread = _directThreadForUser(user.id);
+    if (directThread != null) {
+      _toggleThread(directThread);
+      return;
+    }
     setState(() {
       if (_selectedUsers.containsKey(user.id)) {
         _selectedUsers.remove(user.id);
@@ -142,31 +153,68 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
     });
   }
 
+  MessageThread? _directThreadForUser(String userId) {
+    for (final thread in widget.threads) {
+      if (!thread.isGroup &&
+          thread.containsUser(widget.currentUserId) &&
+          thread.otherPartyId(widget.currentUserId) == userId) {
+        return thread;
+      }
+    }
+    return null;
+  }
+
+  bool _isUserSelected(String userId) {
+    final directThread = _directThreadForUser(userId);
+    return _selectedUsers.containsKey(userId) ||
+        (directThread != null && _selectedThreadIds.contains(directThread.id));
+  }
+
   Future<void> _send() async {
     if (_selectionCount == 0 || _sending) return;
     setState(() => _sending = true);
     var sent = 0;
     var failed = 0;
     for (final threadId in _selectedThreadIds) {
-      if (await widget.shareToThread(threadId, widget.product)) {
-        sent++;
-      } else {
+      try {
+        if (await widget.shareToThread(threadId, widget.product)) {
+          sent++;
+        } else {
+          failed++;
+        }
+      } catch (_) {
         failed++;
       }
     }
     for (final user in _selectedUsers.values) {
-      if (await widget.shareToUser(user, widget.product) != null) {
-        sent++;
-      } else {
+      try {
+        if (await widget.shareToUser(user, widget.product) != null) {
+          sent++;
+        } else {
+          failed++;
+        }
+      } catch (_) {
         failed++;
       }
     }
     if (!mounted) return;
-    Navigator.pop(context);
+    final messenger = ScaffoldMessenger.of(context);
     final message = failed == 0
         ? 'Отправлено: $sent'
         : 'Отправлено: $sent, не удалось: $failed';
-    ScaffoldMessenger.of(context).showSnackBar(
+    if (sent == 0 && failed > 0) {
+      setState(() => _sending = false);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    Navigator.pop(context);
+    messenger.showSnackBar(
       SnackBar(
         content: Text(message),
         behavior: SnackBarBehavior.floating,
@@ -177,11 +225,12 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
 
   Future<void> _copyLink() async {
     await Clipboard.setData(
-      ClipboardData(text: 'https://clothes.app/products/${widget.product.id}'),
+      ClipboardData(text: SupabaseConfig.productShareUrl(widget.product.id)),
     );
     if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
     Navigator.pop(context);
-    ScaffoldMessenger.of(context).showSnackBar(
+    messenger.showSnackBar(
       const SnackBar(
         content: Text('Ссылка скопирована'),
         behavior: SnackBarBehavior.floating,
@@ -191,7 +240,7 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
 
   Future<void> _shareExternally() async {
     final product = widget.product;
-    final link = 'https://clothes.app/products/${product.id}';
+    final link = SupabaseConfig.productShareUrl(product.id);
     final renderBox = context.findRenderObject() as RenderBox?;
     try {
       await Share.share(
@@ -294,7 +343,7 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
                           ..._searchResults.map(
                             (user) => _UserResult(
                               user: user,
-                              selected: _selectedUsers.containsKey(user.id),
+                              selected: _isUserSelected(user.id),
                               onTap: () => _toggleUser(user),
                             ),
                           ),
@@ -333,6 +382,7 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
                             width: double.infinity,
                             height: 50,
                             child: FilledButton(
+                              key: const Key('share-send-button'),
                               onPressed: _sending ? null : _send,
                               style: FilledButton.styleFrom(
                                 backgroundColor: _shareInk,
@@ -415,7 +465,7 @@ class _Header extends StatelessWidget {
                   'Поделиться объявлением',
                   style: TextStyle(
                     fontSize: 17,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w700,
                     color: _shareInk,
                   ),
                 ),
@@ -494,17 +544,17 @@ class _RecentRecipient extends StatelessWidget {
         child: Column(
           children: [
             _RecipientAvatar(
-              imageUrl: thread.isProductChat
+              imageUrl: thread.displayAvatar(currentUserId),
+              name: title,
+              badgeImage: thread.productImage.trim().isNotEmpty
                   ? thread.productImage
-                  : thread.displayAvatar(currentUserId),
-              name: thread.isProductChat ? thread.productTitle : title,
-              badgeImage: thread.isProductChat
-                  ? thread.displayAvatar(currentUserId)
                   : '',
-              isProduct: thread.isProductChat,
+              isProduct: false,
               selected: selected,
               isGroup: thread.isGroup,
-              members: thread.members,
+              members: thread.members
+                  .where((member) => member.id != currentUserId)
+                  .toList(growable: false),
             ),
             const SizedBox(height: 7),
             Text(
@@ -657,20 +707,25 @@ class _InitialDot extends StatelessWidget {
     return Container(
       width: 27,
       height: 27,
+      padding: const EdgeInsets.all(1.5),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.18),
         shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 1.5),
+        border: Border.all(color: Colors.white, width: 1),
       ),
-      child: Center(
-        child: Text(
-          initial,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
+      child: ClipOval(
+        child: member.avatarUrl.trim().isNotEmpty
+            ? AppImage(imageUrl: member.avatarUrl, fit: BoxFit.cover)
+            : Center(
+                child: Text(
+                  initial,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
       ),
     );
   }
@@ -689,35 +744,38 @@ class _UserResult extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      onTap: onTap,
-      contentPadding: const EdgeInsets.symmetric(vertical: 2),
-      leading: _RecipientAvatar(
-        imageUrl: user.avatarUrl,
-        name: user.name,
-        selected: selected,
-      ),
-      title: Text(
-        user.name,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontWeight: FontWeight.w700, color: _shareInk),
-      ),
-      subtitle: Text(user.handle, style: const TextStyle(color: _shareMuted)),
-      trailing: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        width: 25,
-        height: 25,
-        decoration: BoxDecoration(
-          color: selected ? _shareInk : Colors.white,
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: selected ? _shareInk : const Color(0xFFD4D4D8),
-          ),
+    return Material(
+      color: Colors.transparent,
+      child: ListTile(
+        onTap: onTap,
+        contentPadding: const EdgeInsets.symmetric(vertical: 2),
+        leading: _RecipientAvatar(
+          imageUrl: user.avatarUrl,
+          name: user.name,
+          selected: selected,
         ),
-        child: selected
-            ? const Icon(Icons.check_rounded, size: 16, color: Colors.white)
-            : null,
+        title: Text(
+          user.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w700, color: _shareInk),
+        ),
+        subtitle: Text(user.handle, style: const TextStyle(color: _shareMuted)),
+        trailing: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          width: 25,
+          height: 25,
+          decoration: BoxDecoration(
+            color: selected ? _shareInk : Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: selected ? _shareInk : const Color(0xFFD4D4D8),
+            ),
+          ),
+          child: selected
+              ? const Icon(Icons.check_rounded, size: 16, color: Colors.white)
+              : null,
+        ),
       ),
     );
   }

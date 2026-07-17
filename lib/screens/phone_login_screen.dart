@@ -6,10 +6,14 @@ class PhoneLoginScreen extends StatefulWidget {
     super.key,
     required this.onBack,
     required this.onClose,
+    required this.onRequestCode,
+    required this.onVerifyCode,
   });
 
   final VoidCallback onBack;
   final VoidCallback onClose;
+  final Future<String?> Function(String phone) onRequestCode;
+  final Future<String?> Function(String phone, String code) onVerifyCode;
 
   @override
   State<PhoneLoginScreen> createState() => _PhoneLoginScreenState();
@@ -17,10 +21,79 @@ class PhoneLoginScreen extends StatefulWidget {
 
 class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
   final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _codeController = TextEditingController();
+  bool _codeRequested = false;
+  bool _isSubmitting = false;
+  String? _errorText;
+
+  String get _normalizedPhone {
+    final digits = _phoneController.text.replaceAll(RegExp(r'\D'), '');
+    return '+7$digits';
+  }
+
+  Future<void> _submit() async {
+    if (_isSubmitting) return;
+    FocusScope.of(context).unfocus();
+    final digits = _phoneController.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.length != 10) {
+      setState(() => _errorText = 'Введите 10 цифр номера телефона');
+      return;
+    }
+    final code = _codeController.text.replaceAll(RegExp(r'\D'), '');
+    if (_codeRequested && code.length < 4) {
+      setState(() => _errorText = 'Введите код из сообщения');
+      return;
+    }
+
+    setState(() {
+      _isSubmitting = true;
+      _errorText = null;
+    });
+    final isVerifying = _codeRequested;
+    String? error;
+    try {
+      error = isVerifying
+          ? await widget.onVerifyCode(_normalizedPhone, code)
+          : await widget.onRequestCode(_normalizedPhone);
+    } catch (_) {
+      error = isVerifying
+          ? 'Не удалось подтвердить код. Попробуйте ещё раз'
+          : 'Не удалось отправить код. Попробуйте ещё раз';
+    }
+    if (!mounted) return;
+    setState(() {
+      _isSubmitting = false;
+      _errorText = error;
+      if (error == null && !_codeRequested) _codeRequested = true;
+    });
+    if (error == null && isVerifying) {
+      widget.onClose();
+    }
+  }
+
+  Future<void> _resendCode() async {
+    if (_isSubmitting) return;
+    setState(() {
+      _isSubmitting = true;
+      _errorText = null;
+    });
+    String? error;
+    try {
+      error = await widget.onRequestCode(_normalizedPhone);
+    } catch (_) {
+      error = 'Не удалось отправить код. Попробуйте ещё раз';
+    }
+    if (!mounted) return;
+    setState(() {
+      _isSubmitting = false;
+      _errorText = error ?? 'Новый код отправлен';
+    });
+  }
 
   @override
   void dispose() {
     _phoneController.dispose();
+    _codeController.dispose();
     super.dispose();
   }
 
@@ -64,7 +137,9 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                   right: 0,
                   top: 245 * sy + yShift,
                   child: Text(
-                    'введите номер телефона',
+                    _codeRequested
+                        ? 'введите код подтверждения'
+                        : 'введите номер телефона',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontFamily: 'Montserrat',
@@ -80,10 +155,12 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                   left: 30 * sx,
                   right: 30 * sx,
                   top: 289 * sy + yShift,
-                  child: const Text(
-                    'Позвоним и отправим код. Введите\n'
-                    'последние 4 цифры номера телефона или\n'
-                    'код из сообщения.',
+                  child: Text(
+                    _codeRequested
+                        ? 'Код отправлен на $_normalizedPhone.\n'
+                              'Введите его, чтобы продолжить.'
+                        : 'Отправим код подтверждения в сообщении.\n'
+                              'Номер нужен для безопасного входа.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontFamily: 'Montserrat',
@@ -100,17 +177,37 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                   right: 15 * sx,
                   top: 380 * sy + yShift,
                   height: 34,
-                  child: _PhoneNumberField(controller: _phoneController),
+                  child: _codeRequested
+                      ? _ConfirmationCodeField(controller: _codeController)
+                      : _PhoneNumberField(controller: _phoneController),
                 ),
+                if (_errorText != null)
+                  Positioned(
+                    left: 20 * sx,
+                    right: 20 * sx,
+                    top: 414 * sy + yShift,
+                    child: Text(
+                      _errorText!,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      style: TextStyle(
+                        fontFamily: 'Montserrat',
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w500,
+                        height: 1.25,
+                        color: _errorText == 'Новый код отправлен'
+                            ? const Color(0xFF4E7B55)
+                            : const Color(0xFFB3261E),
+                      ),
+                    ),
+                  ),
                 Positioned(
                   left: 15 * sx,
                   right: 15 * sx,
                   top: 438 * sy + yShift,
                   height: 43,
                   child: ElevatedButton(
-                    onPressed: () {
-                      // TODO: Request phone confirmation code.
-                    },
+                    onPressed: _isSubmitting ? null : _submit,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.black,
                       foregroundColor: Colors.white,
@@ -120,17 +217,26 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                         borderRadius: BorderRadius.zero,
                       ),
                     ),
-                    child: const Text(
-                      'ПОЛУЧИТЬ КОД',
-                      style: TextStyle(
-                        fontFamily: 'Montserrat',
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                        height: 1,
-                        letterSpacing: 0,
-                        color: Colors.white,
-                      ),
-                    ),
+                    child: _isSubmitting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Text(
+                            _codeRequested ? 'ВОЙТИ' : 'ПОЛУЧИТЬ КОД',
+                            style: const TextStyle(
+                              fontFamily: 'Montserrat',
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              height: 1,
+                              letterSpacing: 0,
+                              color: Colors.white,
+                            ),
+                          ),
                   ),
                 ),
                 Positioned(
@@ -139,13 +245,13 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                   top: 507 * sy + yShift,
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTap: () {
-                      // TODO: Skip phone login.
-                    },
-                    child: const Text(
-                      'НЕ СЕЙЧАС',
+                    onTap: _isSubmitting
+                        ? null
+                        : (_codeRequested ? _resendCode : widget.onClose),
+                    child: Text(
+                      _codeRequested ? 'ОТПРАВИТЬ КОД ЕЩЁ РАЗ' : 'НЕ СЕЙЧАС',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 12.5,
                         fontWeight: FontWeight.w700,
@@ -289,6 +395,53 @@ class _PhoneNumberField extends StatelessWidget {
   }
 }
 
+class _ConfirmationCodeField extends StatelessWidget {
+  const _ConfirmationCodeField({required this.controller});
+
+  final TextEditingController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      autofocus: true,
+      keyboardType: TextInputType.number,
+      textInputAction: TextInputAction.done,
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(8),
+      ],
+      onSubmitted: (_) => FocusScope.of(context).unfocus(),
+      cursorColor: Colors.black,
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        fontFamily: 'Montserrat',
+        fontSize: 20,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 7,
+        color: Colors.black,
+      ),
+      decoration: const InputDecoration(
+        hintText: '000000',
+        hintStyle: TextStyle(
+          fontFamily: 'Montserrat',
+          fontSize: 20,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 7,
+          color: Color(0xFFB6B6BA),
+        ),
+        enabledBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: Color(0xFFCFCFCF)),
+        ),
+        focusedBorder: UnderlineInputBorder(
+          borderSide: BorderSide(color: Colors.black),
+        ),
+        contentPadding: EdgeInsets.only(bottom: 8),
+      ),
+    );
+  }
+}
+
 class _PhoneUnderline extends StatelessWidget {
   const _PhoneUnderline();
 
@@ -306,7 +459,11 @@ class _PhoneNumberInputFormatter extends TextInputFormatter {
     TextEditingValue oldValue,
     TextEditingValue newValue,
   ) {
-    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    var digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    if (digits.length > 10 &&
+        (digits.startsWith('7') || digits.startsWith('8'))) {
+      digits = digits.substring(1);
+    }
     final limitedDigits = digits.length > 10 ? digits.substring(0, 10) : digits;
     final buffer = StringBuffer();
 

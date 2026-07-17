@@ -295,3 +295,12 @@ class SellerReview {
     };
   }
 }
+
+class SellerReviewSubmissionException implements Exception {
+  const SellerReviewSubmissionException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}

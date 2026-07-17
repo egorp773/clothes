@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../models/app_profile.dart';
 import '../models/product.dart';
@@ -19,6 +20,9 @@ class SellerProfileScreen extends StatefulWidget {
     required this.loadReviews,
     required this.onCreateReview,
     required this.canCreateReview,
+    this.onShareSeller,
+    this.onReportSeller,
+    this.onBlockSeller,
   });
 
   final Product sourceProduct;
@@ -41,6 +45,10 @@ class SellerProfileScreen extends StatefulWidget {
   })
   onCreateReview;
   final bool canCreateReview;
+  final Future<void> Function(SellerProfile seller)? onShareSeller;
+  final Future<String?> Function(SellerProfile seller, String reason)?
+  onReportSeller;
+  final Future<String?> Function(SellerProfile seller)? onBlockSeller;
 
   @override
   State<SellerProfileScreen> createState() => _SellerProfileScreenState();
@@ -50,6 +58,9 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
   late SellerProfile _seller;
   late List<Product> _products;
   int _tabIndex = 0;
+  bool _isRunningSellerAction = false;
+  bool _isLoading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -64,12 +75,33 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
   }
 
   Future<void> _load() async {
-    final profile = await widget.loadProfile(widget.sourceProduct);
-    final products = await widget.loadProducts(widget.sourceProduct.ownerId);
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
+    }
+    SellerProfile? profile;
+    List<Product>? products;
+    var failed = false;
+    try {
+      profile = await widget.loadProfile(widget.sourceProduct);
+    } catch (_) {
+      failed = true;
+    }
+    try {
+      products = await widget.loadProducts(widget.sourceProduct.ownerId);
+    } catch (_) {
+      failed = true;
+    }
     if (!mounted) return;
     setState(() {
       if (profile != null) _seller = profile;
-      _products = products;
+      if (products != null) _products = products;
+      _isLoading = false;
+      _loadError = failed
+          ? 'Не все данные продавца загрузились. Показана доступная информация.'
+          : null;
     });
   }
 
@@ -95,6 +127,204 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
     );
   }
 
+  Future<void> _openMessage() async {
+    if (_isRunningSellerAction) return;
+    setState(() => _isRunningSellerAction = true);
+    try {
+      await widget.onMessage(_seller);
+    } catch (_) {
+      _showMessage('Не удалось открыть чат. Попробуйте ещё раз.');
+    } finally {
+      if (mounted) setState(() => _isRunningSellerAction = false);
+    }
+  }
+
+  Future<void> _shareSeller() async {
+    if (_isRunningSellerAction) return;
+    setState(() => _isRunningSellerAction = true);
+    try {
+      final callback = widget.onShareSeller;
+      if (callback != null) {
+        await callback(_seller);
+      } else {
+        final handle = _seller.handle.trim();
+        final text = [
+          'Профиль продавца ${_seller.name.trim()}',
+          if (handle.isNotEmpty) handle,
+        ].join('\n');
+        final box = context.findRenderObject() as RenderBox?;
+        await Share.share(
+          text,
+          subject: 'Профиль продавца ${_seller.name.trim()}',
+          sharePositionOrigin: box == null
+              ? null
+              : box.localToGlobal(Offset.zero) & box.size,
+        );
+      }
+    } catch (_) {
+      _showMessage('Не удалось открыть меню «Поделиться». Попробуйте ещё раз.');
+    } finally {
+      if (mounted) setState(() => _isRunningSellerAction = false);
+    }
+  }
+
+  Future<void> _openSellerActions() async {
+    if (_isRunningSellerAction) return;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('Пожаловаться на профиль'),
+              subtitle: Text(
+                widget.onReportSeller == null
+                    ? 'Сервис модерации ещё подключается'
+                    : 'Сообщить о нарушении правил',
+              ),
+              onTap: () => Navigator.pop(sheetContext, 'report'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.block_rounded, color: Colors.red),
+              title: const Text(
+                'Заблокировать пользователя',
+                style: TextStyle(color: Colors.red),
+              ),
+              subtitle: Text(
+                widget.onBlockSeller == null
+                    ? 'Сервис блокировок ещё подключается'
+                    : 'Скрыть объявления и прекратить общение',
+              ),
+              onTap: () => Navigator.pop(sheetContext, 'block'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == 'report') await _reportSeller();
+    if (action == 'block') await _blockSeller();
+  }
+
+  Future<void> _reportSeller() async {
+    final callback = widget.onReportSeller;
+    if (callback == null) {
+      _showMessage(
+        'Жалобы станут доступны после подключения службы модерации.',
+      );
+      return;
+    }
+    final reason = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 2, 20, 8),
+              child: Text(
+                'Причина жалобы',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              ),
+            ),
+            for (final reason in const [
+              'Мошенничество или попытка обмана',
+              'Запрещённые товары',
+              'Оскорбления или домогательства',
+              'Спам или чужой контент',
+              'Другая причина',
+            ])
+              ListTile(
+                title: Text(reason),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.pop(sheetContext, reason),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (reason == null || !mounted) return;
+    setState(() => _isRunningSellerAction = true);
+    try {
+      final error = await callback(_seller, reason);
+      if (!mounted) return;
+      if (error != null) {
+        _showMessage(error);
+        return;
+      }
+      _showMessage('Жалоба отправлена на модерацию.');
+    } catch (_) {
+      _showMessage('Не удалось отправить жалобу. Попробуйте ещё раз.');
+    } finally {
+      if (mounted) setState(() => _isRunningSellerAction = false);
+    }
+  }
+
+  Future<void> _blockSeller() async {
+    final callback = widget.onBlockSeller;
+    if (callback == null) {
+      _showMessage(
+        'Блокировка станет доступна после подключения службы модерации.',
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Заблокировать пользователя?'),
+        content: const Text(
+          'Его объявления и сообщения должны исчезнуть из ваших разделов. Действие можно будет отменить в настройках.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('ОТМЕНА'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text(
+              'ЗАБЛОКИРОВАТЬ',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _isRunningSellerAction = true);
+    try {
+      final error = await callback(_seller);
+      if (!mounted) return;
+      if (error != null) {
+        _showMessage(error);
+        return;
+      }
+      Navigator.of(context).maybePop();
+    } catch (_) {
+      _showMessage(
+        'Не удалось заблокировать пользователя. Попробуйте ещё раз.',
+      );
+    } finally {
+      if (mounted) setState(() => _isRunningSellerAction = false);
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
+  }
+
   @override
   Widget build(BuildContext context) {
     final topInset = MediaQuery.of(context).viewPadding.top;
@@ -114,7 +344,65 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _TopBar(onBack: () => Navigator.pop(context)),
+                        _TopBar(
+                          onBack: () => Navigator.pop(context),
+                          onShare: _isRunningSellerAction ? null : _shareSeller,
+                          onMore: _isRunningSellerAction
+                              ? null
+                              : _openSellerActions,
+                        ),
+                        if (_isLoading) ...[
+                          const SizedBox(height: 8),
+                          const LinearProgressIndicator(
+                            minHeight: 2,
+                            color: Colors.black,
+                            backgroundColor: Color(0xFFEDEDEF),
+                          ),
+                        ],
+                        if (_loadError != null) ...[
+                          const SizedBox(height: 10),
+                          Material(
+                            color: const Color(0xFFF4F4F5),
+                            borderRadius: BorderRadius.circular(12),
+                            child: InkWell(
+                              onTap: _load,
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 10,
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.info_outline_rounded,
+                                      size: 18,
+                                    ),
+                                    const SizedBox(width: 9),
+                                    Expanded(
+                                      child: Text(
+                                        _loadError!,
+                                        style: const TextStyle(
+                                          fontSize: 11.5,
+                                          height: 1.3,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    const Text(
+                                      'ПОВТОРИТЬ',
+                                      style: TextStyle(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 28),
                         _SellerHeader(seller: _seller),
                         const SizedBox(height: 16),
@@ -127,13 +415,15 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
                           style: TextStyle(
                             fontSize: 24,
                             height: 1,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                             letterSpacing: 0,
                             color: Color(0xFF050505),
                           ),
                         ),
                         const SizedBox(height: 16),
-                        _MessageBar(onTap: () => widget.onMessage(_seller)),
+                        _MessageBar(
+                          onTap: _isRunningSellerAction ? null : _openMessage,
+                        ),
                         const SizedBox(height: 22),
                       ],
                     ),
@@ -196,9 +486,15 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.onBack});
+  const _TopBar({
+    required this.onBack,
+    required this.onShare,
+    required this.onMore,
+  });
 
   final VoidCallback onBack;
+  final VoidCallback? onShare;
+  final VoidCallback? onMore;
 
   @override
   Widget build(BuildContext context) {
@@ -206,16 +502,12 @@ class _TopBar extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         _TopIconButton(icon: Icons.arrow_back_ios_new, onTap: onBack),
-        _TopIconButton(
-          icon: Icons.ios_share,
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Профиль продавца готов к отправке'),
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
-          },
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _TopIconButton(icon: Icons.ios_share, onTap: onShare),
+            _TopIconButton(icon: Icons.more_horiz_rounded, onTap: onMore),
+          ],
         ),
       ],
     );
@@ -226,7 +518,7 @@ class _TopIconButton extends StatelessWidget {
   const _TopIconButton({required this.icon, required this.onTap});
 
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -236,7 +528,11 @@ class _TopIconButton extends StatelessWidget {
       child: SizedBox(
         width: 44,
         height: 44,
-        child: Icon(icon, color: Colors.black, size: 23),
+        child: Icon(
+          icon,
+          color: onTap == null ? const Color(0xFFAAAAAF) : Colors.black,
+          size: 23,
+        ),
       ),
     );
   }
@@ -265,7 +561,7 @@ class _SellerHeader extends StatelessWidget {
                 style: const TextStyle(
                   fontSize: 28,
                   height: 1,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                   letterSpacing: 0,
                   color: Color(0xFF050505),
                 ),
@@ -297,11 +593,11 @@ class _SellerHeader extends StatelessWidget {
                     ),
                     alignment: Alignment.center,
                     child: const Text(
-                      'ПОДПИСАТЬСЯ',
+                      'ПРОДАВЕЦ',
                       style: TextStyle(
                         fontSize: 9.5,
                         height: 1,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w700,
                         letterSpacing: 3.2,
                         color: Colors.white,
                       ),
@@ -358,7 +654,7 @@ class _Avatar extends StatelessWidget {
         seller.name.trim().isEmpty
             ? '?'
             : seller.name.characters.first.toUpperCase(),
-        style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800),
+        style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700),
       ),
     );
   }
@@ -430,7 +726,7 @@ class _RatingPill extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 28,
                 height: 1,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
                 letterSpacing: 0,
                 color: Colors.white,
               ),
@@ -486,7 +782,7 @@ class _Stars extends StatelessWidget {
 class _MessageBar extends StatelessWidget {
   const _MessageBar({required this.onTap});
 
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -500,12 +796,12 @@ class _MessageBar extends StatelessWidget {
           color: const Color(0xFFF2F2F3),
           borderRadius: BorderRadius.circular(999),
         ),
-        child: const Row(
+        child: Row(
           children: [
             Expanded(
               child: Text(
-                'введите сообщение',
-                style: TextStyle(
+                onTap == null ? 'открываем чат…' : 'введите сообщение',
+                style: const TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
                   letterSpacing: 0,
@@ -513,7 +809,11 @@ class _MessageBar extends StatelessWidget {
                 ),
               ),
             ),
-            Icon(Icons.send, size: 23, color: Colors.black),
+            Icon(
+              Icons.send,
+              size: 23,
+              color: onTap == null ? const Color(0xFFAAAAAF) : Colors.black,
+            ),
           ],
         ),
       ),
@@ -610,7 +910,7 @@ class _TabButton extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 16,
                 height: 1,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
                 letterSpacing: 0,
                 color: Color(0xFF050505),
               ),
@@ -642,7 +942,7 @@ class _SellerProductCard extends StatefulWidget {
 
   final Product product;
   final VoidCallback onTap;
-  final VoidCallback onLike;
+  final Future<void> Function() onLike;
   final VoidCallback onShare;
 
   @override
@@ -651,12 +951,36 @@ class _SellerProductCard extends StatefulWidget {
 
 class _SellerProductCardState extends State<_SellerProductCard> {
   late bool _isLiked = widget.product.isLiked;
+  bool _isUpdatingLike = false;
 
   @override
   void didUpdateWidget(covariant _SellerProductCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.product.isLiked != widget.product.isLiked) {
       _isLiked = widget.product.isLiked;
+    }
+  }
+
+  Future<void> _toggleLike() async {
+    if (_isUpdatingLike) return;
+    final previous = _isLiked;
+    setState(() {
+      _isUpdatingLike = true;
+      _isLiked = !_isLiked;
+    });
+    try {
+      await widget.onLike();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLiked = previous);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Не удалось обновить избранное. Попробуйте ещё раз.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isUpdatingLike = false);
     }
   }
 
@@ -713,10 +1037,7 @@ class _SellerProductCardState extends State<_SellerProductCard> {
                 ),
                 _SmallIconButton(
                   icon: _isLiked ? Icons.favorite : Icons.favorite_border,
-                  onTap: () {
-                    setState(() => _isLiked = !_isLiked);
-                    widget.onLike();
-                  },
+                  onTap: _isUpdatingLike ? null : _toggleLike,
                 ),
                 _SmallIconButton(
                   icon: Icons.near_me_outlined,
@@ -735,7 +1056,7 @@ class _SmallIconButton extends StatelessWidget {
   const _SmallIconButton({required this.icon, required this.onTap});
 
   final IconData icon;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -745,7 +1066,11 @@ class _SmallIconButton extends StatelessWidget {
       child: SizedBox(
         width: 30,
         height: 28,
-        child: Icon(icon, size: 22, color: Colors.black),
+        child: Icon(
+          icon,
+          size: 22,
+          color: onTap == null ? const Color(0xFFAAAAAF) : Colors.black,
+        ),
       ),
     );
   }

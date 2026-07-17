@@ -82,7 +82,8 @@ class _CatalogSearchSheetState extends State<CatalogSearchSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
-    final availableHeight = MediaQuery.sizeOf(context).height - bottomInset - 24;
+    final availableHeight =
+        MediaQuery.sizeOf(context).height - bottomInset - 24;
     final sheetHeight = availableHeight.clamp(280.0, 540.0).toDouble();
     final suggestions = widget.index.suggestions(_controller.text);
     final showRecent = CatalogSearchIndex.normalize(_controller.text).isEmpty;
@@ -102,57 +103,57 @@ class _CatalogSearchSheetState extends State<CatalogSearchSheet> {
               top: false,
               child: Column(
                 children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      key: const Key('catalog-search-field'),
-                      controller: _controller,
-                      autofocus: true,
-                      textInputAction: TextInputAction.search,
-                      onSubmitted: (_) => _submit(),
-                      decoration: InputDecoration(
-                        hintText: 'Название, категория или бренд',
-                        prefixIcon: const Icon(Icons.search_rounded),
-                        suffixIcon: _controller.text.isEmpty
-                            ? null
-                            : IconButton(
-                                tooltip: 'Очистить',
-                                onPressed: _controller.clear,
-                                icon: const Icon(Icons.close_rounded),
-                              ),
-                        filled: true,
-                        fillColor: const Color(0xFFF2F2F3),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide.none,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          key: const Key('catalog-search-field'),
+                          controller: _controller,
+                          autofocus: true,
+                          textInputAction: TextInputAction.search,
+                          onSubmitted: (_) => _submit(),
+                          decoration: InputDecoration(
+                            hintText: 'Название, категория или бренд',
+                            prefixIcon: const Icon(Icons.search_rounded),
+                            suffixIcon: _controller.text.isEmpty
+                                ? null
+                                : IconButton(
+                                    tooltip: 'Очистить',
+                                    onPressed: _controller.clear,
+                                    icon: const Icon(Icons.close_rounded),
+                                  ),
+                            filled: true,
+                            fillColor: const Color(0xFFF2F2F3),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  TextButton(
-                    key: const Key('catalog-search-submit'),
-                    onPressed: _submit,
-                    child: const Text('Найти'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Expanded(
-                child: showRecent
-                    ? _RecentQueries(
-                        queries: _recentQueries,
-                        onSelected: _submit,
-                        onRemove: _removeRecent,
-                        onClear: _clearHistory,
-                      )
-                    : _SearchSuggestions(
-                        suggestions: suggestions,
-                        query: _controller.text.trim(),
-                        onSelected: _submit,
+                      const SizedBox(width: 8),
+                      TextButton(
+                        key: const Key('catalog-search-submit'),
+                        onPressed: _submit,
+                        child: const Text('Найти'),
                       ),
-              ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Expanded(
+                    child: showRecent
+                        ? _RecentQueries(
+                            queries: _recentQueries,
+                            onSelected: _submit,
+                            onRemove: _removeRecent,
+                            onClear: _clearHistory,
+                          )
+                        : _SearchSuggestions(
+                            suggestions: suggestions,
+                            query: _controller.text.trim(),
+                            onSelected: _submit,
+                          ),
+                  ),
                 ],
               ),
             ),
