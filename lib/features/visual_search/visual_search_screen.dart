@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../core/app_appearance.dart';
 import '../../core/app_typography.dart';
 import '../../models/product.dart';
 import '../../screens/catalog_screen.dart';
@@ -139,7 +140,7 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
     final selected = await showModalBottomSheet<VisualSearchFilters>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: context.appPalette.surfaceRaised,
       showDragHandle: true,
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) => Padding(
@@ -229,7 +230,13 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
                     Expanded(
                       child: FilledButton(
                         style: FilledButton.styleFrom(
-                          backgroundColor: Colors.black,
+                          overlayColor: Colors.transparent,
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onPrimary,
                         ),
                         onPressed: () => Navigator.pop(
                           context,
@@ -264,10 +271,10 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: Colors.white,
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
     appBar: AppBar(
-      backgroundColor: Colors.white,
-      surfaceTintColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      surfaceTintColor: Colors.transparent,
       title: const Text(
         'Поиск по фото',
         style: TextStyle(
@@ -289,7 +296,9 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
       ],
     ),
     body: _image == null
-        ? const Center(child: CircularProgressIndicator(color: Colors.black))
+        ? Center(
+            child: CircularProgressIndicator(color: context.appPalette.ink),
+          )
         : _buildResults(),
   );
 
@@ -337,9 +346,9 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
                       if (_result?.timingsMs['total'] case final int total)
                         Text(
                           'Поиск ${(total / 1000).toStringAsFixed(1)} с',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color: Color(0xFF77777C),
+                            color: context.appPalette.muted,
                           ),
                         ),
                       TextButton(
@@ -354,11 +363,11 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
           ),
         ),
         if (_searching)
-          const SliverToBoxAdapter(
+          SliverToBoxAdapter(
             child: LinearProgressIndicator(
               minHeight: 2,
-              color: Colors.black,
-              backgroundColor: Color(0xFFE7E7EA),
+              color: context.appPalette.ink,
+              backgroundColor: context.appPalette.border,
             ),
           ),
         if (_error != null)
@@ -387,9 +396,9 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
           )
         else ...[
           if (similarOnly)
-            const SliverToBoxAdapter(
+            SliverToBoxAdapter(
               child: Padding(
-                padding: EdgeInsets.fromLTRB(16, 4, 16, 16),
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -401,12 +410,15 @@ class _VisualSearchScreenState extends State<VisualSearchScreen> {
                         fontWeight: AppTypography.bold,
                       ),
                     ),
-                    SizedBox(height: 5),
+                    const SizedBox(height: 5),
                     Text(
                       'Но мы нашли несколько действительно похожих вариантов.',
-                      style: TextStyle(color: Color(0xFF77777C), fontSize: 13),
+                      style: TextStyle(
+                        color: context.appPalette.muted,
+                        fontSize: 13,
+                      ),
                     ),
-                    SizedBox(height: 18),
+                    const SizedBox(height: 18),
                     Text(
                       'Смотрите похожее',
                       style: TextStyle(
@@ -537,15 +549,19 @@ class _FilterChoiceSection extends StatelessWidget {
                 showCheckmark: false,
                 visualDensity: VisualDensity.compact,
                 side: BorderSide(
-                  color: selected ? Colors.black : const Color(0xFFE2E2E6),
+                  color: selected
+                      ? Theme.of(context).colorScheme.primary
+                      : context.appPalette.border,
                 ),
-                backgroundColor: Colors.white,
-                selectedColor: Colors.black,
+                backgroundColor: context.appPalette.surface,
+                selectedColor: Theme.of(context).colorScheme.primary,
                 labelStyle: TextStyle(
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 12,
                   fontWeight: AppTypography.semiBold,
-                  color: selected ? Colors.white : const Color(0xFF111111),
+                  color: selected
+                      ? Theme.of(context).colorScheme.onPrimary
+                      : context.appPalette.ink,
                 ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(999),
@@ -582,14 +598,14 @@ class _MessageState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 46, color: const Color(0xFF77777C)),
+          Icon(icon, size: 46, color: context.appPalette.muted),
           const SizedBox(height: 14),
           Text(title, textAlign: TextAlign.center),
           const SizedBox(height: 6),
           Text(
             subtitle,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF77777C)),
+            style: TextStyle(color: context.appPalette.muted),
           ),
           const SizedBox(height: 16),
           OutlinedButton(onPressed: onTap, child: Text(action)),

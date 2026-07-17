@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
 import '../models/app_profile.dart';
 import '../models/created_outfit.dart';
@@ -12,7 +13,6 @@ import 'profile_feature_screens.dart';
 import 'reviews_screen.dart';
 
 const _outfitMediaBackground = Color(0xFFF4F4F4);
-const _profileInk = Color(0xFF111113);
 const _outfitItemBackground = Color(0xFFFFFFFF);
 
 class ProfileScreen extends StatelessWidget {
@@ -57,6 +57,10 @@ class ProfileScreen extends StatelessWidget {
     required this.onOpenCatalog,
     this.deliveryProfile = const DeliveryProfile(),
     this.onSaveDeliveryProfile,
+    this.appearance = const AppAppearanceSettings(),
+    this.onThemePreferenceChanged,
+    this.onLiquidGlassChanged,
+    this.onCustomAppearanceSaved,
   });
 
   final AppProfile profile;
@@ -102,6 +106,10 @@ class ProfileScreen extends StatelessWidget {
   final VoidCallback onOpenCatalog;
   final DeliveryProfile deliveryProfile;
   final Future<void> Function(DeliveryProfile profile)? onSaveDeliveryProfile;
+  final AppAppearanceSettings appearance;
+  final ValueChanged<AppThemePreference>? onThemePreferenceChanged;
+  final ValueChanged<bool>? onLiquidGlassChanged;
+  final AppAppearanceSaver? onCustomAppearanceSaved;
 
   @override
   Widget build(BuildContext context) {
@@ -117,7 +125,7 @@ class ProfileScreen extends StatelessWidget {
     final topInset = MediaQuery.of(context).viewPadding.top;
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: context.appPalette.page,
       body: SafeArea(
         top: false,
         child: ListView(
@@ -254,6 +262,10 @@ class ProfileScreen extends StatelessWidget {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (settingsContext) => ProfileSettingsScreen(
+          appearance: appearance,
+          onThemePreferenceChanged: onThemePreferenceChanged,
+          onLiquidGlassChanged: onLiquidGlassChanged,
+          onCustomAppearanceSaved: onCustomAppearanceSaved,
           onEditProfile: () => _openEditProfile(settingsContext),
           onNotificationSettings: () =>
               _openNotificationSettings(settingsContext),
@@ -482,12 +494,13 @@ class _ProfileTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return SizedBox(
       key: const Key('profile-header-row'),
       height: 44,
       child: Row(
         children: [
-          const Expanded(
+          Expanded(
             child: Text(
               'профиль',
               style: TextStyle(
@@ -496,7 +509,7 @@ class _ProfileTopBar extends StatelessWidget {
                 fontWeight: AppTypography.bold,
                 height: 1,
                 letterSpacing: -0.4,
-                color: Color(0xFF070707),
+                color: palette.ink,
               ),
             ),
           ),
@@ -531,6 +544,7 @@ class _ProfileActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -542,7 +556,7 @@ class _ProfileActionButton extends StatelessWidget {
           child: Stack(
             alignment: Alignment.center,
             children: [
-              Icon(icon, size: 20, color: const Color(0xFF111114)),
+              Icon(icon, size: 20, color: palette.ink),
               if (hasIndicator)
                 Positioned(
                   top: 9,
@@ -553,7 +567,7 @@ class _ProfileActionButton extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: const Color(0xFFFF4D46),
                       shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 1.5),
+                      border: Border.all(color: palette.page, width: 1.5),
                     ),
                   ),
                 ),
@@ -578,6 +592,7 @@ class _ProfileOverviewCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final displayName = profile.name.trim().isEmpty
         ? 'Имя Фамилия'
         : profile.name.trim();
@@ -606,13 +621,13 @@ class _ProfileOverviewCard extends StatelessWidget {
                       displayName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 19,
                         fontWeight: AppTypography.bold,
                         height: 1.15,
                         letterSpacing: -0.35,
-                        color: _profileInk,
+                        color: palette.ink,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -620,22 +635,22 @@ class _ProfileOverviewCard extends StatelessWidget {
                       handle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 11.5,
                         fontWeight: FontWeight.w500,
                         height: 1.2,
-                        color: Color(0xFF77777E),
+                        color: palette.muted,
                       ),
                     ),
                     if (city.isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Row(
                         children: [
-                          const Icon(
+                          Icon(
                             Icons.location_on_outlined,
                             size: 14,
-                            color: Color(0xFF8B8B91),
+                            color: palette.muted,
                           ),
                           const SizedBox(width: 3),
                           Expanded(
@@ -643,12 +658,12 @@ class _ProfileOverviewCard extends StatelessWidget {
                               city,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontFamily: 'Montserrat',
                                 fontSize: 11.5,
                                 fontWeight: FontWeight.w500,
                                 height: 1,
-                                color: Color(0xFF77777E),
+                                color: palette.muted,
                               ),
                             ),
                           ),
@@ -663,7 +678,7 @@ class _ProfileOverviewCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 17),
-          const Divider(height: 1, thickness: 1, color: Color(0xFFEDEDEF)),
+          Divider(height: 1, thickness: 1, color: palette.border),
           const SizedBox(height: 14),
           Row(
             children: [
@@ -717,7 +732,7 @@ class _ProfileOverviewCard extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                           height: 1,
                           letterSpacing: 0,
-                          color: _profileInk,
+                          color: palette.ink,
                         ),
                       ),
                       Expanded(
@@ -726,21 +741,21 @@ class _ProfileOverviewCard extends StatelessWidget {
                           textAlign: TextAlign.right,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: 'Montserrat',
                             fontSize: 10.5,
                             fontWeight: FontWeight.w600,
                             height: 1,
                             letterSpacing: 0,
-                            color: Color(0xFF85858B),
+                            color: palette.muted,
                           ),
                         ),
                       ),
                       const SizedBox(width: 4),
-                      const Icon(
+                      Icon(
                         Icons.chevron_right_rounded,
                         size: 20,
-                        color: Color(0xFF76767C),
+                        color: palette.muted,
                       ),
                     ],
                   ),
@@ -768,24 +783,25 @@ class _ProfileAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       width: 74,
       height: 74,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: const Color(0xFFF0F0F2),
-        border: Border.all(color: const Color(0xFFE4E4E7)),
+        color: palette.surfaceMuted,
+        border: Border.all(color: palette.border),
       ),
       child: avatarUrl.trim().isEmpty
           ? Center(
               child: Text(
                 displayName.characters.first.toUpperCase(),
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 25,
                   fontWeight: FontWeight.w700,
-                  color: _profileInk,
+                  color: palette.ink,
                 ),
               ),
             )
@@ -804,9 +820,13 @@ class _ProfileStatDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       height: 27,
-      child: VerticalDivider(width: 1, thickness: 1, color: Color(0xFFE7E7EA)),
+      child: VerticalDivider(
+        width: 1,
+        thickness: 1,
+        color: context.appPalette.border,
+      ),
     );
   }
 }
@@ -824,6 +844,7 @@ class _ProfileStatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Semantics(
       button: onTap != null,
       child: InkWell(
@@ -837,12 +858,12 @@ class _ProfileStatTile extends StatelessWidget {
                 value,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 14,
                   fontWeight: AppTypography.bold,
                   height: 1,
-                  color: _profileInk,
+                  color: palette.ink,
                 ),
               ),
               const SizedBox(height: 5),
@@ -850,12 +871,12 @@ class _ProfileStatTile extends StatelessWidget {
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 10.5,
                   fontWeight: FontWeight.w500,
                   height: 1,
-                  color: Color(0xFF85858B),
+                  color: palette.muted,
                 ),
               ),
             ],
@@ -883,7 +904,11 @@ class _ProfileEditButton extends StatelessWidget {
           constraints: const BoxConstraints.tightFor(width: 36, height: 36),
           padding: const EdgeInsets.all(7),
           splashRadius: 18,
-          icon: const Icon(Icons.edit_outlined, size: 20, color: _profileInk),
+          icon: Icon(
+            Icons.edit_outlined,
+            size: 20,
+            color: context.appPalette.ink,
+          ),
         ),
       ),
     );
@@ -913,11 +938,12 @@ class _ActiveOrdersOverview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final visible = orders.take(2).toList();
     return Padding(
       padding: const EdgeInsets.only(top: 18),
       child: Material(
-        color: const Color(0xFFF5F5F7),
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(16),
         child: InkWell(
           onTap: onTap,
@@ -929,31 +955,31 @@ class _ActiveOrdersOverview extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    const Expanded(
+                    Expanded(
                       child: Text(
                         'Активные заказы',
                         style: TextStyle(
                           fontFamily: 'Montserrat',
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: _profileInk,
+                          color: palette.ink,
                         ),
                       ),
                     ),
                     Text(
                       '${orders.length}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF77777D),
+                        color: palette.muted,
                       ),
                     ),
                     const SizedBox(width: 4),
-                    const Icon(
+                    Icon(
                       Icons.chevron_right_rounded,
                       size: 20,
-                      color: Color(0xFF77777D),
+                      color: palette.muted,
                     ),
                   ],
                 ),
@@ -969,11 +995,11 @@ class _ActiveOrdersOverview extends StatelessWidget {
                   const SizedBox(height: 10),
                   Text(
                     'Ещё ${orders.length - visible.length}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Montserrat',
                       fontSize: 11.5,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF66666C),
+                      color: palette.muted,
                     ),
                   ),
                 ],
@@ -994,6 +1020,7 @@ class _ActiveOrderRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final isSeller = order.sellerId == currentUserId;
     final status = _profileOrderStatus(order.status, isSeller: isSeller);
     return Row(
@@ -1005,7 +1032,7 @@ class _ActiveOrderRow extends StatelessWidget {
             width: 46,
             height: 46,
             fit: BoxFit.cover,
-            placeholderColor: Colors.white,
+            placeholderColor: palette.surface,
           ),
         ),
         const SizedBox(width: 11),
@@ -1017,11 +1044,11 @@ class _ActiveOrderRow extends StatelessWidget {
                 status,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 12.5,
                   fontWeight: FontWeight.w700,
-                  color: _profileInk,
+                  color: palette.ink,
                 ),
               ),
               const SizedBox(height: 4),
@@ -1029,11 +1056,11 @@ class _ActiveOrderRow extends StatelessWidget {
                 order.productTitle,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 11.5,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF77777D),
+                  color: palette.muted,
                 ),
               ),
             ],
@@ -1130,6 +1157,7 @@ class _ProfileShortcutTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const radius = 21.0;
+    final palette = context.appPalette;
 
     return Material(
       color: Colors.transparent,
@@ -1141,13 +1169,13 @@ class _ProfileShortcutTile extends StatelessWidget {
         child: Ink(
           height: 86,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
+            gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [Color(0xFFFFFFFF), Color(0xFFF5F5F6)],
+              colors: [palette.surfaceRaised, palette.surfaceMuted],
             ),
             borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: const Color(0xFFECECEF), width: 1),
+            border: Border.all(color: palette.border, width: 1),
           ),
           child: Stack(
             fit: StackFit.expand,
@@ -1200,7 +1228,7 @@ class _ProfileShortcutTile extends StatelessWidget {
                   bottom: -23,
                   child: Opacity(
                     opacity: 0.045,
-                    child: Icon(icon, size: 104, color: _profileInk),
+                    child: Icon(icon, size: 104, color: palette.ink),
                   ),
                 ),
               Positioned.fill(
@@ -1210,9 +1238,9 @@ class _ProfileShortcutTile extends StatelessWidget {
                       begin: Alignment.centerLeft,
                       end: Alignment.centerRight,
                       colors: [
-                        Colors.white.withValues(alpha: 0.96),
-                        Colors.white.withValues(alpha: 0.78),
-                        Colors.white.withValues(alpha: 0.22),
+                        palette.surface.withValues(alpha: 0.96),
+                        palette.surface.withValues(alpha: 0.78),
+                        palette.surface.withValues(alpha: 0.22),
                       ],
                       stops: const [0, 0.52, 1],
                     ),
@@ -1227,18 +1255,18 @@ class _ProfileShortcutTile extends StatelessWidget {
                   height: 31,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.92),
+                    color: palette.surfaceRaised.withValues(alpha: 0.92),
                     shape: BoxShape.circle,
-                    border: Border.all(color: const Color(0xFFE8E8EB)),
+                    border: Border.all(color: palette.border),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.045),
+                        color: palette.shadow,
                         blurRadius: 10,
                         offset: const Offset(0, 4),
                       ),
                     ],
                   ),
-                  child: Icon(icon, size: 18, color: _profileInk),
+                  child: Icon(icon, size: 18, color: palette.ink),
                 ),
               ),
               Positioned(
@@ -1250,19 +1278,19 @@ class _ProfileShortcutTile extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: _profileInk,
+                    color: palette.ink,
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
                     count.toString(),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Montserrat',
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
                       height: 1,
-                      color: Colors.white,
+                      color: palette.page,
                     ),
                   ),
                 ),
@@ -1278,21 +1306,21 @@ class _ProfileShortcutTile extends StatelessWidget {
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'Montserrat',
                           fontSize: 11.5,
                           fontWeight: FontWeight.w700,
                           height: 1,
                           letterSpacing: -0.1,
-                          color: _profileInk,
+                          color: palette.ink,
                         ),
                       ),
                     ),
                     const SizedBox(width: 4),
-                    const Icon(
+                    Icon(
                       Icons.chevron_right_rounded,
                       size: 19,
-                      color: _profileInk,
+                      color: palette.ink,
                     ),
                   ],
                 ),
@@ -1326,6 +1354,7 @@ class _PhotoPreviewSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final visibleImages = images.take(3).toList();
 
     return Padding(
@@ -1342,13 +1371,13 @@ class _PhotoPreviewSection extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Montserrat',
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
                       height: 1.1,
                       letterSpacing: 0,
-                      color: _profileInk,
+                      color: palette.ink,
                     ),
                   ),
                   const Spacer(),
@@ -1356,22 +1385,18 @@ class _PhotoPreviewSection extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 5),
                     child: Text(
                       count.toString(),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                         height: 1,
                         letterSpacing: 0,
-                        color: _profileInk,
+                        color: palette.ink,
                       ),
                     ),
                   ),
                   const SizedBox(width: 3),
-                  const Icon(
-                    Icons.chevron_right,
-                    size: 20,
-                    color: Color(0xFF85858C),
-                  ),
+                  Icon(Icons.chevron_right, size: 20, color: palette.muted),
                 ],
               ),
             ),
@@ -1419,8 +1444,9 @@ class _EmptyPhotoPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Material(
-      color: const Color(0xFFF7F7F8),
+      color: palette.surfaceMuted,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         onTap: onTap,
@@ -1433,22 +1459,22 @@ class _EmptyPhotoPreview extends StatelessWidget {
               Container(
                 width: 34,
                 height: 34,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
+                decoration: BoxDecoration(
+                  color: palette.surfaceRaised,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(icon, size: 17, color: const Color(0xFF77777F)),
+                child: Icon(icon, size: 17, color: palette.muted),
               ),
               const SizedBox(width: 10),
               Text(
                 text,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                   height: 1.2,
                   letterSpacing: 0,
-                  color: Color(0xFF77777F),
+                  color: palette.muted,
                 ),
               ),
             ],
@@ -1609,7 +1635,7 @@ class _ProfileCollectionScreenState extends State<_ProfileCollectionScreen> {
       emptyText: _showsProducts
           ? widget.productEmptyText
           : widget.outfitEmptyText,
-      backgroundColor: _showsProducts ? Colors.white : _outfitMediaBackground,
+      backgroundColor: _showsProducts ? null : _outfitMediaBackground,
       action:
           widget.onClear != null &&
               (_products.isNotEmpty || _outfits.isNotEmpty)
@@ -1661,11 +1687,12 @@ class _ProfileCollectionTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       height: 42,
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0F0F2),
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -1699,6 +1726,7 @@ class _ProfileCollectionTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Expanded(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -1707,7 +1735,7 @@ class _ProfileCollectionTab extends StatelessWidget {
           duration: const Duration(milliseconds: 160),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: isActive ? Colors.black : Colors.transparent,
+            color: isActive ? palette.ink : Colors.transparent,
             borderRadius: BorderRadius.circular(11),
           ),
           child: Text(
@@ -1720,7 +1748,7 @@ class _ProfileCollectionTab extends StatelessWidget {
               fontWeight: FontWeight.w700,
               height: 1,
               letterSpacing: 0,
-              color: isActive ? Colors.white : const Color(0xFF070707),
+              color: isActive ? palette.page : palette.ink,
             ),
           ),
         ),
@@ -1980,6 +2008,7 @@ class _ProfileOutfitCardState extends State<_ProfileOutfitCard> {
   @override
   Widget build(BuildContext context) {
     const scale = 1.0;
+    final palette = context.appPalette;
     final outfitProducts = widget.outfit.items.map((item) {
       final product = _productsById[item.id];
       return _OutfitProductPreview(
@@ -1991,12 +2020,12 @@ class _ProfileOutfitCardState extends State<_ProfileOutfitCard> {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: palette.surfaceRaised,
         borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: const Color(0xFFF0F0F2), width: 1),
+        border: Border.all(color: palette.border, width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.055),
+            color: palette.shadow,
             blurRadius: 30,
             offset: const Offset(0, 14),
           ),
@@ -2172,6 +2201,7 @@ class _OutfitAuthorCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onAuthorTap,
@@ -2179,11 +2209,11 @@ class _OutfitAuthorCard extends StatelessWidget {
         height: 64,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: palette.surfaceRaised,
           borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.13),
+              color: palette.shadow,
               blurRadius: 24,
               offset: const Offset(0, 10),
             ),
@@ -2195,16 +2225,12 @@ class _OutfitAuthorCard extends StatelessWidget {
               child: Container(
                 width: 38,
                 height: 38,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Color(0xFFE9E9EC),
+                  color: palette.surfaceMuted,
                 ),
                 child: authorAvatarUrl.trim().isEmpty
-                    ? const Icon(
-                        Icons.person_outline,
-                        size: 20,
-                        color: Color(0xFF8F8F94),
-                      )
+                    ? Icon(Icons.person_outline, size: 20, color: palette.muted)
                     : AppImage(
                         imageUrl: authorAvatarUrl,
                         width: 38,
@@ -2223,13 +2249,13 @@ class _OutfitAuthorCard extends StatelessWidget {
                     authorName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Montserrat',
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       height: 1.05,
                       letterSpacing: 0,
-                      color: Color(0xFF111111),
+                      color: palette.ink,
                     ),
                   ),
                   const SizedBox(height: 3),
@@ -2237,13 +2263,13 @@ class _OutfitAuthorCard extends StatelessWidget {
                     '$authorHandle • $likesCount лайков',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Montserrat',
                       fontSize: 11.5,
                       fontWeight: FontWeight.w500,
                       height: 1,
                       letterSpacing: 0,
-                      color: Color(0xFF8F8F94),
+                      color: palette.muted,
                     ),
                   ),
                 ],
@@ -2276,11 +2302,12 @@ class _OutfitProductsStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       width: double.infinity,
       padding: EdgeInsets.fromLTRB(16 * scale, 42 * scale, 0, 12 * scale),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: palette.surfaceRaised,
         borderRadius: BorderRadius.vertical(
           bottom: Radius.circular(30 * scale),
         ),
@@ -2397,7 +2424,7 @@ class _ProfileGridScaffold extends StatelessWidget {
     required this.isEmpty,
     required this.emptyText,
     required this.child,
-    this.backgroundColor = Colors.white,
+    this.backgroundColor,
     this.topPadding = 12,
     this.header,
     this.action,
@@ -2407,7 +2434,7 @@ class _ProfileGridScaffold extends StatelessWidget {
   final bool isEmpty;
   final String emptyText;
   final Widget child;
-  final Color backgroundColor;
+  final Color? backgroundColor;
   final double topPadding;
   final Widget? header;
   final Widget? action;
@@ -2415,9 +2442,15 @@ class _ProfileGridScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final topInset = MediaQuery.of(context).viewPadding.top;
+    final palette = context.appPalette;
+    final resolvedBackground = Theme.of(context).brightness == Brightness.dark
+        ? (backgroundColor == _outfitMediaBackground
+              ? palette.surfaceMuted
+              : palette.page)
+        : (backgroundColor ?? palette.page);
 
     return Scaffold(
-      backgroundColor: backgroundColor,
+      backgroundColor: resolvedBackground,
       body: SafeArea(
         top: false,
         child: Column(
@@ -2433,10 +2466,10 @@ class _ProfileGridScaffold extends StatelessWidget {
                       height: 34,
                     ),
                     splashRadius: 18,
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.chevron_left,
                       size: 28,
-                      color: Colors.black,
+                      color: palette.ink,
                     ),
                     onPressed: () => Navigator.maybePop(context),
                   ),
@@ -2444,13 +2477,13 @@ class _ProfileGridScaffold extends StatelessWidget {
                   Expanded(
                     child: Text(
                       title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
                         height: 1,
                         letterSpacing: 0,
-                        color: Colors.black,
+                        color: palette.ink,
                       ),
                     ),
                   ),
@@ -2465,13 +2498,13 @@ class _ProfileGridScaffold extends StatelessWidget {
                       child: Text(
                         emptyText,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'Montserrat',
                           fontSize: 12,
                           fontWeight: FontWeight.w500,
                           height: 1.25,
                           letterSpacing: 0,
-                          color: Color(0xFF8E8E8E),
+                          color: palette.muted,
                         ),
                       ),
                     )
@@ -2787,6 +2820,7 @@ class _MenuRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -2806,12 +2840,12 @@ class _MenuRow extends StatelessWidget {
                   fontWeight: textWeight,
                   height: 1,
                   letterSpacing: 0,
-                  color: onTap == null ? const Color(0xFF9A9AA1) : Colors.black,
+                  color: onTap == null ? palette.muted : palette.ink,
                 ),
               ),
             ),
             if (showChevron && onTap != null)
-              const Icon(Icons.chevron_right, size: 19, color: Colors.black),
+              Icon(Icons.chevron_right, size: 19, color: palette.ink),
           ],
         ),
       ),
@@ -2908,6 +2942,7 @@ class _SupportRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -2918,7 +2953,7 @@ class _SupportRow extends StatelessWidget {
             Icon(
               icon,
               size: 20,
-              color: onTap == null ? const Color(0xFF9A9AA1) : Colors.black,
+              color: onTap == null ? palette.muted : palette.ink,
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -2932,24 +2967,24 @@ class _SupportRow extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                   height: 1,
                   letterSpacing: 0,
-                  color: onTap == null ? const Color(0xFF9A9AA1) : Colors.black,
+                  color: onTap == null ? palette.muted : palette.ink,
                 ),
               ),
             ),
             Text(
               meta,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'Montserrat',
                 fontSize: 12.5,
                 fontWeight: FontWeight.w500,
                 height: 1,
                 letterSpacing: 0,
-                color: Color(0xFF8E8E8E),
+                color: palette.muted,
               ),
             ),
             const SizedBox(width: 10),
             if (onTap != null)
-              const Icon(Icons.chevron_right, size: 19, color: Colors.black),
+              Icon(Icons.chevron_right, size: 19, color: palette.ink),
           ],
         ),
       ),
@@ -3003,13 +3038,14 @@ class _LogoutBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Column(
       children: [
         const _SectionDivider(),
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: onSignOut,
-          child: const SizedBox(
+          child: SizedBox(
             height: 54,
             child: Row(
               children: [
@@ -3022,7 +3058,7 @@ class _LogoutBlock extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                       height: 1,
                       letterSpacing: 0,
-                      color: Colors.black,
+                      color: palette.ink,
                     ),
                   ),
                 ),
@@ -3032,7 +3068,7 @@ class _LogoutBlock extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        const Align(
+        Align(
           alignment: Alignment.centerLeft,
           child: Text(
             'версия приложения 1.0',
@@ -3042,7 +3078,7 @@ class _LogoutBlock extends StatelessWidget {
               fontWeight: FontWeight.w500,
               height: 1,
               letterSpacing: 0,
-              color: Color(0xFF8E8E8E),
+              color: palette.muted,
             ),
           ),
         ),
@@ -3060,7 +3096,7 @@ class _SectionDivider extends StatelessWidget {
       width: double.infinity,
       height: 1,
       margin: const EdgeInsets.only(top: 4),
-      color: const Color(0xFFE6E6E6),
+      color: context.appPalette.border,
     );
   }
 }

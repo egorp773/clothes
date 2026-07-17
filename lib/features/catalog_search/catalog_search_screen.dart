@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/app_appearance.dart';
 import '../../core/app_typography.dart';
 import '../../models/product.dart';
 import '../../screens/catalog_screen.dart' show ProductCard;
@@ -278,7 +279,7 @@ class _CatalogSearchScreenState extends State<CatalogSearchScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -289,7 +290,7 @@ class _CatalogSearchScreenState extends State<CatalogSearchScreen> {
               onClear: _clearQuery,
               onSubmitted: _submit,
             ),
-            const Divider(height: 1, thickness: 1, color: Color(0xFFE8E8EA)),
+            Divider(height: 1, thickness: 1, color: context.appPalette.border),
             Expanded(child: _buildBody()),
           ],
         ),
@@ -372,21 +373,21 @@ class _SearchHeader extends StatelessWidget {
                   autofocus: true,
                   textInputAction: TextInputAction.search,
                   onSubmitted: onSubmitted,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 15,
                     fontWeight: AppTypography.medium,
                   ),
                   decoration: InputDecoration(
                     hintText: 'Поиск по товарам',
-                    hintStyle: const TextStyle(
-                      color: Color(0xFF85858B),
+                    hintStyle: TextStyle(
+                      color: context.appPalette.muted,
                       fontWeight: FontWeight.w500,
                     ),
-                    prefixIcon: const Icon(
+                    prefixIcon: Icon(
                       Icons.search_rounded,
                       size: 21,
-                      color: Color(0xFF303035),
+                      color: context.appPalette.ink,
                     ),
                     suffixIcon: value.text.isEmpty
                         ? null
@@ -394,15 +395,14 @@ class _SearchHeader extends StatelessWidget {
                             key: const Key('catalog-search-clear'),
                             tooltip: 'Очистить',
                             onPressed: onClear,
-                            splashRadius: 18,
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.close_rounded,
                               size: 19,
-                              color: Color(0xFF77777E),
+                              color: context.appPalette.muted,
                             ),
                           ),
                     filled: true,
-                    fillColor: const Color(0xFFF2F2F4),
+                    fillColor: context.appPalette.surfaceMuted,
                     contentPadding: const EdgeInsets.symmetric(vertical: 13),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(13),
@@ -567,7 +567,7 @@ class _ResultsView extends StatelessWidget {
                   query,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
@@ -578,11 +578,11 @@ class _ResultsView extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(
                   _resultCountLabel(products.length),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 12.5,
                     fontWeight: FontWeight.w500,
-                    color: Color(0xFF85858B),
+                    color: context.appPalette.muted,
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -669,7 +669,7 @@ class _TypedQueryRow extends StatelessWidget {
     return ListTile(
       key: const Key('catalog-search-submit-query'),
       contentPadding: const EdgeInsets.symmetric(horizontal: 3),
-      leading: const Icon(Icons.search_rounded, color: Color(0xFF202024)),
+      leading: Icon(Icons.search_rounded, color: context.appPalette.ink),
       title: Text(
         'Искать «$query»',
         maxLines: 2,
@@ -702,10 +702,10 @@ class _RecentQueryRow extends StatelessWidget {
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 3),
       minLeadingWidth: 24,
-      leading: const Icon(
+      leading: Icon(
         Icons.history_rounded,
         size: 21,
-        color: Color(0xFF77777E),
+        color: context.appPalette.muted,
       ),
       title: Text(
         query,
@@ -738,7 +738,7 @@ class _SuggestionRow extends StatelessWidget {
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 3),
       minLeadingWidth: 24,
-      leading: Icon(_icon, size: 21, color: const Color(0xFF77777E)),
+      leading: Icon(_icon, size: 21, color: context.appPalette.muted),
       title: Text(
         suggestion.label,
         maxLines: 1,
@@ -751,12 +751,12 @@ class _SuggestionRow extends StatelessWidget {
       ),
       subtitle: Text(
         _kindLabel,
-        style: const TextStyle(fontSize: 11.5, color: Color(0xFF8C8C92)),
+        style: TextStyle(fontSize: 11.5, color: context.appPalette.muted),
       ),
-      trailing: const Icon(
+      trailing: Icon(
         Icons.north_west_rounded,
         size: 17,
-        color: Color(0xFF77777E),
+        color: context.appPalette.muted,
       ),
       onTap: onTap,
     );
@@ -803,7 +803,8 @@ class _SectionTitle extends StatelessWidget {
             TextButton(
               onPressed: onAction,
               style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFF65656B),
+                overlayColor: Colors.transparent,
+                foregroundColor: context.appPalette.muted,
                 minimumSize: Size.zero,
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -893,10 +894,12 @@ class _ControlChip extends StatelessWidget {
       height: 38,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: active ? const Color(0xFFEEEEF0) : Colors.white,
+        color: active
+            ? context.appPalette.surfaceMuted
+            : context.appPalette.surface,
         borderRadius: BorderRadius.circular(11),
         border: Border.all(
-          color: active ? const Color(0xFFBDBDC3) : const Color(0xFFDEDEE1),
+          color: active ? context.appPalette.muted : context.appPalette.border,
         ),
       ),
       child: Row(
@@ -910,7 +913,7 @@ class _ControlChip extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: AppTypography.fontFamily,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
@@ -944,12 +947,12 @@ class _SearchMessage extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 42, color: const Color(0xFFB1B1B6)),
+            Icon(icon, size: 42, color: context.appPalette.muted),
             const SizedBox(height: 14),
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: AppTypography.fontFamily,
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
@@ -959,12 +962,12 @@ class _SearchMessage extends StatelessWidget {
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: AppTypography.fontFamily,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w500,
                 height: 1.35,
-                color: Color(0xFF77777E),
+                color: context.appPalette.muted,
               ),
             ),
           ],

@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 
 import '../core/app_typography.dart';
@@ -30,21 +33,80 @@ class PromoBannerCarousel extends StatefulWidget {
 }
 
 class _PromoBannerCarouselState extends State<PromoBannerCarousel> {
-  final PageController _pageController = PageController();
-  int _activeIndex = 0;
+  static const _autoAdvanceInterval = Duration(seconds: 20);
+  static const _pageAnimationDuration = Duration(milliseconds: 520);
+
+  late final PageController _pageController;
+  Timer? _autoAdvanceTimer;
+  late int _activeIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _activeIndex = widget.banners.isEmpty
+        ? 0
+        : Random().nextInt(widget.banners.length);
+    _pageController = PageController(initialPage: _activeIndex);
+    _scheduleAutoAdvance();
+  }
 
   @override
   void didUpdateWidget(covariant PromoBannerCarousel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_activeIndex >= widget.banners.length) {
       _activeIndex = widget.banners.isEmpty ? 0 : widget.banners.length - 1;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || widget.banners.isEmpty || !_pageController.hasClients) {
+          return;
+        }
+        _pageController.jumpToPage(_activeIndex);
+      });
+    }
+    if (oldWidget.banners.length != widget.banners.length) {
+      _scheduleAutoAdvance();
     }
   }
 
   @override
   void dispose() {
+    _autoAdvanceTimer?.cancel();
     _pageController.dispose();
     super.dispose();
+  }
+
+  void _scheduleAutoAdvance() {
+    _autoAdvanceTimer?.cancel();
+    _autoAdvanceTimer = null;
+    if (!mounted || widget.banners.length < 2) return;
+
+    _autoAdvanceTimer = Timer(_autoAdvanceInterval, _advanceToNextPage);
+  }
+
+  Future<void> _advanceToNextPage() async {
+    if (!mounted || widget.banners.length < 2) return;
+    if (!_pageController.hasClients) {
+      _scheduleAutoAdvance();
+      return;
+    }
+
+    final nextIndex = (_activeIndex + 1) % widget.banners.length;
+    try {
+      await _pageController.animateToPage(
+        nextIndex,
+        duration: _pageAnimationDuration,
+        curve: Curves.easeInOutCubic,
+      );
+    } finally {
+      if (mounted && _autoAdvanceTimer?.isActive != true) {
+        _scheduleAutoAdvance();
+      }
+    }
+  }
+
+  void _handlePageChanged(int index) {
+    if (!mounted) return;
+    setState(() => _activeIndex = index);
+    _scheduleAutoAdvance();
   }
 
   @override
@@ -61,7 +123,7 @@ class _PromoBannerCarouselState extends State<PromoBannerCarousel> {
       child: PageView.builder(
         controller: _pageController,
         itemCount: widget.banners.length,
-        onPageChanged: (index) => setState(() => _activeIndex = index),
+        onPageChanged: _handlePageChanged,
         itemBuilder: (context, index) {
           return PromoBannerCard(
             banner: widget.banners[index],

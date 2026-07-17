@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/app_appearance.dart';
 import '../models/created_outfit.dart';
 import '../models/product.dart';
 import '../widgets/app_image.dart';
@@ -283,20 +284,20 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
           GestureDetector(
             onTap: widget.onClose,
             behavior: HitTestBehavior.opaque,
-            child: const SizedBox(
+            child: SizedBox(
               width: 44,
               height: 44,
-              child: Icon(Icons.close, size: 26, color: Color(0xFF0B0B0B)),
+              child: Icon(Icons.close, size: 26, color: context.appPalette.ink),
             ),
           ),
-          const Expanded(
+          Expanded(
             child: Center(
               child: Text(
                 'Опубликовать образ',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF0B0B0B),
+                  color: context.appPalette.ink,
                 ),
               ),
             ),
@@ -314,11 +315,12 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
         width: double.infinity,
         height: 96,
         decoration: BoxDecoration(
-          border: Border.all(color: const Color(0xFFE7E7EA)),
+          color: context.appPalette.surface,
+          border: Border.all(color: context.appPalette.border),
           borderRadius: BorderRadius.circular(12),
         ),
         clipBehavior: Clip.antiAlias,
-        child: const Column(
+        child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
@@ -326,22 +328,22 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.w500,
-                color: Color(0xFF0B0B0B),
+                color: context.appPalette.ink,
               ),
             ),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text(
               'Добавить фото образа',
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF0B0B0B),
+                color: context.appPalette.ink,
               ),
             ),
-            SizedBox(height: 4),
+            const SizedBox(height: 4),
             Text(
               'Можно добавить до 10 фото',
-              style: TextStyle(fontSize: 10.5, color: Color(0xFF8F8F94)),
+              style: TextStyle(fontSize: 10.5, color: context.appPalette.muted),
             ),
           ],
         ),
@@ -365,7 +367,8 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xFFE7E7EA)),
+                color: context.appPalette.surface,
+                border: Border.all(color: context.appPalette.border),
                 borderRadius: BorderRadius.circular(8),
               ),
               clipBehavior: Clip.antiAlias,
@@ -373,10 +376,10 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
                   ? Center(
                       child: Text(
                         '${index + 1}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
-                          color: Color(0xFF9A9A9F),
+                          color: context.appPalette.muted,
                         ),
                       ),
                     )
@@ -404,12 +407,12 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Выберите вещи',
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 12),
@@ -419,8 +422,8 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
             height: 78,
             padding: const EdgeInsets.symmetric(horizontal: 16),
             decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border.all(color: const Color(0xFFE7E7EA)),
+              color: context.appPalette.surface,
+              border: Border.all(color: context.appPalette.border),
               borderRadius: BorderRadius.circular(16),
             ),
             child: Row(
@@ -429,17 +432,17 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
                   width: 44,
                   height: 44,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF6F6F7),
+                    color: context.appPalette.surfaceMuted,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.add,
                     size: 22,
-                    color: Color(0xFF111111),
+                    color: context.appPalette.ink,
                   ),
                 ),
                 const SizedBox(width: 14),
-                const Expanded(
+                Expanded(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -449,7 +452,7 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
                         style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF111111),
+                          color: context.appPalette.ink,
                         ),
                       ),
                       SizedBox(height: 2),
@@ -457,16 +460,16 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
                         'Создайте вещь для публикации',
                         style: TextStyle(
                           fontSize: 12.5,
-                          color: Color(0xFF8F8F94),
+                          color: context.appPalette.muted,
                         ),
                       ),
                     ],
                   ),
                 ),
-                const Icon(
+                Icon(
                   Icons.chevron_right,
                   size: 22,
-                  color: Color(0xFFB8B8BE),
+                  color: context.appPalette.muted,
                 ),
               ],
             ),
@@ -478,13 +481,13 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 14),
             decoration: BoxDecoration(
-              color: const Color(0xFFF6F6F7),
+              color: context.appPalette.surfaceMuted,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Text(
+            child: Text(
               'Сначала добавьте вещь, потом соберите из нее образ',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Color(0xFF8F8F94)),
+              style: TextStyle(fontSize: 13, color: context.appPalette.muted),
             ),
           )
         else
@@ -519,10 +522,10 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
       children: [
         Text(
           'Вещи в образе (${_selectedItems.length})',
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 12),
@@ -531,13 +534,13 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 20),
             decoration: BoxDecoration(
-              color: const Color(0xFFF6F6F7),
+              color: context.appPalette.surfaceMuted,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Center(
+            child: Center(
               child: Text(
                 'Выберите вещи из списка выше',
-                style: TextStyle(fontSize: 13, color: Color(0xFF8F8F94)),
+                style: TextStyle(fontSize: 13, color: context.appPalette.muted),
               ),
             ),
           )
@@ -563,23 +566,26 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
   }
 
   Widget _buildPublishButton() {
+    final scheme = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
+
     return GestureDetector(
       onTap: _isPublishing ? null : _publish,
       child: Container(
         width: double.infinity,
         height: 50,
         decoration: BoxDecoration(
-          color: _canPublish ? Colors.black : const Color(0xFFC8C8CE),
+          color: _canPublish ? scheme.primary : palette.surfaceMuted,
           borderRadius: BorderRadius.circular(25),
         ),
         child: Center(
           child: _isPublishing
-              ? const SizedBox(
+              ? SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.white,
+                    color: scheme.onPrimary,
                   ),
                 )
               : Text(
@@ -587,7 +593,7 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    color: _canPublish ? Colors.white : const Color(0xFF8E8E93),
+                    color: _canPublish ? scheme.onPrimary : palette.muted,
                   ),
                 ),
         ),
@@ -609,17 +615,17 @@ class _RemoveButton extends StatelessWidget {
         width: 22,
         height: 22,
         decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.94),
+          color: context.appPalette.surfaceRaised.withValues(alpha: 0.94),
           shape: BoxShape.circle,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.12),
+              color: context.appPalette.shadow,
               blurRadius: 6,
               offset: const Offset(0, 2),
             ),
           ],
         ),
-        child: const Icon(Icons.close, size: 14, color: Color(0xFF111111)),
+        child: Icon(Icons.close, size: 14, color: context.appPalette.ink),
       ),
     );
   }
@@ -640,6 +646,9 @@ class _ItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final scheme = Theme.of(context).colorScheme;
+
     return GestureDetector(
       onTap: onTap,
       child: SizedBox(
@@ -654,10 +663,10 @@ class _ItemCard extends StatelessWidget {
                   width: double.infinity,
                   height: 256,
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: palette.surface,
                     borderRadius: BorderRadius.circular(5),
                     border: isSelected
-                        ? Border.all(color: Colors.black, width: 2)
+                        ? Border.all(color: scheme.primary, width: 2)
                         : null,
                   ),
                   clipBehavior: Clip.antiAlias,
@@ -670,19 +679,19 @@ class _ItemCard extends StatelessWidget {
                           imageUrl: item.image,
                           fit: BoxFit.contain,
                           alignment: Alignment.center,
-                          placeholderColor: Colors.white,
+                          placeholderColor: palette.surface,
                         ),
                       ),
                       if (isProcessing)
                         Container(
-                          color: Colors.white.withValues(alpha: 0.74),
-                          child: const Center(
+                          color: palette.surface.withValues(alpha: 0.74),
+                          child: Center(
                             child: SizedBox(
                               width: 18,
                               height: 18,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Color(0xFF111111),
+                                color: palette.ink,
                               ),
                             ),
                           ),
@@ -699,15 +708,15 @@ class _ItemCard extends StatelessWidget {
                 width: 24,
                 height: 24,
                 decoration: BoxDecoration(
-                  color: isSelected ? Colors.black : Colors.white,
+                  color: isSelected ? scheme.primary : palette.surfaceRaised,
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: isSelected ? Colors.black : const Color(0xFFC7C7CC),
+                    color: isSelected ? scheme.primary : palette.border,
                     width: 1.5,
                   ),
                 ),
                 child: isSelected
-                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    ? Icon(Icons.check, size: 16, color: scheme.onPrimary)
                     : null,
               ),
             ),
@@ -726,6 +735,8 @@ class _SelectedItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
     return SizedBox(
       width: 188,
       child: Column(
@@ -735,7 +746,7 @@ class _SelectedItemCard extends StatelessWidget {
             width: double.infinity,
             height: 256,
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: palette.surface,
               borderRadius: BorderRadius.circular(5),
             ),
             clipBehavior: Clip.antiAlias,
@@ -747,7 +758,7 @@ class _SelectedItemCard extends StatelessWidget {
                     imageUrl: item.image,
                     fit: BoxFit.contain,
                     alignment: Alignment.center,
-                    placeholderColor: Colors.white,
+                    placeholderColor: palette.surface,
                   ),
                 ),
                 Positioned(
@@ -758,15 +769,11 @@ class _SelectedItemCard extends StatelessWidget {
                     child: Container(
                       width: 22,
                       height: 22,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
+                      decoration: BoxDecoration(
+                        color: palette.surfaceRaised,
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
-                        Icons.close,
-                        size: 14,
-                        color: Color(0xFF111111),
-                      ),
+                      child: Icon(Icons.close, size: 14, color: palette.ink),
                     ),
                   ),
                 ),

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/app_appearance.dart';
 import '../../../models/product.dart';
 import '../data/listing_publish_repository.dart';
 import '../listing_publish_controller.dart';
@@ -131,17 +132,18 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     if (!_controller.isInitialized) {
-      return const ColoredBox(
-        color: Colors.white,
-        child: Center(child: CircularProgressIndicator(color: Colors.black)),
+      return ColoredBox(
+        color: palette.page,
+        child: Center(child: CircularProgressIndicator(color: palette.ink)),
       );
     }
     final step = _controller.draft.currentStep;
     if (step == ListingPublishStep.success) return _buildSuccess();
 
     return ColoredBox(
-      color: Colors.white,
+      color: palette.page,
       child: SafeArea(
         bottom: false,
         child: Column(
@@ -202,9 +204,7 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
     ),
     ListingPublishStep.attributes => Transform.translate(
       offset: const Offset(0, -5),
-      child: ListingAttributesStep(
-        controller: _controller,
-      ),
+      child: ListingAttributesStep(controller: _controller),
     ),
     ListingPublishStep.delivery => Transform.translate(
       offset: const Offset(0, -5),
@@ -338,7 +338,11 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
             child: const Text('Создать новое'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.black),
+            style: FilledButton.styleFrom(
+              backgroundColor: dialogContext.appPalette.ink,
+              foregroundColor: dialogContext.appPalette.surface,
+              overlayColor: Colors.transparent,
+            ),
             onPressed: () =>
                 Navigator.pop(dialogContext, _RecoveryAction.resume),
             child: const Text('Продолжить'),
@@ -366,7 +370,11 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
                 child: const Text('Отмена'),
               ),
               FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: Colors.black),
+                style: FilledButton.styleFrom(
+                  backgroundColor: dialogContext.appPalette.ink,
+                  foregroundColor: dialogContext.appPalette.surface,
+                  overlayColor: Colors.transparent,
+                ),
                 onPressed: () => Navigator.pop(dialogContext, true),
                 child: const Text('Удалить'),
               ),
@@ -384,7 +392,7 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
   }
 
   Widget _buildSuccess() => ColoredBox(
-    color: Colors.white,
+    color: context.appPalette.page,
     child: SafeArea(
       child: Center(
         child: SingleChildScrollView(
@@ -396,14 +404,14 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
               Container(
                 width: 76,
                 height: 76,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF070707),
+                decoration: BoxDecoration(
+                  color: context.appPalette.ink,
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.check_rounded,
                   size: 40,
-                  color: Colors.white,
+                  color: context.appPalette.surface,
                 ),
               ),
               const SizedBox(height: 22),
@@ -422,9 +430,9 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
                   _completionError ??
                       (_completionSent ? 'Готово' : 'Открываем карточку вещи'),
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
-                    color: Color(0xFF8F8F94),
+                    color: context.appPalette.muted,
                   ),
                 ),
               ),
@@ -436,15 +444,16 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
                       ? null
                       : _completePublication,
                   style: FilledButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    foregroundColor: Colors.white,
+                    backgroundColor: context.appPalette.ink,
+                    foregroundColor: context.appPalette.surface,
+                    overlayColor: Colors.transparent,
                   ),
                   child: const Text('ОТКРЫТЬ КАРТОЧКУ'),
                 )
               else if (!_completionSent)
-                const CircularProgressIndicator(
+                CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: Colors.black,
+                  color: context.appPalette.ink,
                 ),
             ],
           ),

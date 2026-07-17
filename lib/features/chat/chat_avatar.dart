@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/app_appearance.dart';
 import '../../models/message_thread.dart';
 import '../../widgets/app_image.dart';
 import 'chat_tokens.dart';
@@ -94,8 +95,8 @@ class ChatAvatar extends StatelessWidget {
                 width: productSize,
                 height: productSize,
                 padding: const EdgeInsets.all(1.5),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
+                decoration: BoxDecoration(
+                  color: context.appPalette.surface,
                   shape: BoxShape.circle,
                 ),
                 child: ClipOval(
@@ -113,7 +114,10 @@ class ChatAvatar extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: ChatTokens.success,
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2),
+                  border: Border.all(
+                    color: context.appPalette.surface,
+                    width: 2,
+                  ),
                 ),
               ),
             ),
@@ -137,12 +141,12 @@ class _InitialsAvatar extends StatelessWidget {
         .map((part) => part.characters.first.toUpperCase());
     final label = initials.isEmpty ? '?' : initials.join();
     return ColoredBox(
-      color: ChatTokens.ink,
+      color: context.appPalette.ink,
       child: Center(
         child: Text(
           label,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: context.appPalette.page,
             fontSize: 17,
             fontWeight: FontWeight.w600,
           ),

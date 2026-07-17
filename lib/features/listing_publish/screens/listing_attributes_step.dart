@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/app_appearance.dart';
 import '../../../core/app_typography.dart';
 import '../data/listing_catalogs.dart';
 import '../listing_publish_controller.dart';
 import '../widgets/listing_publish_widgets.dart';
 
-const _secondaryText = Color(0xFF8F8F94);
-const _border = Color(0xFFE7E7EA);
 const _clearValue = '__clear__';
 
 class ListingAttributesStep extends StatefulWidget {
@@ -67,6 +66,7 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
   @override
   Widget build(BuildContext context) {
     final draft = controller.draft;
+    final palette = context.appPalette;
     final definitions = ListingCatalogs.attributesFor(draft.normalizedCategory);
     final categoryName = draft.normalizedCategory.isEmpty
         ? ''
@@ -94,14 +94,14 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             'Показываем всё, что удалось определить по фото. Проверьте предложения или исправьте их.',
             style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 12,
               fontWeight: AppTypography.medium,
               height: 1.35,
-              color: _secondaryText,
+              color: palette.muted,
             ),
           ),
           if (controller.isAnalyzing) ...[
@@ -169,13 +169,13 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
             ),
           ),
           const SizedBox(height: 5),
-          const Text(
+          Text(
             'Подтвердите, есть ли пятна, повреждения или заметные следы носки.',
             style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 11.5,
               height: 1.35,
-              color: _secondaryText,
+              color: palette.muted,
             ),
           ),
           const SizedBox(height: 10),
@@ -188,11 +188,13 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
                 label: const Text('Нет дефектов'),
                 selected: draft.defectsReviewed && !draft.hasDefects,
                 showCheckmark: false,
-                selectedColor: Colors.black,
+                selectedColor: palette.ink,
+                backgroundColor: palette.surfaceMuted,
+                side: BorderSide(color: palette.border),
                 labelStyle: TextStyle(
                   color: draft.defectsReviewed && !draft.hasDefects
-                      ? Colors.white
-                      : Colors.black,
+                      ? palette.surface
+                      : palette.ink,
                 ),
                 onSelected: (_) => controller.setHasDefects(false),
               ),
@@ -201,11 +203,13 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
                 label: const Text('Есть дефекты'),
                 selected: draft.defectsReviewed && draft.hasDefects,
                 showCheckmark: false,
-                selectedColor: Colors.black,
+                selectedColor: palette.ink,
+                backgroundColor: palette.surfaceMuted,
+                side: BorderSide(color: palette.border),
                 labelStyle: TextStyle(
                   color: draft.defectsReviewed && draft.hasDefects
-                      ? Colors.white
-                      : Colors.black,
+                      ? palette.surface
+                      : palette.ink,
                 ),
                 onSelected: (_) => controller.setHasDefects(true),
               ),
@@ -213,12 +217,12 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
           ),
           if (!draft.defectsReviewed) ...[
             const SizedBox(height: 7),
-            const Text(
+            Text(
               'Выберите один вариант',
               style: TextStyle(
                 fontFamily: AppTypography.fontFamily,
                 fontSize: 11,
-                color: Color(0xFF706E82),
+                color: palette.muted,
               ),
             ),
           ],
@@ -242,13 +246,13 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
-                  borderSide: const BorderSide(color: Colors.black),
+                  borderSide: BorderSide(color: palette.ink),
                 ),
               ),
             ),
           ],
           const SizedBox(height: 22),
-          const Divider(height: 1, color: _border),
+          Divider(height: 1, color: palette.border),
           const SizedBox(height: 20),
           Text(
             categoryName.isEmpty
@@ -262,27 +266,27 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             'Проверьте предложения. Измените значение или выберите «Не указывать», чтобы пропустить. Нажимая «Продолжить», вы принимаете оставшиеся значения.',
             style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 12,
               fontWeight: AppTypography.medium,
               height: 1.35,
-              color: _secondaryText,
+              color: palette.muted,
             ),
           ),
           const SizedBox(height: 12),
           if (draft.normalizedCategory.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 18),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 18),
               child: Text(
                 'Сначала выберите категорию — после этого появятся подходящие характеристики.',
                 style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 13,
                   height: 1.35,
-                  color: _secondaryText,
+                  color: palette.muted,
                 ),
               ),
             )
@@ -298,13 +302,13 @@ class _ListingAttributesStepState extends State<ListingAttributesStep> {
               ),
             ),
           const SizedBox(height: 18),
-          const Text(
+          Text(
             'Замеры необязательны. Покупатель сможет запросить их в чате.',
             style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 11.5,
               height: 1.4,
-              color: _secondaryText,
+              color: palette.muted,
             ),
           ),
         ],
@@ -425,7 +429,7 @@ class _CategoryOptionsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-    color: Colors.white,
+    color: context.appPalette.surfaceRaised,
     borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
     clipBehavior: Clip.antiAlias,
     child: ConstrainedBox(
@@ -460,12 +464,12 @@ class _CategoryOptionsSheet extends StatelessWidget {
                         padding: const EdgeInsets.only(top: 12, bottom: 4),
                         child: Text(
                           group.name.toUpperCase(),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: AppTypography.fontFamily,
                             fontSize: 11,
                             fontWeight: AppTypography.semiBold,
                             letterSpacing: 0.5,
-                            color: _secondaryText,
+                            color: context.appPalette.muted,
                           ),
                         ),
                       ),
@@ -517,7 +521,7 @@ class _AttributeOptionsSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final itemCount = options.length + (allowClear ? 1 : 0);
     return Material(
-      color: Colors.white,
+      color: context.appPalette.surfaceRaised,
       borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       clipBehavior: Clip.antiAlias,
       child: ConstrainedBox(
@@ -550,9 +554,9 @@ class _AttributeOptionsSheet extends StatelessWidget {
                       if (allowClear && index == 0) {
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
-                          title: const Text(
+                          title: Text(
                             'Не указывать',
-                            style: TextStyle(color: Color(0xFF706E82)),
+                            style: TextStyle(color: context.appPalette.muted),
                           ),
                           trailing: selected.isEmpty
                               ? const Icon(Icons.check_rounded, size: 20)
@@ -616,9 +620,9 @@ class _SecondaryColorsSheetState extends State<_SecondaryColorsSheet> {
       maxHeight: MediaQuery.sizeOf(context).height * 0.78,
     ),
     padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-    decoration: const BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    decoration: BoxDecoration(
+      color: context.appPalette.surfaceRaised,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
     ),
     child: SafeArea(
       top: false,
@@ -667,7 +671,11 @@ class _SecondaryColorsSheetState extends State<_SecondaryColorsSheet> {
             width: double.infinity,
             height: 48,
             child: FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: Colors.black),
+              style: FilledButton.styleFrom(
+                backgroundColor: context.appPalette.ink,
+                foregroundColor: context.appPalette.surface,
+                overlayColor: Colors.transparent,
+              ),
               onPressed: () => Navigator.pop(context, _selected.toList()),
               child: const Text('Готово'),
             ),

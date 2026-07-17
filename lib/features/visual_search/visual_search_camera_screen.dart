@@ -877,6 +877,7 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
                           ? null
                           : () => _setPanelExpanded(!_panelExpanded),
                       style: TextButton.styleFrom(
+                        overlayColor: Colors.transparent,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                       ),
@@ -1081,6 +1082,10 @@ class _RoundControl extends StatelessWidget {
       shape: const CircleBorder(),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
         onTap: onTap,
         child: SizedBox(
           width: 46,

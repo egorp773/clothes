@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
 import '../core/supabase_config.dart';
 import '../features/catalog_search/catalog_search_engine.dart';
@@ -15,7 +16,6 @@ import '../widgets/app_image.dart';
 import 'product_screen.dart';
 
 const _outfitMediaBackground = Color(0xFFF4F4F4);
-const _outfitItemBackground = Color(0xFFFFFFFF);
 
 class OutfitsScreen extends StatefulWidget {
   final double scale;
@@ -294,9 +294,9 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
         return Container(
           width: double.infinity,
           padding: EdgeInsets.fromLTRB(20, 18, 20, 20 + bottomInset),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: sheetContext.appPalette.surfaceRaised,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -307,19 +307,19 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                   width: 42,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFE0E0E4),
+                    color: sheetContext.appPalette.border,
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
               ),
               const SizedBox(height: 18),
-              const Text(
+              Text(
                 'Упс, этот товар не продается',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF111111),
+                  color: sheetContext.appPalette.ink,
                 ),
               ),
               const SizedBox(height: 10),
@@ -331,7 +331,7 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                 style: TextStyle(
                   fontSize: 14,
                   height: 1.35,
-                  color: Colors.black.withValues(alpha: 0.62),
+                  color: sheetContext.appPalette.muted,
                 ),
               ),
               const SizedBox(height: 18),
@@ -345,8 +345,10 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                     }
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    foregroundColor: Colors.white,
+                    backgroundColor: Theme.of(sheetContext).colorScheme.primary,
+                    foregroundColor: Theme.of(
+                      sheetContext,
+                    ).colorScheme.onPrimary,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(2),
@@ -373,10 +375,9 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
       return;
     }
     final route = PageRouteBuilder<void>(
-      opaque: false,
-      barrierColor: Colors.black.withValues(alpha: 0.24),
+      opaque: true,
       transitionDuration: Duration.zero,
-      reverseTransitionDuration: const Duration(milliseconds: 350),
+      reverseTransitionDuration: Duration.zero,
       pageBuilder: (context, animation, secondaryAnimation) {
         return ProductScreen(
           sourceProduct: source,
@@ -555,7 +556,7 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
     final reason = await showModalBottomSheet<String>(
       context: context,
       useRootNavigator: true,
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
         top: false,
@@ -666,7 +667,7 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
     final topInset = MediaQuery.of(context).viewPadding.top;
 
     return Container(
-      color: _outfitMediaBackground,
+      color: context.appPalette.page,
       child: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
         padding: EdgeInsets.fromLTRB(
@@ -768,14 +769,14 @@ class _EmptyOutfitsState extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(24, 40, 24, 36),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appPalette.surfaceRaised,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         children: [
           const Icon(Icons.checkroom_outlined, size: 38),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'Пока нет опубликованных образов',
             textAlign: TextAlign.center,
             style: TextStyle(
@@ -786,7 +787,7 @@ class _EmptyOutfitsState extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'Соберите первый образ из вещей каталога — он появится здесь после публикации.',
             textAlign: TextAlign.center,
             style: TextStyle(
@@ -794,7 +795,7 @@ class _EmptyOutfitsState extends StatelessWidget {
               fontSize: 13,
               height: 1.4,
               fontWeight: AppTypography.medium,
-              color: Color(0xFF68686E),
+              color: context.appPalette.muted,
             ),
           ),
           const SizedBox(height: 22),
@@ -803,8 +804,8 @@ class _EmptyOutfitsState extends StatelessWidget {
             child: ElevatedButton(
               onPressed: onCreateTap,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black,
-                foregroundColor: Colors.white,
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
                 elevation: 0,
                 padding: const EdgeInsets.symmetric(horizontal: 22),
                 shape: RoundedRectangleBorder(
@@ -843,13 +844,13 @@ class _Header extends StatelessWidget {
           Expanded(
             child: Text(
               'образы',
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: AppTypography.fontFamily,
                 fontSize: 22,
                 fontWeight: AppTypography.bold,
                 height: 1,
                 letterSpacing: -0.4,
-                color: Color(0xFF070707),
+                color: context.appPalette.ink,
               ),
             ),
           ),
@@ -862,7 +863,7 @@ class _Header extends StatelessWidget {
               child: Icon(
                 Icons.add_circle_outline,
                 size: 24,
-                color: const Color(0xFF070707),
+                color: context.appPalette.ink,
               ),
             ),
           ),
@@ -1037,7 +1038,7 @@ class _OutfitDetailScreenState extends State<_OutfitDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         children: [
           SingleChildScrollView(
@@ -1249,10 +1250,12 @@ class _DetailTopBar extends StatelessWidget {
       height: top + 58,
       padding: EdgeInsets.fromLTRB(16, top + 8, 16, 8),
       decoration: BoxDecoration(
-        color: isCollapsed ? Colors.white : Colors.transparent,
+        color: isCollapsed
+            ? context.appPalette.surfaceRaised
+            : Colors.transparent,
         border: Border(
           bottom: BorderSide(
-            color: isCollapsed ? const Color(0xFFE0E0E0) : Colors.transparent,
+            color: isCollapsed ? context.appPalette.border : Colors.transparent,
           ),
         ),
       ),
@@ -1286,17 +1289,21 @@ class _DetailTopButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white.withValues(alpha: 0.94),
+      color: context.appPalette.surfaceRaised.withValues(alpha: 0.94),
       shape: const CircleBorder(),
       elevation: 2,
-      shadowColor: Colors.black.withValues(alpha: 0.18),
+      shadowColor: context.appPalette.shadow,
       child: InkWell(
         customBorder: const CircleBorder(),
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
         onTap: onPressed,
         child: SizedBox(
           width: 42,
           height: 42,
-          child: Icon(icon, size: 25, color: Colors.black),
+          child: Icon(icon, size: 25, color: context.appPalette.ink),
         ),
       ),
     );
@@ -1420,11 +1427,11 @@ class _CreatorFloatingCard extends StatelessWidget {
         height: 64,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.appPalette.surfaceRaised,
           borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.18),
+              color: context.appPalette.shadow,
               blurRadius: 14,
               offset: const Offset(0, 4),
             ),
@@ -1436,15 +1443,15 @@ class _CreatorFloatingCard extends StatelessWidget {
               child: Container(
                 width: 42,
                 height: 42,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Color(0xFFEDEDED),
+                  color: context.appPalette.surfaceMuted,
                 ),
                 child: authorAvatarUrl.trim().isEmpty
-                    ? const Icon(
+                    ? Icon(
                         Icons.person_outline,
                         size: 24,
-                        color: Color(0xFF8A8A8A),
+                        color: context.appPalette.muted,
                       )
                     : AppImage(
                         imageUrl: authorAvatarUrl,
@@ -1464,12 +1471,12 @@ class _CreatorFloatingCard extends StatelessWidget {
                     authorName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Montserrat',
                       fontSize: 18,
                       fontWeight: FontWeight.w700,
                       height: 1,
-                      color: Colors.black,
+                      color: context.appPalette.ink,
                     ),
                   ),
                   const SizedBox(height: 5),
@@ -1477,12 +1484,12 @@ class _CreatorFloatingCard extends StatelessWidget {
                     '$user В· $likesCount likes',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Montserrat',
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
                       height: 1,
-                      color: Color(0xFF8A8A8A),
+                      color: context.appPalette.muted,
                     ),
                   ),
                 ],
@@ -1496,7 +1503,7 @@ class _CreatorFloatingCard extends StatelessWidget {
                 size: 31,
                 color: isLiked
                     ? const Color(0xFFD71920)
-                    : const Color(0xFF7A7A7A),
+                    : context.appPalette.muted,
               ),
             ),
           ],
@@ -1525,7 +1532,7 @@ class _OutfitProductsList extends StatelessWidget {
             onTap: () => onProductTap(products[index]),
           ),
           if (index != products.length - 1)
-            const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+            Divider(height: 1, thickness: 1, color: context.appPalette.border),
         ],
       ],
     );
@@ -1554,11 +1561,13 @@ class _OutfitProductRow extends StatelessWidget {
                 height: 54,
                 child: product.image == null || product.image!.trim().isEmpty
                     ? DecoratedBox(
-                        decoration: const BoxDecoration(color: Colors.white),
+                        decoration: BoxDecoration(
+                          color: context.appPalette.surface,
+                        ),
                         child: Icon(
                           product.icon,
                           size: 28,
-                          color: const Color(0xFFC7C7C7),
+                          color: context.appPalette.muted,
                         ),
                       )
                     : AppImage(
@@ -1566,7 +1575,7 @@ class _OutfitProductRow extends StatelessWidget {
                         width: 54,
                         height: 54,
                         fit: BoxFit.contain,
-                        placeholderColor: Colors.white,
+                        placeholderColor: context.appPalette.surface,
                       ),
               ),
               const SizedBox(width: 16),
@@ -1579,12 +1588,12 @@ class _OutfitProductRow extends StatelessWidget {
                       product.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 17,
                         fontWeight: FontWeight.w600,
                         height: 1.05,
-                        color: Colors.black,
+                        color: context.appPalette.ink,
                       ),
                     ),
                     const SizedBox(height: 7),
@@ -1592,21 +1601,21 @@ class _OutfitProductRow extends StatelessWidget {
                       product.price,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: AppTypography.fontFamily,
                         fontSize: 16,
                         fontWeight: AppTypography.semiBold,
                         height: 1,
-                        color: Color(0xFF8A8A8A),
+                        color: context.appPalette.muted,
                       ),
                     ),
                   ],
                 ),
               ),
-              const Icon(
+              Icon(
                 Icons.chevron_right,
                 size: 28,
-                color: Color(0xFFC7C7C7),
+                color: context.appPalette.muted,
               ),
             ],
           ),
@@ -1625,7 +1634,7 @@ class _TotalSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+        Divider(height: 1, thickness: 1, color: context.appPalette.border),
         SizedBox(
           height: 78,
           child: Padding(
@@ -1634,19 +1643,19 @@ class _TotalSection extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: RichText(
                 text: TextSpan(
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: 'Montserrat',
                     fontSize: 18,
                     fontWeight: FontWeight.w500,
-                    color: Color(0xFF8A8A8A),
+                    color: context.appPalette.muted,
                   ),
                   children: [
                     const TextSpan(text: 'Итого: '),
                     TextSpan(
                       text: total,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
-                        color: Colors.black,
+                        color: context.appPalette.ink,
                       ),
                     ),
                   ],
@@ -1655,10 +1664,10 @@ class _TotalSection extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(
+        SizedBox(
           height: 12,
           width: double.infinity,
-          child: ColoredBox(color: Color(0xFFE5E5E5)),
+          child: ColoredBox(color: context.appPalette.surfaceMuted),
         ),
       ],
     );
@@ -1687,8 +1696,8 @@ class _OutfitPublicationMeta extends StatelessWidget {
         horizontalPadding,
         15,
       ),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFFE8E8EA))),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: context.appPalette.border)),
       ),
       child: Row(
         children: [
@@ -1697,12 +1706,12 @@ class _OutfitPublicationMeta extends StatelessWidget {
               _outfitPublicationLabel(publishedAt),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: AppTypography.fontFamily,
                 fontSize: 12.5,
                 height: 1.2,
                 fontWeight: AppTypography.medium,
-                color: Color(0xFF8A8A8F),
+                color: context.appPalette.muted,
               ),
             ),
           ),
@@ -1737,16 +1746,16 @@ class _OutfitMetric extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 16, color: const Color(0xFF8A8A8F)),
+          Icon(icon, size: 16, color: context.appPalette.muted),
           const SizedBox(width: 4),
           Text(
             '$count',
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 12.5,
               height: 1.2,
               fontWeight: AppTypography.semiBold,
-              color: Color(0xFF6F6F73),
+              color: context.appPalette.muted,
             ),
           ),
         ],
@@ -1793,24 +1802,28 @@ class _MoreOutfitsSection extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Wrap(
               children: [
-                const Text(
+                Text(
                   'Больше образов от ',
                   style: TextStyle(
                     fontFamily: 'Montserrat',
                     fontSize: 17,
                     fontWeight: FontWeight.w500,
-                    color: Color(0xFF8A8A8A),
+                    color: context.appPalette.muted,
                   ),
                 ),
                 InkWell(
                   onTap: onAuthorTap,
+                  splashColor: Colors.transparent,
+                  highlightColor: Colors.transparent,
+                  hoverColor: Colors.transparent,
+                  focusColor: Colors.transparent,
                   child: Text(
                     authorName,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Montserrat',
                       fontSize: 17,
                       fontWeight: FontWeight.w500,
-                      color: Color(0xFF6F6F6F),
+                      color: context.appPalette.ink,
                       decoration: TextDecoration.underline,
                     ),
                   ),
@@ -1877,10 +1890,10 @@ class _RelatedOutfitPreview extends StatelessWidget {
       );
     }
 
-    return const ColoredBox(
-      color: _outfitMediaBackground,
+    return ColoredBox(
+      color: context.appPalette.surfaceMuted,
       child: Center(
-        child: Icon(Icons.checkroom_outlined, color: Color(0xFFB8B8BD)),
+        child: Icon(Icons.checkroom_outlined, color: context.appPalette.muted),
       ),
     );
   }
@@ -1932,12 +1945,12 @@ class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appPalette.surfaceRaised,
         borderRadius: BorderRadius.circular(30 * widget.scale),
-        border: Border.all(color: const Color(0xFFF0F0F2), width: 1),
+        border: Border.all(color: context.appPalette.border, width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.055),
+            color: context.appPalette.shadow,
             blurRadius: 30,
             offset: const Offset(0, 14),
           ),
@@ -2037,12 +2050,12 @@ class _OutfitCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appPalette.surfaceRaised,
         borderRadius: BorderRadius.circular(30 * scale),
-        border: Border.all(color: const Color(0xFFF0F0F2), width: 1),
+        border: Border.all(color: context.appPalette.border, width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.055),
+            color: context.appPalette.shadow,
             blurRadius: 30,
             offset: const Offset(0, 14),
           ),
@@ -2130,15 +2143,15 @@ class _HeroMedia extends StatelessWidget {
                       placeholderColor: _outfitMediaBackground,
                     );
                   }
-                  return const DecoratedBox(
+                  return DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                         colors: [
-                          Color(0xFFF8F8F8),
-                          Color(0xFFF4F4F4),
-                          Color(0xFFEFEFEF),
+                          context.appPalette.surfaceRaised,
+                          context.appPalette.surfaceMuted,
+                          context.appPalette.surface,
                         ],
                       ),
                     ),
@@ -2234,11 +2247,11 @@ class _AuthorCard extends StatelessWidget {
         height: 64 * scale,
         padding: EdgeInsets.symmetric(horizontal: 12 * scale),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: context.appPalette.surfaceRaised,
           borderRadius: BorderRadius.circular(18 * scale),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.13),
+              color: context.appPalette.shadow,
               blurRadius: 24,
               offset: const Offset(0, 10),
             ),
@@ -2250,15 +2263,15 @@ class _AuthorCard extends StatelessWidget {
               child: Container(
                 width: 38 * scale,
                 height: 38 * scale,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Color(0xFFE9E9EC),
+                  color: context.appPalette.surfaceMuted,
                 ),
                 child: authorAvatarUrl.trim().isEmpty
                     ? Icon(
                         Icons.person_outline,
                         size: 20 * scale,
-                        color: const Color(0xFF8F8F94),
+                        color: context.appPalette.muted,
                       )
                     : AppImage(
                         imageUrl: authorAvatarUrl,
@@ -2283,7 +2296,7 @@ class _AuthorCard extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                       letterSpacing: -0.15,
                       height: 1.05,
-                      color: const Color(0xFF111111),
+                      color: context.appPalette.ink,
                     ),
                   ),
                   SizedBox(height: 3 * scale),
@@ -2295,7 +2308,7 @@ class _AuthorCard extends StatelessWidget {
                       fontSize: 11.5 * scale,
                       fontWeight: FontWeight.w500,
                       height: 1,
-                      color: const Color(0xFF8F8F94),
+                      color: context.appPalette.muted,
                     ),
                   ),
                 ],
@@ -2310,7 +2323,7 @@ class _AuthorCard extends StatelessWidget {
                 size: 22 * scale,
                 color: isLiked
                     ? const Color(0xFFFF3B30)
-                    : const Color(0xFF8F8F94),
+                    : context.appPalette.muted,
               ),
             ),
           ],
@@ -2377,7 +2390,7 @@ class _ProductsSectionState extends State<_ProductsSection> {
         12 * widget.scale,
       ),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appPalette.surfaceRaised,
         borderRadius: BorderRadius.vertical(
           bottom: Radius.circular(30 * widget.scale),
         ),
@@ -2458,25 +2471,25 @@ class _ProductCard extends StatelessWidget {
               height: 48 * scale,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: _outfitItemBackground,
+                  color: context.appPalette.surface,
                   borderRadius: BorderRadius.circular(5 * scale),
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(5 * scale),
                   child: product.image == null || product.image!.isEmpty
                       ? Container(
-                          color: _outfitItemBackground,
+                          color: context.appPalette.surface,
                           child: Icon(
                             product.icon,
                             size: 24 * scale,
-                            color: const Color(0xFFB8B8BD),
+                            color: context.appPalette.muted,
                           ),
                         )
                       : AppImage(
                           imageUrl: product.image!,
                           fit: BoxFit.contain,
                           alignment: Alignment.center,
-                          placeholderColor: _outfitItemBackground,
+                          placeholderColor: context.appPalette.surface,
                         ),
                 ),
               ),
@@ -2491,7 +2504,7 @@ class _ProductCard extends StatelessWidget {
                 fontSize: 9.5 * scale,
                 fontWeight: FontWeight.w600,
                 height: 1,
-                color: const Color(0xFF111111),
+                color: context.appPalette.ink,
               ),
             ),
             SizedBox(height: 1.5 * scale),
@@ -2504,7 +2517,7 @@ class _ProductCard extends StatelessWidget {
                 fontSize: 10 * scale,
                 fontWeight: FontWeight.w700,
                 height: 1,
-                color: const Color(0xFF8F8F94),
+                color: context.appPalette.muted,
               ),
             ),
           ],
@@ -2529,17 +2542,17 @@ class _ScrollArrow extends StatelessWidget {
           width: 28 * scale,
           height: 28 * scale,
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.94),
+            color: context.appPalette.surfaceRaised.withValues(alpha: 0.94),
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.10),
+                color: context.appPalette.shadow,
                 blurRadius: 8,
                 offset: const Offset(0, 4),
               ),
             ],
           ),
-          child: Icon(icon, size: 18 * scale, color: const Color(0xFF111111)),
+          child: Icon(icon, size: 18 * scale, color: context.appPalette.ink),
         ),
       ),
     );

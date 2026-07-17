@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/app_appearance.dart';
+
 class PhoneLoginScreen extends StatefulWidget {
   const PhoneLoginScreen({
     super.key,
@@ -99,8 +101,10 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         top: false,
         child: LayoutBuilder(
@@ -147,7 +151,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                       fontWeight: FontWeight.w700,
                       height: 1.1,
                       letterSpacing: 0,
-                      color: Colors.black,
+                      color: palette.ink,
                     ),
                   ),
                 ),
@@ -168,7 +172,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                       fontWeight: FontWeight.w500,
                       height: 1.45,
                       letterSpacing: 0,
-                      color: Colors.black,
+                      color: palette.ink,
                     ),
                   ),
                 ),
@@ -209,8 +213,9 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                   child: ElevatedButton(
                     onPressed: _isSubmitting ? null : _submit,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.black,
-                      foregroundColor: Colors.white,
+                      overlayColor: Colors.transparent,
+                      backgroundColor: colorScheme.primary,
+                      foregroundColor: colorScheme.onPrimary,
                       elevation: 0,
                       padding: EdgeInsets.zero,
                       shape: const RoundedRectangleBorder(
@@ -218,23 +223,23 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                       ),
                     ),
                     child: _isSubmitting
-                        ? const SizedBox(
+                        ? SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.white,
+                              color: colorScheme.onPrimary,
                             ),
                           )
                         : Text(
                             _codeRequested ? 'ВОЙТИ' : 'ПОЛУЧИТЬ КОД',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontFamily: 'Montserrat',
                               fontSize: 12.5,
                               fontWeight: FontWeight.w700,
                               height: 1,
                               letterSpacing: 0,
-                              color: Colors.white,
+                              color: colorScheme.onPrimary,
                             ),
                           ),
                   ),
@@ -251,13 +256,13 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                     child: Text(
                       _codeRequested ? 'ОТПРАВИТЬ КОД ЕЩЁ РАЗ' : 'НЕ СЕЙЧАС',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 12.5,
                         fontWeight: FontWeight.w700,
                         height: 1,
                         letterSpacing: 0,
-                        color: Colors.black,
+                        color: palette.ink,
                       ),
                     ),
                   ),
@@ -266,7 +271,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                   left: 20 * sx,
                   right: 20 * sx,
                   bottom: 44 * sy,
-                  child: const Text(
+                  child: Text(
                     'При входе и регистрации вы соглашаетесь с политикой\n'
                     'обработки персональных данных.',
                     textAlign: TextAlign.center,
@@ -276,7 +281,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                       fontWeight: FontWeight.w500,
                       height: 1.25,
                       letterSpacing: 0,
-                      color: Color(0xFF9B9B9B),
+                      color: palette.muted,
                     ),
                   ),
                 ),
@@ -306,8 +311,7 @@ class _HeaderIconButton extends StatelessWidget {
       onPressed: onPressed,
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints.tightFor(width: 32, height: 32),
-      splashRadius: 18,
-      icon: Icon(icon, size: iconSize, color: Colors.black),
+      icon: Icon(icon, size: iconSize, color: context.appPalette.ink),
     );
   }
 }
@@ -319,13 +323,14 @@ class _PhoneNumberField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const phoneTextStyle = TextStyle(
+    final palette = context.appPalette;
+    final phoneTextStyle = TextStyle(
       fontFamily: 'Montserrat',
       fontSize: 15,
       fontWeight: FontWeight.w500,
       height: 1.2,
       letterSpacing: 0,
-      color: Colors.black,
+      color: palette.ink,
     );
 
     return SizedBox(
@@ -333,7 +338,7 @@ class _PhoneNumberField extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(
+          SizedBox(
             width: 44,
             child: Stack(
               children: [
@@ -342,7 +347,7 @@ class _PhoneNumberField extends StatelessWidget {
                   top: 0,
                   child: Text('+7', style: phoneTextStyle),
                 ),
-                Positioned(
+                const Positioned(
                   left: 0,
                   right: 0,
                   bottom: 0,
@@ -366,9 +371,9 @@ class _PhoneNumberField extends StatelessWidget {
                       keyboardType: TextInputType.phone,
                       textInputAction: TextInputAction.done,
                       inputFormatters: const [_PhoneNumberInputFormatter()],
-                      cursorColor: Colors.black,
+                      cursorColor: palette.ink,
                       style: phoneTextStyle,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         hintText: '900-000-00-00',
                         hintStyle: phoneTextStyle,
                         border: InputBorder.none,
@@ -402,6 +407,7 @@ class _ConfirmationCodeField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return TextField(
       controller: controller,
       autofocus: true,
@@ -412,31 +418,31 @@ class _ConfirmationCodeField extends StatelessWidget {
         LengthLimitingTextInputFormatter(8),
       ],
       onSubmitted: (_) => FocusScope.of(context).unfocus(),
-      cursorColor: Colors.black,
+      cursorColor: palette.ink,
       textAlign: TextAlign.center,
-      style: const TextStyle(
+      style: TextStyle(
         fontFamily: 'Montserrat',
         fontSize: 20,
         fontWeight: FontWeight.w600,
         letterSpacing: 7,
-        color: Colors.black,
+        color: palette.ink,
       ),
-      decoration: const InputDecoration(
+      decoration: InputDecoration(
         hintText: '000000',
         hintStyle: TextStyle(
           fontFamily: 'Montserrat',
           fontSize: 20,
           fontWeight: FontWeight.w500,
           letterSpacing: 7,
-          color: Color(0xFFB6B6BA),
+          color: palette.muted,
         ),
         enabledBorder: UnderlineInputBorder(
-          borderSide: BorderSide(color: Color(0xFFCFCFCF)),
+          borderSide: BorderSide(color: palette.border),
         ),
         focusedBorder: UnderlineInputBorder(
-          borderSide: BorderSide(color: Colors.black),
+          borderSide: BorderSide(color: palette.ink),
         ),
-        contentPadding: EdgeInsets.only(bottom: 8),
+        contentPadding: const EdgeInsets.only(bottom: 8),
       ),
     );
   }
@@ -447,7 +453,7 @@ class _PhoneUnderline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(height: 1, color: const Color(0xFFCFCFCF));
+    return Container(height: 1, color: context.appPalette.border);
   }
 }
 

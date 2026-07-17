@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/app_appearance.dart';
 import '../../../core/app_typography.dart';
 import '../data/listing_catalogs.dart';
 import '../listing_publish_controller.dart';
@@ -49,11 +50,13 @@ class _ListingDeliveryStepState extends State<ListingDeliveryStep> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     final draft = controller.draft;
+    final palette = context.appPalette;
+    final colorScheme = Theme.of(context).colorScheme;
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 8, 18, 30),
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       children: [
-        const Text(
+        Text(
           'Откуда отправлять вещь?',
           style: TextStyle(
             fontFamily: AppTypography.fontFamily,
@@ -64,7 +67,7 @@ class _ListingDeliveryStepState extends State<ListingDeliveryStep> {
           ),
         ),
         const SizedBox(height: 6),
-        const Text(
+        Text(
           'Адрес видите только вы. Покупателю показывается город.',
           style: TextStyle(
             fontFamily: AppTypography.fontFamily,
@@ -72,7 +75,7 @@ class _ListingDeliveryStepState extends State<ListingDeliveryStep> {
             fontWeight: AppTypography.medium,
             height: 1.35,
             letterSpacing: 0,
-            color: Color(0xFF8F8F94),
+            color: palette.muted,
           ),
         ),
         if (controller.savedAddresses.isNotEmpty) ...[
@@ -92,6 +95,10 @@ class _ListingDeliveryStepState extends State<ListingDeliveryStep> {
               padding: const EdgeInsets.only(bottom: 8),
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+                focusColor: Colors.transparent,
                 onTap: () {
                   controller.selectAddress(item);
                   setState(() {
@@ -103,10 +110,10 @@ class _ListingDeliveryStepState extends State<ListingDeliveryStep> {
                   padding: const EdgeInsets.all(13),
                   decoration: BoxDecoration(
                     color: draft.shippingAddressId == item.id
-                        ? const Color(0xFFF0F0F1)
-                        : Colors.white,
+                        ? palette.surfaceMuted
+                        : palette.surface,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFE7E7EA)),
+                    border: Border.all(color: palette.border),
                   ),
                   child: Row(
                     children: [
@@ -163,7 +170,7 @@ class _ListingDeliveryStepState extends State<ListingDeliveryStep> {
             ),
           ),
           value: draft.saveAddressAsDefault,
-          activeTrackColor: Colors.black,
+          activeTrackColor: colorScheme.primary,
           onChanged: controller.setSaveAddressAsDefault,
         ),
         const SizedBox(height: 14),
@@ -188,14 +195,14 @@ class _ListingDeliveryStepState extends State<ListingDeliveryStep> {
           ),
         ),
         const SizedBox(height: 6),
-        const Text(
+        Text(
           'Можно отключить любой способ только для этого объявления.',
           style: TextStyle(
             fontFamily: AppTypography.fontFamily,
             fontSize: 12,
             fontWeight: AppTypography.medium,
             letterSpacing: 0,
-            color: Color(0xFF8F8F94),
+            color: palette.muted,
           ),
         ),
         const SizedBox(height: 10),
@@ -204,7 +211,8 @@ class _ListingDeliveryStepState extends State<ListingDeliveryStep> {
             contentPadding: EdgeInsets.zero,
             dense: true,
             controlAffinity: ListTileControlAffinity.trailing,
-            activeColor: Colors.black,
+            activeColor: colorScheme.primary,
+            checkColor: colorScheme.onPrimary,
             title: Text(
               method.name,
               style: const TextStyle(
@@ -258,10 +266,11 @@ class _TextFieldBlock extends StatelessWidget {
               ),
           ],
         ),
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: AppTypography.fontFamily,
           fontSize: 12.5,
           fontWeight: AppTypography.semiBold,
+          color: context.appPalette.ink,
           letterSpacing: 0,
         ),
       ),
@@ -270,18 +279,19 @@ class _TextFieldBlock extends StatelessWidget {
         controller: controller,
         textInputAction: textInputAction,
         onChanged: onChanged,
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: AppTypography.fontFamily,
           fontSize: 13,
           fontWeight: AppTypography.medium,
+          color: context.appPalette.ink,
           letterSpacing: 0,
         ),
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: const TextStyle(
+          hintStyle: TextStyle(
             fontFamily: AppTypography.fontFamily,
             fontWeight: AppTypography.medium,
-            color: Color(0xFF8F8F94),
+            color: context.appPalette.muted,
             letterSpacing: 0,
           ),
           contentPadding: const EdgeInsets.symmetric(
@@ -290,11 +300,11 @@ class _TextFieldBlock extends StatelessWidget {
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE7E7EA)),
+            borderSide: BorderSide(color: context.appPalette.border),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Colors.black),
+            borderSide: BorderSide(color: context.appPalette.ink),
           ),
         ),
       ),

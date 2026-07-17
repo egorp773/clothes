@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../core/app_appearance.dart';
 import '../models/app_profile.dart';
 import '../models/product.dart';
 import '../widgets/app_image.dart';
@@ -181,7 +182,7 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
     if (_isRunningSellerAction) return;
     final action = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: context.appPalette.surfaceRaised,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
         child: Column(
@@ -229,7 +230,7 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
     }
     final reason = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: context.appPalette.surfaceRaised,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(
         child: Column(
@@ -340,7 +341,7 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Column(
         children: [
           Expanded(
@@ -362,16 +363,16 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
                         ),
                         if (_isLoading) ...[
                           const SizedBox(height: 8),
-                          const LinearProgressIndicator(
+                          LinearProgressIndicator(
                             minHeight: 2,
-                            color: Colors.black,
-                            backgroundColor: Color(0xFFEDEDEF),
+                            color: Theme.of(context).colorScheme.primary,
+                            backgroundColor: context.appPalette.surfaceMuted,
                           ),
                         ],
                         if (_loadError != null) ...[
                           const SizedBox(height: 10),
                           Material(
-                            color: const Color(0xFFF4F4F5),
+                            color: context.appPalette.surfaceMuted,
                             borderRadius: BorderRadius.circular(12),
                             child: InkWell(
                               onTap: _load,
@@ -425,14 +426,14 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
                         const SizedBox(height: 18),
                         _RatingPill(seller: _seller, onTap: _openReviews),
                         const SizedBox(height: 22),
-                        const Text(
+                        Text(
                           'Написать продавцу',
                           style: TextStyle(
                             fontSize: 24,
                             height: 1,
                             fontWeight: FontWeight.w700,
                             letterSpacing: 0,
-                            color: Color(0xFF050505),
+                            color: context.appPalette.ink,
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -460,10 +461,10 @@ class _SellerProfileScreenState extends State<SellerProfileScreen> {
                         _tabIndex == 0
                             ? 'Активных объявлений нет'
                             : 'Завершенных объявлений нет',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF8C8C91),
+                          color: context.appPalette.muted,
                         ),
                       ),
                     ),
@@ -545,7 +546,9 @@ class _TopIconButton extends StatelessWidget {
         height: 44,
         child: Icon(
           icon,
-          color: onTap == null ? const Color(0xFFAAAAAF) : Colors.black,
+          color: onTap == null
+              ? context.appPalette.muted
+              : context.appPalette.ink,
           size: 23,
         ),
       ),
@@ -583,12 +586,12 @@ class _SellerHeader extends StatelessWidget {
                 seller.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 28,
                   height: 1,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0,
-                  color: Color(0xFF050505),
+                  color: context.appPalette.ink,
                 ),
               ),
               if (seller.handle.trim().isNotEmpty) ...[
@@ -602,7 +605,7 @@ class _SellerHeader extends StatelessWidget {
                     height: 1,
                     fontWeight: FontWeight.w600,
                     letterSpacing: 0,
-                    color: Colors.black.withValues(alpha: 0.55),
+                    color: context.appPalette.muted,
                   ),
                 ),
               ],
@@ -622,10 +625,10 @@ class _SellerHeader extends StatelessWidget {
                       _followersText(seller.followersCount),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
-                        color: Color(0xFF242429),
+                        color: context.appPalette.ink,
                       ),
                     ),
                   ),
@@ -658,8 +661,8 @@ class _Avatar extends StatelessWidget {
     return Container(
       width: 48,
       height: 48,
-      decoration: const BoxDecoration(
-        color: Color(0xFFEDEDEF),
+      decoration: BoxDecoration(
+        color: context.appPalette.surfaceMuted,
         shape: BoxShape.circle,
       ),
       alignment: Alignment.center,
@@ -686,23 +689,23 @@ class _SellerMeta extends StatelessWidget {
         if (seller.city.trim().isNotEmpty)
           Text(
             seller.city,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 16,
               height: 1.12,
               fontWeight: FontWeight.w500,
               letterSpacing: 0,
-              color: Color(0xFF050505),
+              color: context.appPalette.ink,
             ),
           ),
         if (seller.city.trim().isNotEmpty) const SizedBox(height: 8),
-        const Text(
+        Text(
           'Частное лицо',
           style: TextStyle(
             fontSize: 16,
             height: 1,
             fontWeight: FontWeight.w500,
             letterSpacing: 0,
-            color: Color(0xFF050505),
+            color: context.appPalette.ink,
           ),
         ),
       ],
@@ -718,6 +721,7 @@ class _RatingPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final rating = seller.salesCount <= 0
         ? 0.0
         : seller.rating.clamp(0, 5).toDouble();
@@ -729,19 +733,19 @@ class _RatingPill extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 20),
         decoration: BoxDecoration(
-          color: Colors.black,
+          color: scheme.primary,
           borderRadius: BorderRadius.circular(22),
         ),
         child: Row(
           children: [
             Text(
               rating.toStringAsFixed(1).replaceAll('.', ','),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 28,
                 height: 1,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
-                color: Colors.white,
+                color: scheme.onPrimary,
               ),
             ),
             const SizedBox(width: 14),
@@ -752,11 +756,11 @@ class _RatingPill extends StatelessWidget {
                 _reviewCountLabel(seller.salesCount),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w500,
                   letterSpacing: 0,
-                  color: Colors.white,
+                  color: scheme.onPrimary,
                 ),
               ),
             ),
@@ -784,7 +788,9 @@ class _Stars extends StatelessWidget {
             size: 27,
             color: index < rating.round()
                 ? const Color(0xFFFFB21A)
-                : const Color(0xFFE8E8EA),
+                : Theme.of(
+                    context,
+                  ).colorScheme.onPrimary.withValues(alpha: 0.3),
           );
         }),
       ),
@@ -806,7 +812,7 @@ class _MessageBar extends StatelessWidget {
         height: 44,
         padding: const EdgeInsets.only(left: 22, right: 16),
         decoration: BoxDecoration(
-          color: const Color(0xFFF2F2F3),
+          color: context.appPalette.surfaceMuted,
           borderRadius: BorderRadius.circular(999),
         ),
         child: Row(
@@ -814,18 +820,20 @@ class _MessageBar extends StatelessWidget {
             Expanded(
               child: Text(
                 onTap == null ? 'открываем чат…' : 'введите сообщение',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
                   letterSpacing: 0,
-                  color: Color(0xFF85858A),
+                  color: context.appPalette.muted,
                 ),
               ),
             ),
             Icon(
               Icons.send,
               size: 23,
-              color: onTap == null ? const Color(0xFFAAAAAF) : Colors.black,
+              color: onTap == null
+                  ? context.appPalette.muted
+                  : Theme.of(context).colorScheme.primary,
             ),
           ],
         ),
@@ -858,15 +866,15 @@ class _TabsHeaderDelegate extends SliverPersistentHeaderDelegate {
     bool overlapsContent,
   ) {
     return DecoratedBox(
-      decoration: const BoxDecoration(color: Colors.white),
+      decoration: BoxDecoration(color: context.appPalette.page),
       child: Padding(
         padding: EdgeInsets.only(top: topInset),
         child: DecoratedBox(
-          decoration: const BoxDecoration(
-            color: Colors.white,
+          decoration: BoxDecoration(
+            color: context.appPalette.surface,
             border: Border(
-              top: BorderSide(color: Colors.black, width: 2),
-              bottom: BorderSide(color: Color(0xFFDADADD), width: 1),
+              top: BorderSide(color: context.appPalette.ink, width: 2),
+              bottom: BorderSide(color: context.appPalette.border, width: 1),
             ),
           ),
           child: Row(
@@ -920,23 +928,23 @@ class _TabButton extends StatelessWidget {
           Center(
             child: Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 16,
                 height: 1,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
-                color: Color(0xFF050505),
+                color: context.appPalette.ink,
               ),
             ),
           ),
           if (isActive)
-            const Positioned(
+            Positioned(
               left: 0,
               right: 0,
               bottom: 0,
               child: ColoredBox(
-                color: Colors.black,
-                child: SizedBox(height: 3),
+                color: Theme.of(context).colorScheme.primary,
+                child: const SizedBox(height: 3),
               ),
             ),
         ],
@@ -1025,11 +1033,11 @@ class _SellerProductCardState extends State<_SellerProductCard> {
               widget.product.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13.5,
                 height: 1.08,
                 fontWeight: FontWeight.w500,
-                color: Color(0xFF070707),
+                color: context.appPalette.ink,
               ),
             ),
             const SizedBox(height: 1),
@@ -1040,11 +1048,11 @@ class _SellerProductCardState extends State<_SellerProductCard> {
                     widget.product.price,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13.5,
                       height: 1,
                       fontWeight: FontWeight.w700,
-                      color: Color(0xFF070707),
+                      color: context.appPalette.ink,
                     ),
                   ),
                 ),
@@ -1082,7 +1090,9 @@ class _SmallIconButton extends StatelessWidget {
         child: Icon(
           icon,
           size: 22,
-          color: onTap == null ? const Color(0xFFAAAAAF) : Colors.black,
+          color: onTap == null
+              ? context.appPalette.muted
+              : context.appPalette.ink,
         ),
       ),
     );

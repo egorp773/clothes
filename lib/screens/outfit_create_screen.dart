@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../core/app_appearance.dart';
 import '../models/created_outfit.dart';
 import '../models/outfit_accessory.dart';
 import '../models/product.dart';
@@ -459,7 +460,7 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: context.appPalette.page,
       body: SafeArea(
         child: Column(
           children: [
@@ -504,14 +505,14 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
                               child: Container(
                                 width: 32,
                                 height: 32,
-                                decoration: const BoxDecoration(
-                                  color: Color(0xFF5E5E5E),
+                                decoration: BoxDecoration(
+                                  color: context.appPalette.surfaceMuted,
                                   shape: BoxShape.circle,
                                 ),
-                                child: const Icon(
+                                child: Icon(
                                   Icons.chevron_left,
                                   size: 23,
-                                  color: Colors.white,
+                                  color: context.appPalette.ink,
                                 ),
                               ),
                             ),
@@ -526,10 +527,10 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
                                   horizontal: 16,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.black,
+                                  color: Theme.of(context).colorScheme.primary,
                                   borderRadius: BorderRadius.circular(999),
                                 ),
-                                child: const Center(
+                                child: Center(
                                   child: Text(
                                     'Далее',
                                     style: TextStyle(
@@ -538,7 +539,9 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
                                       fontWeight: FontWeight.w600,
                                       height: 1,
                                       letterSpacing: 0,
-                                      color: Colors.white,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onPrimary,
                                     ),
                                   ),
                                 ),
@@ -826,7 +829,7 @@ class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -838,7 +841,7 @@ class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
                     onPressed: () => Navigator.maybePop(context),
                     icon: const Icon(Icons.chevron_left),
                     iconSize: 28,
-                    color: Colors.black,
+                    color: context.appPalette.ink,
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints.tightFor(
                       width: 44,
@@ -852,13 +855,13 @@ class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
                           : 'мой аксессуар',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 20,
                         fontWeight: FontWeight.w700,
                         height: 1,
                         letterSpacing: 0,
-                        color: Colors.black,
+                        color: context.appPalette.ink,
                       ),
                     ),
                   ),
@@ -866,11 +869,11 @@ class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
                 ],
               ),
             ),
-            const SizedBox(
+            SizedBox(
               width: double.infinity,
               height: 2,
               child: DecoratedBox(
-                decoration: BoxDecoration(color: Colors.black),
+                decoration: BoxDecoration(color: context.appPalette.ink),
               ),
             ),
             Expanded(
@@ -885,8 +888,8 @@ class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
                         width: 180,
                         height: 180,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF8F8F9),
-                          border: Border.all(color: const Color(0xFFE7E7EA)),
+                          color: context.appPalette.surfaceMuted,
+                          border: Border.all(color: context.appPalette.border),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         clipBehavior: Clip.antiAlias,
@@ -896,7 +899,7 @@ class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
                             imageUrl: widget.imagePath,
                             fit: BoxFit.contain,
                             alignment: Alignment.center,
-                            placeholderColor: Colors.white,
+                            placeholderColor: context.appPalette.surface,
                           ),
                         ),
                       ),
@@ -908,30 +911,32 @@ class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
                       autofocus: true,
                       textInputAction: TextInputAction.done,
                       onSubmitted: (_) => _save(),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
                         height: 1.2,
                         letterSpacing: 0,
-                        color: Colors.black,
+                        color: context.appPalette.ink,
                       ),
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Название',
                         hintText: 'Например: очки',
                         labelStyle: TextStyle(
                           fontFamily: 'Montserrat',
-                          color: Color(0xFF6E6E6E),
+                          color: context.appPalette.muted,
                         ),
                         hintStyle: TextStyle(
                           fontFamily: 'Montserrat',
-                          color: Color(0xFF8E8E8E),
+                          color: context.appPalette.muted,
                         ),
                         enabledBorder: UnderlineInputBorder(
-                          borderSide: BorderSide(color: Color(0xFFE0E0E0)),
+                          borderSide: BorderSide(
+                            color: context.appPalette.border,
+                          ),
                         ),
                         focusedBorder: UnderlineInputBorder(
-                          borderSide: BorderSide(color: Colors.black),
+                          borderSide: BorderSide(color: context.appPalette.ink),
                         ),
                       ),
                     ),
@@ -942,9 +947,11 @@ class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
             Container(
               width: double.infinity,
               height: 82,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                border: Border(top: BorderSide(color: Color(0xFFE0E0E0))),
+              decoration: BoxDecoration(
+                color: context.appPalette.surfaceRaised,
+                border: Border(
+                  top: BorderSide(color: context.appPalette.border),
+                ),
               ),
               padding: const EdgeInsets.fromLTRB(10, 22, 10, 0),
               child: GestureDetector(
@@ -952,7 +959,9 @@ class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
                 onTap: _canSave ? _save : null,
                 child: Container(
                   height: 40,
-                  color: _canSave ? Colors.black : const Color(0xFFC8C8CE),
+                  color: _canSave
+                      ? Theme.of(context).colorScheme.primary
+                      : context.appPalette.surfaceMuted,
                   alignment: Alignment.center,
                   child: Text(
                     'СОХРАНИТЬ АКСЕССУАР',
@@ -962,7 +971,9 @@ class _AccessoryTitleScreenState extends State<_AccessoryTitleScreen> {
                       fontWeight: FontWeight.w700,
                       height: 1,
                       letterSpacing: 0,
-                      color: _canSave ? Colors.white : const Color(0xFF8E8E93),
+                      color: _canSave
+                          ? Theme.of(context).colorScheme.onPrimary
+                          : context.appPalette.muted,
                     ),
                   ),
                 ),
@@ -1009,9 +1020,9 @@ class _ClothesPickerSheetState extends State<_ClothesPickerSheet> {
         maxHeight: MediaQuery.sizeOf(context).height * 0.72,
       ),
       padding: EdgeInsets.fromLTRB(16, 10, 16, 16 + bottomInset),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: context.appPalette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1020,7 +1031,7 @@ class _ClothesPickerSheetState extends State<_ClothesPickerSheet> {
             width: 38,
             height: 4,
             decoration: BoxDecoration(
-              color: const Color(0xFFDADADD),
+              color: context.appPalette.border,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -1043,14 +1054,14 @@ class _ClothesPickerSheetState extends State<_ClothesPickerSheet> {
           const SizedBox(height: 12),
           Flexible(
             child: _visibleProducts.isEmpty && _tabIndex != 0
-                ? const Center(
+                ? Center(
                     child: Text(
                       'Вещей пока нет',
                       style: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
-                        color: Color(0xFF8E8E8E),
+                        color: context.appPalette.muted,
                       ),
                     ),
                   )
@@ -1105,17 +1116,17 @@ class _CreateClothingTile extends StatelessWidget {
           Expanded(
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: const Color(0xFFF4F4F5),
+                color: context.appPalette.surfaceMuted,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFE1E1E4)),
+                border: Border.all(color: context.appPalette.border),
               ),
-              child: const Center(
-                child: Icon(Icons.add, size: 30, color: Colors.black),
+              child: Center(
+                child: Icon(Icons.add, size: 30, color: context.appPalette.ink),
               ),
             ),
           ),
           const SizedBox(height: 5),
-          const Text(
+          Text(
             'Создать',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
@@ -1126,7 +1137,7 @@ class _CreateClothingTile extends StatelessWidget {
               fontWeight: FontWeight.w600,
               height: 1,
               letterSpacing: 0,
-              color: Colors.black,
+              color: context.appPalette.ink,
             ),
           ),
         ],
@@ -1167,14 +1178,14 @@ class _ClothingTile extends StatelessWidget {
                 ),
                 if (isProcessing)
                   Container(
-                    color: Colors.white.withValues(alpha: 0.78),
-                    child: const Center(
+                    color: context.appPalette.surface.withValues(alpha: 0.78),
+                    child: Center(
                       child: SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Colors.black,
+                          color: Theme.of(context).colorScheme.primary,
                         ),
                       ),
                     ),
@@ -1188,13 +1199,13 @@ class _ClothingTile extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'Montserrat',
               fontSize: 9,
               fontWeight: FontWeight.w500,
               height: 1,
               letterSpacing: 0,
-              color: Colors.black,
+              color: context.appPalette.ink,
             ),
           ),
         ],
@@ -1238,9 +1249,9 @@ class _AccessoriesPickerSheetState extends State<_AccessoriesPickerSheet> {
         maxHeight: MediaQuery.sizeOf(context).height * 0.72,
       ),
       padding: EdgeInsets.fromLTRB(16, 10, 16, 16 + bottomInset),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: context.appPalette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1249,7 +1260,7 @@ class _AccessoriesPickerSheetState extends State<_AccessoriesPickerSheet> {
             width: 38,
             height: 4,
             decoration: BoxDecoration(
-              color: const Color(0xFFDADADD),
+              color: context.appPalette.border,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -1333,14 +1344,14 @@ class _AccessoryTile extends StatelessWidget {
                 ),
                 if (accessory.isProcessing)
                   Container(
-                    color: Colors.white.withValues(alpha: 0.78),
-                    child: const Center(
+                    color: context.appPalette.surface.withValues(alpha: 0.78),
+                    child: Center(
                       child: SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Colors.black,
+                          color: Theme.of(context).colorScheme.primary,
                         ),
                       ),
                     ),
@@ -1354,13 +1365,13 @@ class _AccessoryTile extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'Montserrat',
               fontSize: 9,
               fontWeight: FontWeight.w500,
               height: 1,
               letterSpacing: 0,
-              color: Colors.black,
+              color: context.appPalette.ink,
             ),
           ),
         ],
@@ -1473,9 +1484,9 @@ class _BackgroundPickerSheetState extends State<_BackgroundPickerSheet> {
 
     return Container(
       height: sheetHeight,
-      decoration: const BoxDecoration(
-        color: Color(0xFFF7F7F7),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      decoration: BoxDecoration(
+        color: context.appPalette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: Column(
         children: [
@@ -1486,7 +1497,7 @@ class _BackgroundPickerSheetState extends State<_BackgroundPickerSheet> {
                 width: 40,
                 height: 5,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF6E6E6E),
+                  color: context.appPalette.muted,
                   borderRadius: BorderRadius.circular(999),
                 ),
               ),
@@ -1503,7 +1514,7 @@ class _BackgroundPickerSheetState extends State<_BackgroundPickerSheet> {
                   decoration: BoxDecoration(
                     color: _selectedColor,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFD7D7DA)),
+                    border: Border.all(color: context.appPalette.border),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -1511,7 +1522,7 @@ class _BackgroundPickerSheetState extends State<_BackgroundPickerSheet> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         '\u0424\u043e\u043d \u043e\u0431\u0440\u0430\u0437\u0430',
                         style: TextStyle(
                           fontFamily: 'Montserrat',
@@ -1519,19 +1530,19 @@ class _BackgroundPickerSheetState extends State<_BackgroundPickerSheet> {
                           fontWeight: FontWeight.w700,
                           height: 1,
                           letterSpacing: 0,
-                          color: Colors.black,
+                          color: context.appPalette.ink,
                         ),
                       ),
                       const SizedBox(height: 6),
                       Text(
                         _colorToHex(_selectedColor),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontFamily: 'Montserrat',
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
                           height: 1,
                           letterSpacing: 0,
-                          color: Color(0xFF77777D),
+                          color: context.appPalette.muted,
                         ),
                       ),
                     ],
@@ -1617,41 +1628,43 @@ class _BackgroundPickerSheetState extends State<_BackgroundPickerSheet> {
                     textCapitalization: TextCapitalization.characters,
                     onChanged: _applyHex,
                     onSubmitted: _applyHex,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'Montserrat',
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       height: 1,
                       letterSpacing: 0,
-                      color: Colors.black,
+                      color: context.appPalette.ink,
                     ),
                     decoration: InputDecoration(
                       labelText: 'HEX',
-                      labelStyle: const TextStyle(
+                      labelStyle: TextStyle(
                         fontFamily: 'Montserrat',
-                        color: Color(0xFF77777D),
+                        color: context.appPalette.muted,
                       ),
                       prefixText: '#',
-                      prefixStyle: const TextStyle(
+                      prefixStyle: TextStyle(
                         fontFamily: 'Montserrat',
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
-                        color: Colors.black,
+                        color: context.appPalette.ink,
                       ),
                       filled: true,
-                      fillColor: Colors.white,
+                      fillColor: context.appPalette.surface,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 14,
                         vertical: 12,
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xFFE1E1E4)),
+                        borderSide: BorderSide(
+                          color: context.appPalette.border,
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(
-                          color: Colors.black,
+                        borderSide: BorderSide(
+                          color: context.appPalette.ink,
                           width: 1.2,
                         ),
                       ),
@@ -1668,8 +1681,8 @@ class _BackgroundPickerSheetState extends State<_BackgroundPickerSheet> {
               children: [
                 _BackgroundSheetButton(
                   label: '\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c',
-                  backgroundColor: const Color(0xFFD0D0D0),
-                  foregroundColor: Colors.black,
+                  backgroundColor: context.appPalette.surfaceMuted,
+                  foregroundColor: context.appPalette.ink,
                   horizontalPadding: 22,
                   fontWeight: FontWeight.w600,
                   onTap: _reset,
@@ -1677,8 +1690,8 @@ class _BackgroundPickerSheetState extends State<_BackgroundPickerSheet> {
                 const Spacer(),
                 _BackgroundSheetButton(
                   label: '\u0413\u043e\u0442\u043e\u0432\u043e',
-                  backgroundColor: Colors.black,
-                  foregroundColor: Colors.white,
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
                   horizontalPadding: 28,
                   fontWeight: FontWeight.w700,
                   onTap: _done,
@@ -1714,10 +1727,12 @@ class _BackgroundSheetDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       width: double.infinity,
       height: 1,
-      child: DecoratedBox(decoration: BoxDecoration(color: Color(0xFFD8D8D8))),
+      child: DecoratedBox(
+        decoration: BoxDecoration(color: context.appPalette.border),
+      ),
     );
   }
 }
@@ -1749,13 +1764,13 @@ class _ColorSlider extends StatelessWidget {
           width: 20,
           child: Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'Montserrat',
               fontSize: 12,
               fontWeight: FontWeight.w700,
               height: 1,
               letterSpacing: 0,
-              color: Colors.black,
+              color: context.appPalette.ink,
             ),
           ),
         ),
@@ -1770,7 +1785,7 @@ class _ColorSlider extends StatelessWidget {
                   decoration: BoxDecoration(
                     gradient: LinearGradient(colors: gradient),
                     borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: const Color(0xFFE1E1E4)),
+                    border: Border.all(color: context.appPalette.border),
                   ),
                 ),
                 SliderTheme(
@@ -1778,7 +1793,7 @@ class _ColorSlider extends StatelessWidget {
                     trackHeight: 14,
                     activeTrackColor: Colors.transparent,
                     inactiveTrackColor: Colors.transparent,
-                    overlayColor: Colors.black.withValues(alpha: 0.06),
+                    overlayColor: Colors.transparent,
                     thumbColor: thumbColor,
                     thumbShape: const RoundSliderThumbShape(
                       enabledThumbRadius: 10,
@@ -1873,7 +1888,10 @@ class _BackgroundSwatch extends StatelessWidget {
           color: color,
           borderRadius: BorderRadius.circular(10),
           border: isSelected
-              ? Border.all(color: const Color(0xFFF0A020), width: 2)
+              ? Border.all(
+                  color: Theme.of(context).colorScheme.primary,
+                  width: 2,
+                )
               : null,
         ),
       ),
@@ -1894,6 +1912,8 @@ class _SheetTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Expanded(
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -1901,7 +1921,7 @@ class _SheetTab extends StatelessWidget {
         child: Container(
           height: 34,
           decoration: BoxDecoration(
-            color: isActive ? Colors.black : const Color(0xFFF1F1F1),
+            color: isActive ? scheme.primary : context.appPalette.surfaceMuted,
             borderRadius: BorderRadius.circular(999),
           ),
           child: Center(
@@ -1913,7 +1933,7 @@ class _SheetTab extends StatelessWidget {
                 fontWeight: FontWeight.w600,
                 height: 1,
                 letterSpacing: 0,
-                color: isActive ? Colors.white : Colors.black,
+                color: isActive ? scheme.onPrimary : context.appPalette.ink,
               ),
             ),
           ),
@@ -1942,26 +1962,26 @@ class _EditorActionButton extends StatelessWidget {
       child: Container(
         height: 52,
         decoration: BoxDecoration(
-          color: const Color(0xFF4A4A4A),
+          color: context.appPalette.surfaceRaised,
           borderRadius: BorderRadius.circular(6),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 21, color: Colors.white),
+            Icon(icon, size: 21, color: context.appPalette.ink),
             const SizedBox(height: 5),
             Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'Montserrat',
                 fontSize: 10,
                 fontWeight: FontWeight.w600,
                 height: 1,
                 letterSpacing: 0,
-                color: Colors.white,
+                color: context.appPalette.ink,
               ),
             ),
           ],

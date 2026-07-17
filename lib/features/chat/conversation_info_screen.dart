@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/app_appearance.dart';
 import '../../models/message_thread.dart';
 import '../../widgets/app_image.dart';
 import 'chat_actions.dart';
@@ -106,9 +107,11 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
         return Padding(
           padding: EdgeInsets.only(bottom: bottom),
           child: DecoratedBox(
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            decoration: BoxDecoration(
+              color: context.appPalette.surfaceRaised,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(28),
+              ),
             ),
             child: SafeArea(
               top: false,
@@ -120,12 +123,12 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
                   children: [
                     const Center(child: _SheetHandle()),
                     const SizedBox(height: 18),
-                    const Text(
+                    Text(
                       'Название беседы',
                       style: TextStyle(
                         fontSize: 21,
                         fontWeight: FontWeight.w700,
-                        color: ChatTokens.ink,
+                        color: context.appPalette.ink,
                       ),
                     ),
                     const SizedBox(height: 14),
@@ -136,7 +139,7 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
                       decoration: InputDecoration(
                         hintText: 'Введите название',
                         filled: true,
-                        fillColor: ChatTokens.soft,
+                        fillColor: context.appPalette.surfaceMuted,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(14),
                           borderSide: BorderSide.none,
@@ -151,7 +154,13 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
                         onPressed: () =>
                             Navigator.pop(context, controller.text.trim()),
                         style: FilledButton.styleFrom(
-                          backgroundColor: ChatTokens.ink,
+                          overlayColor: Colors.transparent,
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onPrimary,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                           ),
@@ -191,7 +200,7 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
         .toList(growable: false);
 
     return Scaffold(
-      backgroundColor: ChatTokens.background,
+      backgroundColor: context.appPalette.page,
       body: SafeArea(
         top: false,
         child: CustomScrollView(
@@ -200,7 +209,7 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
             SliverToBoxAdapter(child: _buildHeader(context)),
             SliverToBoxAdapter(
               child: Container(
-                color: Colors.white,
+                color: context.appPalette.surface,
                 padding: const EdgeInsets.fromLTRB(18, 8, 18, 22),
                 child: Column(
                   children: [
@@ -222,11 +231,11 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 22,
                               height: 1.15,
                               fontWeight: FontWeight.w700,
-                              color: ChatTokens.ink,
+                              color: context.appPalette.ink,
                             ),
                           ),
                         ),
@@ -245,9 +254,9 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
                       const SizedBox(height: 5),
                       Text(
                         subtitle,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13.5,
-                          color: ChatTokens.muted,
+                          color: context.appPalette.muted,
                         ),
                       ),
                     ],
@@ -350,10 +359,10 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
                           ? null
                           : (value) => _update(isPinned: value),
                     ),
-                    const Divider(
+                    Divider(
                       height: 1,
                       indent: 48,
-                      color: ChatTokens.line,
+                      color: context.appPalette.border,
                     ),
                     _SettingRow(
                       icon: Icons.notifications_off_outlined,
@@ -363,10 +372,10 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
                           ? null
                           : (value) => _update(isMuted: value),
                     ),
-                    const Divider(
+                    Divider(
                       height: 1,
                       indent: 48,
-                      color: ChatTokens.line,
+                      color: context.appPalette.border,
                     ),
                     _SettingRow(
                       icon: Icons.archive_outlined,
@@ -392,34 +401,34 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
     return Container(
       height: topInset + 58,
       padding: EdgeInsets.fromLTRB(4, topInset + 2, 12, 2),
-      color: Colors.white,
+      color: context.appPalette.surface,
       child: Row(
         children: [
           IconButton(
             onPressed: () => Navigator.pop(context),
             icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
           ),
-          const Expanded(
+          Expanded(
             child: Text(
               'Информация',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
-                color: ChatTokens.ink,
+                color: context.appPalette.ink,
               ),
             ),
           ),
           SizedBox(
             width: 48,
             child: _saving
-                ? const Center(
+                ? Center(
                     child: SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: ChatTokens.ink,
+                        color: context.appPalette.ink,
                       ),
                     ),
                   )
@@ -448,13 +457,19 @@ class _QuickAction extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: InkWell(
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: AnimatedContainer(
           duration: ChatTokens.fast,
           height: 72,
           decoration: BoxDecoration(
-            color: selected ? ChatTokens.ink : ChatTokens.soft,
+            color: selected
+                ? Theme.of(context).colorScheme.primary
+                : context.appPalette.surfaceMuted,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Column(
@@ -463,7 +478,9 @@ class _QuickAction extends StatelessWidget {
               Icon(
                 icon,
                 size: 22,
-                color: selected ? Colors.white : ChatTokens.ink,
+                color: selected
+                    ? Theme.of(context).colorScheme.onPrimary
+                    : context.appPalette.ink,
               ),
               const SizedBox(height: 6),
               Text(
@@ -472,7 +489,9 @@ class _QuickAction extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 10.5,
-                  color: selected ? Colors.white : ChatTokens.ink,
+                  color: selected
+                      ? Theme.of(context).colorScheme.onPrimary
+                      : context.appPalette.ink,
                 ),
               ),
             ],
@@ -494,16 +513,16 @@ class _SectionCard extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
-      color: Colors.white,
+      color: context.appPalette.surface,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: ChatTokens.muted,
+              color: context.appPalette.muted,
             ),
           ),
           const SizedBox(height: 10),
@@ -523,12 +542,16 @@ class _ProductContext extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      focusColor: Colors.transparent,
       onTap: onTap,
       borderRadius: BorderRadius.circular(14),
       child: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: ChatTokens.soft,
+          color: context.appPalette.surfaceMuted,
           borderRadius: BorderRadius.circular(14),
         ),
         child: Row(
@@ -548,15 +571,15 @@ class _ProductContext extends StatelessWidget {
                     : thread.productTitle,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 14.5,
                   height: 1.2,
                   fontWeight: FontWeight.w600,
-                  color: ChatTokens.ink,
+                  color: context.appPalette.ink,
                 ),
               ),
             ),
-            const Icon(Icons.chevron_right_rounded, color: ChatTokens.muted),
+            Icon(Icons.chevron_right_rounded, color: context.appPalette.muted),
           ],
         ),
       ),
@@ -586,19 +609,19 @@ class _MemberRow extends StatelessWidget {
                   isCurrent ? '${member.name} · вы' : member.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14.5,
                     fontWeight: FontWeight.w600,
-                    color: ChatTokens.ink,
+                    color: context.appPalette.ink,
                   ),
                 ),
                 if (member.handle.isNotEmpty) ...[
                   const SizedBox(height: 3),
                   Text(
                     member.handle,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12.5,
-                      color: ChatTokens.muted,
+                      color: context.appPalette.muted,
                     ),
                   ),
                 ],
@@ -642,6 +665,10 @@ class _MediaGrid extends StatelessWidget {
       itemBuilder: (context, index) {
         final item = items[index];
         return InkWell(
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          focusColor: Colors.transparent,
           onTap: item.productId.isEmpty || onOpenProduct == null
               ? null
               : () => onOpenProduct!(item.productId),
@@ -695,19 +722,19 @@ class _SettingRow extends StatelessWidget {
       height: 54,
       child: Row(
         children: [
-          Icon(icon, size: 21, color: ChatTokens.ink),
+          Icon(icon, size: 21, color: context.appPalette.ink),
           const SizedBox(width: 16),
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(fontSize: 14.5, color: ChatTokens.ink),
+              style: TextStyle(fontSize: 14.5, color: context.appPalette.ink),
             ),
           ),
           Switch.adaptive(
             value: value,
             onChanged: onChanged,
-            activeTrackColor: ChatTokens.ink,
-            inactiveTrackColor: const Color(0xFFD8D8DC),
+            activeTrackColor: Theme.of(context).colorScheme.primary,
+            inactiveTrackColor: context.appPalette.surfaceMuted,
           ),
         ],
       ),
@@ -724,7 +751,7 @@ class _SheetHandle extends StatelessWidget {
       width: 42,
       height: 4,
       decoration: BoxDecoration(
-        color: const Color(0xFFD7D7DB),
+        color: context.appPalette.border,
         borderRadius: BorderRadius.circular(999),
       ),
     );

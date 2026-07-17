@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
 import '../models/app_profile.dart';
 import '../models/product.dart';
@@ -8,6 +9,7 @@ import '../models/profile_feature.dart';
 import '../services/image_download_service.dart';
 import '../features/listing_publish/data/listing_catalogs.dart';
 import '../widgets/app_image.dart';
+import '../widgets/app_glass_surface.dart';
 import '../widgets/seller_follow_button.dart';
 
 const _productInfoBodyTextStyle = TextStyle(
@@ -16,7 +18,6 @@ const _productInfoBodyTextStyle = TextStyle(
   height: 1.24,
   fontWeight: AppTypography.medium,
   letterSpacing: 0,
-  color: Colors.black,
 );
 
 const _productDescriptionTextStyle = TextStyle(
@@ -25,7 +26,6 @@ const _productDescriptionTextStyle = TextStyle(
   height: 1.16,
   fontWeight: AppTypography.semiBold,
   letterSpacing: 0,
-  color: Colors.black,
 );
 
 class ProductDetailData {
@@ -282,12 +282,13 @@ class _ProductScreenState extends State<ProductScreen>
       backgroundColor: Colors.transparent,
       builder: (sheetContext) {
         final bottomInset = MediaQuery.of(sheetContext).viewPadding.bottom;
+        final palette = sheetContext.appPalette;
         return Container(
           width: double.infinity,
           padding: EdgeInsets.fromLTRB(20, 18, 20, 20 + bottomInset),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          decoration: BoxDecoration(
+            color: palette.surfaceRaised,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -298,19 +299,19 @@ class _ProductScreenState extends State<ProductScreen>
                   width: 42,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFE0E0E4),
+                    color: palette.border,
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
               ),
               const SizedBox(height: 18),
-              const Text(
+              Text(
                 'Упс, этот товар не продается',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF111111),
+                  color: palette.ink,
                 ),
               ),
               const SizedBox(height: 10),
@@ -320,7 +321,7 @@ class _ProductScreenState extends State<ProductScreen>
                 style: TextStyle(
                   fontSize: 14,
                   height: 1.35,
-                  color: Colors.black.withValues(alpha: 0.62),
+                  color: palette.muted,
                 ),
               ),
               const SizedBox(height: 18),
@@ -332,8 +333,9 @@ class _ProductScreenState extends State<ProductScreen>
                     widget.onContactSeller();
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.black,
-                    foregroundColor: Colors.white,
+                    backgroundColor: palette.ink,
+                    foregroundColor: palette.surface,
+                    overlayColor: Colors.transparent,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(2),
@@ -371,6 +373,7 @@ class _ProductScreenState extends State<ProductScreen>
   @override
   Widget build(BuildContext context) {
     final product = widget.product;
+    final palette = context.appPalette;
     final hairline = 1 / MediaQuery.of(context).devicePixelRatio;
     final tExpand = _expandController.value;
     final topGap = widget.isPreview
@@ -395,9 +398,16 @@ class _ProductScreenState extends State<ProductScreen>
         : 'Уточнить у продавца';
     final publishedAt =
         widget.sourceProduct?.publishedAt ?? product.publishedAt;
+    final presentationBackground = palette.page.withValues(alpha: 1);
+    final productSurface = context.appGlass.enabled
+        ? Color.alphaBlend(
+            palette.surfaceRaised.withValues(alpha: 0.76),
+            presentationBackground,
+          )
+        : palette.surface.withValues(alpha: 1);
 
     return Scaffold(
-      backgroundColor: Colors.transparent,
+      backgroundColor: presentationBackground,
       body: SlideTransition(
         position: _slide,
         child: Padding(
@@ -413,11 +423,11 @@ class _ProductScreenState extends State<ProductScreen>
               children: [
                 Positioned.fill(
                   child: Container(
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Colors.transparent, Colors.white],
+                        colors: [Colors.transparent, productSurface],
                         stops: [0.0, 0.12],
                       ),
                     ),
@@ -452,10 +462,10 @@ class _ProductScreenState extends State<ProductScreen>
                                 spacing,
                               ),
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: productSurface,
                                 border: Border(
                                   top: BorderSide(
-                                    color: Colors.black.withValues(alpha: 0.12),
+                                    color: palette.border,
                                     width: hairline,
                                   ),
                                 ),
@@ -529,7 +539,7 @@ class _ProductScreenState extends State<ProductScreen>
                           ),
                           SliverToBoxAdapter(
                             child: Container(
-                              color: Colors.white,
+                              color: productSurface,
                               child: Padding(
                                 padding: EdgeInsets.fromLTRB(
                                   18,
@@ -620,32 +630,43 @@ class _ProductScreenState extends State<ProductScreen>
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    child: SafeArea(
-                      top: false,
-                      child: Container(
-                        padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
-                        color: Colors.transparent,
-                        child: SizedBox(
-                          height: 52,
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: canPurchase
-                                ? widget.onContactSeller
-                                : _showUnavailablePurchaseSheet,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.black,
-                              foregroundColor: Colors.white,
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(2),
+                    child: AppGlassSurface(
+                      density: 0.94,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(22),
+                      ),
+                      child: SafeArea(
+                        top: false,
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
+                          color: context.appGlass.enabled
+                              ? Colors.transparent
+                              : productSurface,
+                          child: SizedBox(
+                            height: 52,
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: canPurchase
+                                  ? widget.onContactSeller
+                                  : _showUnavailablePurchaseSheet,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: palette.ink,
+                                foregroundColor: palette.surface,
+                                overlayColor: Colors.transparent,
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(
+                                    context.appGlass.enabled ? 16 : 2,
+                                  ),
+                                ),
                               ),
-                            ),
-                            child: Text(
-                              messageButtonText.toUpperCase(),
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: AppTypography.bold,
-                                letterSpacing: 0,
+                              child: Text(
+                                messageButtonText.toUpperCase(),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: AppTypography.bold,
+                                  letterSpacing: 0,
+                                ),
                               ),
                             ),
                           ),
@@ -712,13 +733,13 @@ class _ProductPublicationMeta extends StatelessWidget {
             'Опубликовано: $publicationLabel',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 13.5,
               height: 1.2,
               fontWeight: AppTypography.medium,
               letterSpacing: 0,
-              color: Color(0xFF77777D),
+              color: context.appPalette.muted,
             ),
           ),
         ),
@@ -752,23 +773,24 @@ class _ProductMetaItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final muted = context.appPalette.muted;
     return Semantics(
       label: semanticsLabel,
       excludeSemantics: true,
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: const Color(0xFF77777D)),
+          Icon(icon, size: 13, color: muted),
           const SizedBox(width: 4),
           Text(
             text,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 13.5,
               height: 1.2,
               fontWeight: AppTypography.medium,
               letterSpacing: 0,
-              color: Color(0xFF77777D),
+              color: muted,
             ),
           ),
         ],
@@ -827,7 +849,7 @@ class _HeroImageGalleryState extends State<_HeroImageGallery> {
                 behavior: HitTestBehavior.opaque,
                 onTap: () => widget.onOpen(index),
                 child: Container(
-                  color: const Color(0xFFD9D9DB),
+                  color: context.appPalette.surfaceMuted,
                   child: AppImage(
                     key: ValueKey(_gallery[index]),
                     imageUrl: _gallery[index],
@@ -988,20 +1010,31 @@ class _TopIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final content = Center(
+      child: Icon(
+        icon,
+        size: 26,
+        color: context.appGlass.enabled
+            ? context.appPalette.ink
+            : Colors.black.withValues(alpha: 0.9),
+      ),
+    );
     return SizedBox(
       width: 54,
       height: 54,
-      child: InkWell(
+      child: AppGlassPressable(
         onTap: onTap,
-        splashFactory: NoSplash.splashFactory,
-        highlightColor: Colors.transparent,
-        child: Center(
-          child: Icon(
-            icon,
-            size: 26,
-            color: Colors.black.withValues(alpha: 0.9),
-          ),
-        ),
+        pressedScale: 0.9,
+        child: context.appGlass.enabled
+            ? Padding(
+                padding: const EdgeInsets.all(3),
+                child: AppGlassSurface(
+                  density: 0.86,
+                  borderRadius: BorderRadius.circular(17),
+                  child: content,
+                ),
+              )
+            : content,
       ),
     );
   }
@@ -1026,14 +1059,17 @@ class _InlineIcon extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
         highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
         child: Center(
           child: Icon(
             icon,
             size: 32,
             color: isWishlist && icon == CupertinoIcons.heart_fill
                 ? Colors.red
-                : Colors.black.withValues(alpha: 0.9),
+                : context.appPalette.ink,
           ),
         ),
       ),
@@ -1076,6 +1112,7 @@ class _SellerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Column(
       children: [
         Row(
@@ -1083,24 +1120,27 @@ class _SellerCard extends StatelessWidget {
             InkWell(
               onTap: onTap,
               splashFactory: NoSplash.splashFactory,
+              splashColor: Colors.transparent,
               highlightColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              focusColor: Colors.transparent,
               child: SizedBox(
                 width: 56,
                 height: 56,
                 child: ClipOval(
                   child: avatarUrl.trim().isEmpty
                       ? ColoredBox(
-                          color: const Color(0xFFF0F0F1),
+                          color: palette.surfaceMuted,
                           child: Center(
                             child: Text(
                               name.trim().isEmpty
                                   ? '?'
                                   : name.trim()[0].toUpperCase(),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontFamily: AppTypography.fontFamily,
                                 fontSize: 24,
                                 fontWeight: AppTypography.bold,
-                                color: Colors.black,
+                                color: palette.ink,
                               ),
                             ),
                           ),
@@ -1133,7 +1173,10 @@ class _SellerCard extends StatelessWidget {
                         child: InkWell(
                           onTap: onReviewsTap,
                           splashFactory: NoSplash.splashFactory,
+                          splashColor: Colors.transparent,
                           highlightColor: Colors.transparent,
+                          hoverColor: Colors.transparent,
+                          focusColor: Colors.transparent,
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -1145,11 +1188,11 @@ class _SellerCard extends StatelessWidget {
                               const SizedBox(width: 3),
                               Text(
                                 rating.toStringAsFixed(1).replaceAll('.', ','),
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 14,
                                   height: 1,
                                   fontWeight: AppTypography.bold,
-                                  color: Colors.black,
+                                  color: palette.ink,
                                 ),
                               ),
                               const SizedBox(width: 8),
@@ -1162,7 +1205,7 @@ class _SellerCard extends StatelessWidget {
                                     fontSize: 12,
                                     height: 1,
                                     fontWeight: FontWeight.w700,
-                                    color: Colors.black.withValues(alpha: 0.56),
+                                    color: palette.muted,
                                   ),
                                 ),
                               ),
@@ -1176,7 +1219,10 @@ class _SellerCard extends StatelessWidget {
                   InkWell(
                     onTap: onTap,
                     splashFactory: NoSplash.splashFactory,
+                    splashColor: Colors.transparent,
                     highlightColor: Colors.transparent,
+                    hoverColor: Colors.transparent,
+                    focusColor: Colors.transparent,
                     child: Text(
                       handle,
                       maxLines: 1,
@@ -1185,7 +1231,7 @@ class _SellerCard extends StatelessWidget {
                         fontSize: 12.5,
                         height: 1,
                         fontWeight: AppTypography.semiBold,
-                        color: Colors.black.withValues(alpha: 0.58),
+                        color: palette.muted,
                       ),
                     ),
                   ),
@@ -1208,7 +1254,7 @@ class _SellerCard extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: AppTypography.medium,
-                            color: Colors.black.withValues(alpha: 0.72),
+                            color: palette.muted,
                           ),
                         ),
                       ),
@@ -1240,14 +1286,16 @@ class _BuyDeliveryBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return SizedBox(
       width: double.infinity,
       height: 48,
       child: ElevatedButton(
         onPressed: onTap,
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.black,
-          foregroundColor: Colors.white,
+          backgroundColor: palette.ink,
+          foregroundColor: palette.surface,
+          overlayColor: Colors.transparent,
           elevation: 0,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(2)),
         ),
@@ -1282,11 +1330,11 @@ class _DeliveryAddress extends StatelessWidget {
           Expanded(
             child: Text(
               'Отправка из города: $city',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 15,
                 height: 1.2,
                 fontWeight: FontWeight.w500,
-                color: Colors.black,
+                color: context.appPalette.ink,
               ),
             ),
           ),
@@ -1321,19 +1369,22 @@ class _ProductLocationSection extends StatelessWidget {
         children: [
           Text(
             location,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 14,
               height: 1.2,
               fontWeight: FontWeight.w700,
               letterSpacing: 0,
-              color: Colors.black,
+              color: context.appPalette.ink,
             ),
           ),
           const SizedBox(height: 14),
           InkWell(
             onTap: onLocationDetails,
             splashFactory: NoSplash.splashFactory,
+            splashColor: Colors.transparent,
             highlightColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            focusColor: Colors.transparent,
             child: Text(
               'Узнать подробности >',
               style: TextStyle(
@@ -1341,7 +1392,7 @@ class _ProductLocationSection extends StatelessWidget {
                 height: 1,
                 fontWeight: AppTypography.bold,
                 letterSpacing: 0,
-                color: Colors.black.withValues(alpha: 0.48),
+                color: context.appPalette.muted,
               ),
             ),
           ),
@@ -1371,6 +1422,7 @@ class _ProductDatabaseDescriptionState
     extends State<_ProductDatabaseDescription> {
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final product = widget.product;
     final source = widget.sourceProduct;
     final description = product.description.trim();
@@ -1499,7 +1551,10 @@ class _ProductDatabaseDescriptionState
             hairline: widget.hairline,
             showTopBorder: false,
             compact: true,
-            child: Text(description, style: _productDescriptionTextStyle),
+            child: Text(
+              description,
+              style: _productDescriptionTextStyle.copyWith(color: palette.ink),
+            ),
           ),
         if (source?.hasDefects == true &&
             source!.defectsDescription.trim().isNotEmpty)
@@ -1510,7 +1565,7 @@ class _ProductDatabaseDescriptionState
             compact: true,
             child: Text(
               source.defectsDescription.trim(),
-              style: _productInfoBodyTextStyle,
+              style: _productInfoBodyTextStyle.copyWith(color: palette.ink),
             ),
           ),
       ],
@@ -1565,12 +1620,15 @@ class _SellerProfileLink extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       splashFactory: NoSplash.splashFactory,
+      splashColor: Colors.transparent,
       highlightColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      focusColor: Colors.transparent,
       child: Padding(
         padding: const EdgeInsets.only(top: 12),
         child: Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
                 'перейти в профиль',
                 style: TextStyle(
@@ -1578,14 +1636,14 @@ class _SellerProfileLink extends StatelessWidget {
                   height: 1,
                   fontWeight: AppTypography.bold,
                   letterSpacing: 0,
-                  color: Colors.black,
+                  color: context.appPalette.ink,
                 ),
               ),
             ),
             Icon(
               CupertinoIcons.chevron_right,
               size: 18,
-              color: Colors.black.withValues(alpha: 0.72),
+              color: context.appPalette.muted,
             ),
           ],
         ),
@@ -1611,14 +1669,14 @@ class _RelatedProductsSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Похожие объявления',
           style: TextStyle(
             fontSize: 16,
             height: 1,
             fontWeight: FontWeight.w700,
             letterSpacing: 0,
-            color: Colors.black,
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 7),
@@ -1690,10 +1748,14 @@ class _RelatedProductCardState extends State<_RelatedProductCard> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return InkWell(
       onTap: widget.onTap,
       splashFactory: NoSplash.splashFactory,
+      splashColor: Colors.transparent,
       highlightColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      focusColor: Colors.transparent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1703,7 +1765,7 @@ class _RelatedProductCardState extends State<_RelatedProductCard> {
               fit: StackFit.expand,
               children: [
                 Container(
-                  color: const Color(0xFFF1F1F1),
+                  color: palette.surfaceMuted,
                   child: AppImage(
                     imageUrl: widget.product.image,
                     fit: BoxFit.cover,
@@ -1737,12 +1799,12 @@ class _RelatedProductCardState extends State<_RelatedProductCard> {
             widget.product.title,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               height: 1.12,
               fontWeight: AppTypography.bold,
               letterSpacing: 0,
-              color: Colors.black,
+              color: palette.ink,
             ),
           ),
           const SizedBox(height: 8),
@@ -1750,12 +1812,12 @@ class _RelatedProductCardState extends State<_RelatedProductCard> {
             widget.product.price,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               height: 1,
               fontWeight: AppTypography.bold,
               letterSpacing: 0,
-              color: Colors.black,
+              color: palette.ink,
               fontFeatures: [
                 FontFeature.tabularFigures(),
                 FontFeature.liningFigures(),
@@ -1785,6 +1847,7 @@ class _ProductInfoSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return SizedBox(
       width: double.infinity,
       child: Column(
@@ -1795,7 +1858,7 @@ class _ProductInfoSection extends StatelessWidget {
               child: Container(
                 width: 64,
                 height: hairline,
-                color: Colors.black,
+                color: palette.border,
               ),
             ),
           Padding(
@@ -1812,7 +1875,7 @@ class _ProductInfoSection extends StatelessWidget {
                     height: 1,
                     fontWeight: AppTypography.bold,
                     letterSpacing: 0,
-                    color: Colors.black,
+                    color: palette.ink,
                   ),
                 ),
                 SizedBox(height: compact ? 7 : 10),
@@ -1836,13 +1899,13 @@ class _CharacteristicLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final normalized = value.trim();
     if (normalized.isEmpty) return const SizedBox.shrink();
-    const characteristicTextStyle = TextStyle(
+    final characteristicTextStyle = TextStyle(
       fontFamily: AppTypography.fontFamily,
       fontSize: 15,
       height: 1.24,
       fontWeight: AppTypography.semiBold,
       letterSpacing: 0,
-      color: Colors.black,
+      color: context.appPalette.ink,
     );
 
     return Padding(
@@ -1852,7 +1915,7 @@ class _CharacteristicLine extends StatelessWidget {
           children: [
             TextSpan(
               text: '$label:',
-              style: const TextStyle(color: Color(0xFF77777C)),
+              style: TextStyle(color: context.appPalette.muted),
             ),
             if (normalized.isNotEmpty) TextSpan(text: ' $normalized'),
           ],
@@ -1985,7 +2048,7 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
     final next = await showModalBottomSheet<DeliveryProfile>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       builder: (context) =>
           _RecipientEditor(profile: _profile, requiresAddress: !_isPickup),
     );
@@ -2011,7 +2074,7 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
     final next = await showModalBottomSheet<_PickupPointDraft>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       builder: (context) => _PickupPointEditor(
         city: _profile.city,
         providerLabel: _providerLabel,
@@ -2083,6 +2146,7 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
     final baseTheme = Theme.of(context);
+    final palette = context.appPalette;
     return Theme(
       data: baseTheme.copyWith(
         textTheme: baseTheme.textTheme.apply(
@@ -2093,7 +2157,7 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
         ),
       ),
       child: Scaffold(
-        backgroundColor: const Color(0xFFF7F7F8),
+        backgroundColor: palette.page,
         body: SafeArea(
           child: Column(
             children: [
@@ -2131,7 +2195,7 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    const Text(
+                    Text(
                       'Способ получения',
                       style: TextStyle(
                         fontFamily: AppTypography.fontFamily,
@@ -2146,13 +2210,13 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                       _isPickup
                           ? 'Выберите удобный пункт в ${_profile.city.trim().isEmpty ? 'вашем городе' : _profile.city.trim()}'
                           : 'Куда доставить: $_addressLine',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: AppTypography.fontFamily,
                         fontSize: 14,
                         height: 1.35,
                         fontWeight: AppTypography.medium,
                         letterSpacing: 0,
-                        color: Color(0xFF66666B),
+                        color: palette.muted,
                       ),
                     ),
                     const SizedBox(height: 14),
@@ -2314,8 +2378,9 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                       child: TextButton(
                         onPressed: _editRecipient,
                         style: TextButton.styleFrom(
-                          backgroundColor: const Color(0xFFEDEDEF),
-                          foregroundColor: Colors.black,
+                          backgroundColor: palette.surfaceMuted,
+                          foregroundColor: palette.ink,
+                          overlayColor: Colors.transparent,
                           padding: const EdgeInsets.symmetric(
                             horizontal: 14,
                             vertical: 12,
@@ -2336,7 +2401,7 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    const Text(
+                    Text(
                       'Стоимость',
                       style: TextStyle(
                         fontFamily: AppTypography.fontFamily,
@@ -2358,14 +2423,14 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                       bold: true,
                     ),
                     const SizedBox(height: 10),
-                    const Text(
+                    Text(
                       'Оплата не списывается. Продавец подтвердит заказ, а точная стоимость доставки появится после расчёта службы доставки.',
                       style: TextStyle(
                         fontFamily: AppTypography.fontFamily,
                         fontSize: 12.5,
                         height: 1.4,
                         fontWeight: AppTypography.medium,
-                        color: Color(0xFF66666B),
+                        color: palette.muted,
                       ),
                     ),
                   ],
@@ -2380,11 +2445,12 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
                     key: const Key('checkout-submit'),
                     onPressed: _isSubmitting ? null : _submit,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.black,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: Colors.black.withValues(
+                      backgroundColor: palette.ink,
+                      foregroundColor: palette.surface,
+                      disabledBackgroundColor: palette.ink.withValues(
                         alpha: 0.4,
                       ),
+                      overlayColor: Colors.transparent,
                       elevation: 0,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14),
@@ -2428,17 +2494,21 @@ class _DeliveryMethodCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return InkWell(
       onTap: onTap,
       splashFactory: NoSplash.splashFactory,
+      splashColor: Colors.transparent,
       highlightColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      focusColor: Colors.transparent,
       child: Container(
         constraints: const BoxConstraints(minHeight: 76),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
         decoration: BoxDecoration(
-          color: selected ? Colors.white : const Color(0xFFEDEDEF),
+          color: selected ? palette.surfaceRaised : palette.surfaceMuted,
           border: Border.all(
-            color: selected ? Colors.black : Colors.transparent,
+            color: selected ? palette.ink : Colors.transparent,
             width: selected ? 1.5 : 0,
           ),
           borderRadius: BorderRadius.circular(10),
@@ -2470,7 +2540,7 @@ class _DeliveryMethodCard extends StatelessWidget {
                 height: 1.2,
                 fontWeight: AppTypography.medium,
                 letterSpacing: 0,
-                color: Colors.black.withValues(alpha: 0.55),
+                color: palette.muted,
               ),
             ),
           ],
@@ -2511,23 +2581,25 @@ class _DeliveryProviderSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final colors = Theme.of(context).colorScheme;
     if (providers.isEmpty) {
       return Container(
         key: const Key('delivery-provider-unavailable'),
         width: double.infinity,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFFFFF1F0),
+          color: colors.errorContainer,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: const Text(
+        child: Text(
           'Продавец не подключил доставку для этого объявления',
           style: TextStyle(
             fontFamily: AppTypography.fontFamily,
             fontSize: 13,
             height: 1.35,
             fontWeight: AppTypography.medium,
-            color: Color(0xFF8E2C28),
+            color: colors.onErrorContainer,
           ),
         ),
       );
@@ -2547,29 +2619,29 @@ class _DeliveryProviderSelector extends StatelessWidget {
           fontWeight: AppTypography.medium,
         ),
         filled: true,
-        fillColor: Colors.white,
+        fillColor: palette.surfaceRaised,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 14,
           vertical: 13,
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFFE1E1E5)),
+          borderSide: BorderSide(color: palette.border),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFFE1E1E5)),
+          borderSide: BorderSide(color: palette.border),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Colors.black, width: 1.4),
+          borderSide: BorderSide(color: palette.ink, width: 1.4),
         ),
       ),
-      style: const TextStyle(
+      style: TextStyle(
         fontFamily: AppTypography.fontFamily,
         fontSize: 14,
         fontWeight: AppTypography.semiBold,
-        color: Colors.black,
+        color: palette.ink,
       ),
       items: [
         for (final provider in providers)
@@ -2590,17 +2662,23 @@ class _PickupPointSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final selectedValue = value?.displayLabel ?? '';
     final hasSelection =
         value?.id.trim().isNotEmpty == true &&
         value?.address.trim().isNotEmpty == true;
     return Material(
       key: const Key('pickup-point-selector'),
-      color: Colors.white,
+      color: palette.surfaceRaised,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(12),
+        splashFactory: NoSplash.splashFactory,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 13, 12, 13),
           child: Row(
@@ -2608,7 +2686,7 @@ class _PickupPointSelector extends StatelessWidget {
               Icon(
                 CupertinoIcons.location,
                 size: 20,
-                color: hasSelection ? Colors.black : const Color(0xFF77777D),
+                color: hasSelection ? palette.ink : palette.muted,
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -2634,7 +2712,7 @@ class _PickupPointSelector extends StatelessWidget {
                         fontSize: 13,
                         height: 1.25,
                         fontWeight: AppTypography.medium,
-                        color: Colors.black.withValues(alpha: 0.52),
+                        color: palette.muted,
                       ),
                     ),
                   ],
@@ -2643,11 +2721,11 @@ class _PickupPointSelector extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 hasSelection ? 'Изменить' : 'Выбрать',
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 13,
                   fontWeight: AppTypography.semiBold,
-                  color: Colors.black,
+                  color: palette.ink,
                 ),
               ),
               const SizedBox(width: 4),
@@ -2717,6 +2795,7 @@ class _PickupPointEditorState extends State<_PickupPointEditor> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final palette = context.appPalette;
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(20, 18, 20, 20 + bottomInset),
       child: Column(
@@ -2737,23 +2816,23 @@ class _PickupPointEditorState extends State<_PickupPointEditor> {
             widget.city.trim().isEmpty
                 ? 'Сначала укажите город в данных получателя.'
                 : '${widget.providerLabel} · ${widget.city.trim()}',
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 13,
               height: 1.3,
               fontWeight: AppTypography.medium,
-              color: Color(0xFF66666B),
+              color: palette.muted,
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'До подключения карты ПВЗ укажите точный пункт вручную. Перед оплатой адрес и стоимость будут подтверждены.',
             style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 12.5,
               height: 1.35,
               fontWeight: AppTypography.medium,
-              color: Color(0xFF66666B),
+              color: palette.muted,
             ),
           ),
           const SizedBox(height: 16),
@@ -2773,7 +2852,7 @@ class _PickupPointEditorState extends State<_PickupPointEditor> {
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.black, width: 1.4),
+                borderSide: BorderSide(color: palette.ink, width: 1.4),
               ),
             ),
           ),
@@ -2798,7 +2877,7 @@ class _PickupPointEditorState extends State<_PickupPointEditor> {
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.black, width: 1.4),
+                borderSide: BorderSide(color: palette.ink, width: 1.4),
               ),
             ),
           ),
@@ -2809,8 +2888,9 @@ class _PickupPointEditorState extends State<_PickupPointEditor> {
               key: const Key('pickup-point-save'),
               onPressed: _save,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black,
-                foregroundColor: Colors.white,
+                backgroundColor: palette.ink,
+                foregroundColor: palette.surface,
+                overlayColor: Colors.transparent,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -2863,6 +2943,7 @@ class _DeliveryAddressBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2874,7 +2955,7 @@ class _DeliveryAddressBlock extends StatelessWidget {
             children: [
               Text(
                 method,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 14,
                   height: 1.1,
@@ -2885,12 +2966,12 @@ class _DeliveryAddressBlock extends StatelessWidget {
               const SizedBox(height: 4),
               Text(
                 provider,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 13,
                   height: 1.25,
                   fontWeight: AppTypography.semiBold,
-                  color: Color(0xFF55555B),
+                  color: palette.muted,
                 ),
               ),
               const SizedBox(height: 3),
@@ -2902,7 +2983,7 @@ class _DeliveryAddressBlock extends StatelessWidget {
                   height: 1.3,
                   fontWeight: AppTypography.medium,
                   letterSpacing: 0,
-                  color: Colors.black.withValues(alpha: 0.45),
+                  color: palette.muted,
                 ),
               ),
               const SizedBox(height: 6),
@@ -2955,7 +3036,7 @@ class _PriceLine extends StatelessWidget {
             child: Container(
               height: 1,
               margin: const EdgeInsets.symmetric(horizontal: 10),
-              color: const Color(0xFFD8D8DC),
+              color: context.appPalette.border,
             ),
           ),
           Text(
@@ -3035,6 +3116,7 @@ class _RecipientEditorState extends State<_RecipientEditor> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final palette = context.appPalette;
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(20, 18, 20, 20 + bottomInset),
       child: Column(
@@ -3081,8 +3163,9 @@ class _RecipientEditorState extends State<_RecipientEditor> {
             child: ElevatedButton(
               onPressed: _save,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black,
-                foregroundColor: Colors.white,
+                backgroundColor: palette.ink,
+                foregroundColor: palette.surface,
+                overlayColor: Colors.transparent,
                 elevation: 0,
                 shape: const RoundedRectangleBorder(),
               ),
@@ -3118,6 +3201,7 @@ class _RecipientField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: TextField(
@@ -3133,11 +3217,11 @@ class _RecipientField extends StatelessWidget {
           labelText: label,
           labelStyle: TextStyle(
             fontFamily: AppTypography.fontFamily,
-            color: Colors.black.withValues(alpha: 0.5),
+            color: palette.muted,
             fontWeight: AppTypography.medium,
           ),
-          focusedBorder: const UnderlineInputBorder(
-            borderSide: BorderSide(color: Colors.black),
+          focusedBorder: UnderlineInputBorder(
+            borderSide: BorderSide(color: palette.ink),
           ),
         ),
       ),

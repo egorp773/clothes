@@ -2,16 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../../core/app_appearance.dart';
 import '../../../core/app_typography.dart';
 import '../../../widgets/app_image.dart';
 import '../listing_publish_controller.dart';
 import '../models/listing_draft.dart';
 import '../widgets/listing_publish_widgets.dart';
-
-const Color _textColor = Color(0xFF0B0B0B);
-const Color _secondaryTextColor = Color(0xFF8F8F94);
-const Color _borderColor = Color(0xFFE7E7EA);
-const Color _surfaceColor = Color(0xFFF8F8F9);
 
 class ListingPhotosStep extends StatelessWidget {
   const ListingPhotosStep({super.key, required this.controller});
@@ -23,14 +19,15 @@ class ListingPhotosStep extends StatelessWidget {
     return AnimatedBuilder(
       animation: controller,
       builder: (context, _) {
+        final palette = context.appPalette;
         if (!controller.isInitialized) {
-          return const Center(
+          return Center(
             child: SizedBox(
               width: 22,
               height: 22,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: Color(0xFF070707),
+                color: palette.ink,
               ),
             ),
           );
@@ -45,7 +42,7 @@ class ListingPhotosStep extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text.rich(
+              Text.rich(
                 TextSpan(
                   text: 'Добавьте фотографии вещи',
                   children: [
@@ -62,19 +59,19 @@ class ListingPhotosStep extends StatelessWidget {
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 16,
                   fontWeight: AppTypography.semiBold,
-                  color: _textColor,
+                  color: palette.ink,
                   height: 1.2,
                   letterSpacing: 0,
                 ),
               ),
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 'Первое фото станет главным. Лучше всего работают снимки при хорошем освещении.',
                 style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 12,
                   fontWeight: AppTypography.medium,
-                  color: _secondaryTextColor,
+                  color: palette.muted,
                   height: 1.35,
                   letterSpacing: 0,
                 ),
@@ -118,14 +115,14 @@ class ListingPhotosStep extends StatelessWidget {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       'Фотографии',
                       style: TextStyle(
                         fontFamily: AppTypography.fontFamily,
                         fontSize: 12.5,
                         fontWeight: AppTypography.semiBold,
-                        color: _textColor,
+                        color: palette.ink,
                         height: 1,
                         letterSpacing: 0,
                       ),
@@ -133,11 +130,11 @@ class ListingPhotosStep extends StatelessWidget {
                   ),
                   Text(
                     '${photos.length}/8',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: AppTypography.fontFamily,
                       fontSize: 11.5,
                       fontWeight: AppTypography.medium,
-                      color: _secondaryTextColor,
+                      color: palette.muted,
                       height: 1,
                       letterSpacing: 0,
                     ),
@@ -165,13 +162,13 @@ class ListingPhotosStep extends StatelessWidget {
                       unawaited(controller.retryPhotoUpload(photo)),
                 ),
                 const SizedBox(height: 8),
-                const Text(
+                Text(
                   'Зажмите фото и перетащите, чтобы изменить порядок. Нажмите звезду, чтобы выбрать главное.',
                   style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 10.5,
                     fontWeight: AppTypography.medium,
-                    color: _secondaryTextColor,
+                    color: palette.muted,
                     height: 1.35,
                     letterSpacing: 0,
                   ),
@@ -195,7 +192,7 @@ class ListingPhotosStep extends StatelessWidget {
       context: context,
       barrierColor: Colors.black.withValues(alpha: 0.35),
       builder: (dialogContext) => Dialog(
-        backgroundColor: Colors.white,
+        backgroundColor: dialogContext.appPalette.surfaceRaised,
         insetPadding: const EdgeInsets.symmetric(horizontal: 28),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         child: Padding(
@@ -204,24 +201,24 @@ class ListingPhotosStep extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Удалить фотографию?',
                 style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 16,
                   fontWeight: AppTypography.semiBold,
-                  color: _textColor,
+                  color: dialogContext.appPalette.ink,
                   letterSpacing: 0,
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'Она будет удалена из черновика объявления.',
                 style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 12.5,
                   fontWeight: AppTypography.medium,
-                  color: _secondaryTextColor,
+                  color: dialogContext.appPalette.muted,
                   height: 1.35,
                   letterSpacing: 0,
                 ),
@@ -233,7 +230,8 @@ class ListingPhotosStep extends StatelessWidget {
                     child: TextButton(
                       onPressed: () => Navigator.pop(dialogContext, false),
                       style: TextButton.styleFrom(
-                        foregroundColor: _textColor,
+                        foregroundColor: dialogContext.appPalette.ink,
+                        overlayColor: Colors.transparent,
                         minimumSize: const Size.fromHeight(44),
                       ),
                       child: const Text(
@@ -251,8 +249,9 @@ class ListingPhotosStep extends StatelessWidget {
                     child: FilledButton(
                       onPressed: () => Navigator.pop(dialogContext, true),
                       style: FilledButton.styleFrom(
-                        backgroundColor: Colors.black,
-                        foregroundColor: Colors.white,
+                        backgroundColor: dialogContext.appPalette.ink,
+                        foregroundColor: dialogContext.appPalette.surface,
+                        overlayColor: Colors.transparent,
                         minimumSize: const Size.fromHeight(44),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(22),
@@ -319,14 +318,19 @@ class _PhotoSourceButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onTap != null;
+    final palette = context.appPalette;
     return Material(
-      color: Colors.white,
+      color: palette.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: _borderColor),
+        side: BorderSide(color: palette.border),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
         onTap: onTap,
         child: SizedBox(
           height: 96,
@@ -336,19 +340,19 @@ class _PhotoSourceButton extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 if (isBusy)
-                  const SizedBox(
+                  SizedBox(
                     width: 22,
                     height: 22,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Color(0xFF070707),
+                      color: palette.ink,
                     ),
                   )
                 else
                   Icon(
                     icon,
                     size: 24,
-                    color: enabled ? _textColor : const Color(0xFFC7C7CC),
+                    color: enabled ? palette.ink : palette.muted,
                   ),
                 const SizedBox(height: 9),
                 Text(
@@ -359,7 +363,7 @@ class _PhotoSourceButton extends StatelessWidget {
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 12.5,
                     fontWeight: AppTypography.semiBold,
-                    color: enabled ? _textColor : _secondaryTextColor,
+                    color: enabled ? palette.ink : palette.muted,
                     height: 1,
                     letterSpacing: 0,
                   ),
@@ -369,11 +373,11 @@ class _PhotoSourceButton extends StatelessWidget {
                   subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 10.5,
                     fontWeight: AppTypography.medium,
-                    color: _secondaryTextColor,
+                    color: palette.muted,
                     height: 1,
                     letterSpacing: 0,
                   ),
@@ -399,25 +403,25 @@ class _InlineError extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 10, 6, 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF6F6F7),
+        color: context.appPalette.surfaceMuted,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         children: [
-          const Icon(
+          Icon(
             Icons.info_outline_rounded,
             size: 18,
-            color: _secondaryTextColor,
+            color: context.appPalette.muted,
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               message,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: AppTypography.fontFamily,
                 fontSize: 11.5,
                 fontWeight: AppTypography.medium,
-                color: _textColor,
+                color: context.appPalette.ink,
                 height: 1.3,
                 letterSpacing: 0,
               ),
@@ -427,10 +431,10 @@ class _InlineError extends StatelessWidget {
             tooltip: 'Скрыть',
             visualDensity: VisualDensity.compact,
             onPressed: onDismiss,
-            icon: const Icon(
+            icon: Icon(
               Icons.close_rounded,
               size: 18,
-              color: _secondaryTextColor,
+              color: context.appPalette.muted,
             ),
           ),
         ],
@@ -449,17 +453,17 @@ class _EmptyPhotosHint extends StatelessWidget {
       height: 96,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: _surfaceColor,
+        color: context.appPalette.surfaceMuted,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _borderColor),
+        border: Border.all(color: context.appPalette.border),
       ),
-      child: const Text(
+      child: Text(
         'Добавьте от 1 до 8 фотографий',
         style: TextStyle(
           fontFamily: AppTypography.fontFamily,
           fontSize: 12,
           fontWeight: AppTypography.medium,
-          color: _secondaryTextColor,
+          color: context.appPalette.muted,
           letterSpacing: 0,
         ),
       ),
@@ -573,10 +577,12 @@ class _PhotoCard extends StatelessWidget {
               child: Container(
                 clipBehavior: Clip.antiAlias,
                 decoration: BoxDecoration(
-                  color: _surfaceColor,
+                  color: context.appPalette.surfaceMuted,
                   borderRadius: BorderRadius.circular(9),
                   border: Border.all(
-                    color: isMain ? _textColor : _borderColor,
+                    color: isMain
+                        ? context.appPalette.ink
+                        : context.appPalette.border,
                     width: isMain ? 1.5 : 1,
                   ),
                 ),
@@ -710,10 +716,10 @@ class _PhotoUploadStatus extends StatelessWidget {
       ListingPhotoUploadStatus.failed => GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: onRetry,
-        child: const _StatusLabel(
+        child: _StatusLabel(
           icon: Icons.refresh_rounded,
           label: 'Повторить',
-          color: _textColor,
+          color: context.appPalette.ink,
         ),
       ),
     };
@@ -721,21 +727,18 @@ class _PhotoUploadStatus extends StatelessWidget {
 }
 
 class _StatusLabel extends StatelessWidget {
-  const _StatusLabel({
-    required this.icon,
-    required this.label,
-    this.color = _secondaryTextColor,
-  });
+  const _StatusLabel({required this.icon, required this.label, this.color});
 
   final IconData icon;
   final String label;
-  final Color color;
+  final Color? color;
 
   @override
   Widget build(BuildContext context) {
+    final effectiveColor = color ?? context.appPalette.muted;
     return Row(
       children: [
-        Icon(icon, size: 12, color: color),
+        Icon(icon, size: 12, color: effectiveColor),
         const SizedBox(width: 3),
         Expanded(
           child: Text(
@@ -746,7 +749,7 @@ class _StatusLabel extends StatelessWidget {
               fontFamily: AppTypography.fontFamily,
               fontSize: 9.5,
               fontWeight: AppTypography.medium,
-              color: color,
+              color: effectiveColor,
               height: 1,
               letterSpacing: 0,
             ),
@@ -849,6 +852,7 @@ class _FullscreenPhotoPreviewState extends State<_FullscreenPhotoPreview> {
                 style: IconButton.styleFrom(
                   backgroundColor: Colors.black.withValues(alpha: 0.55),
                   foregroundColor: Colors.white,
+                  overlayColor: Colors.transparent,
                 ),
                 icon: const Icon(Icons.close_rounded),
               ),

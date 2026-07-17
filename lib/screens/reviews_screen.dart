@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
+import '../core/app_appearance.dart';
 import '../models/app_profile.dart';
 import '../models/product.dart';
 import '../widgets/app_image.dart';
@@ -120,9 +121,11 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
           builder: (context, setSheetState) {
             return Container(
               padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(8)),
+              decoration: BoxDecoration(
+                color: context.appPalette.surfaceRaised,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(8),
+                ),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -163,8 +166,10 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                         Navigator.pop(context);
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
-                        foregroundColor: Colors.white,
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        foregroundColor: Theme.of(
+                          context,
+                        ).colorScheme.onPrimary,
                         shape: const RoundedRectangleBorder(),
                       ),
                       child: const Text('ПРИМЕНИТЬ'),
@@ -191,7 +196,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
     final draft = await showModalBottomSheet<_ReviewDraft>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: context.appPalette.surfaceRaised,
       builder: (context) => const _ReviewEditor(),
     );
     if (draft == null) return;
@@ -249,7 +254,7 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
     final listBottomPadding = _canWriteReview ? 86 + bottomInset : 24.0;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -286,10 +291,10 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                             ),
                           ),
                         ),
-                        const Divider(
+                        Divider(
                           height: 1,
                           thickness: 1,
-                          color: Colors.black,
+                          color: context.appPalette.ink,
                         ),
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
@@ -348,9 +353,9 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                             itemCount: _visibleReviews.length * 2 - 1,
                             itemBuilder: (context, index) {
                               if (index.isOdd) {
-                                return const Divider(
+                                return Divider(
                                   height: 20,
-                                  color: Color(0xFFE8E8EA),
+                                  color: context.appPalette.border,
                                 );
                               }
                               return _ReviewTile(
@@ -364,9 +369,11 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
             ),
             if (_canWriteReview)
               DecoratedBox(
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  border: Border(top: BorderSide(color: Color(0xFFE8E8EA))),
+                decoration: BoxDecoration(
+                  color: context.appPalette.surfaceRaised,
+                  border: Border(
+                    top: BorderSide(color: context.appPalette.border),
+                  ),
                 ),
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(16, 10, 16, 10 + bottomInset),
@@ -376,8 +383,10 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                     child: ElevatedButton(
                       onPressed: _isSubmittingReview ? null : _createReview,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.black,
-                        foregroundColor: Colors.white,
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        foregroundColor: Theme.of(
+                          context,
+                        ).colorScheme.onPrimary,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                         ),
@@ -467,9 +476,9 @@ class _ReviewsSummary extends StatelessWidget {
                       child: LinearProgressIndicator(
                         value: value / maxCount,
                         minHeight: 4,
-                        backgroundColor: const Color(0xFFDCDCE0),
-                        valueColor: const AlwaysStoppedAnimation<Color>(
-                          Colors.black,
+                        backgroundColor: context.appPalette.surfaceMuted,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Theme.of(context).colorScheme.primary,
                         ),
                       ),
                     ),
@@ -509,7 +518,7 @@ class _StarsRow extends StatelessWidget {
           size: size,
           color: index < rating.round()
               ? const Color(0xFFFFB21A)
-              : const Color(0xFFDADADC),
+              : context.appPalette.border,
         );
       }),
     );
@@ -532,14 +541,14 @@ class _EmptyReviews extends StatelessWidget {
             Container(
               width: 54,
               height: 54,
-              decoration: const BoxDecoration(
-                color: Color(0xFFF1F1F3),
+              decoration: BoxDecoration(
+                color: context.appPalette.surfaceMuted,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 CupertinoIcons.star,
                 size: 25,
-                color: Color(0xFF77777C),
+                color: context.appPalette.muted,
               ),
             ),
             const SizedBox(height: 12),
@@ -551,7 +560,7 @@ class _EmptyReviews extends StatelessWidget {
                 height: 1.1,
                 fontWeight: FontWeight.w700,
                 letterSpacing: 0,
-                color: Colors.black,
+                color: context.appPalette.ink,
               ),
             ),
             const SizedBox(height: 6),
@@ -564,7 +573,7 @@ class _EmptyReviews extends StatelessWidget {
                 fontSize: 13,
                 height: 1.25,
                 fontWeight: FontWeight.w500,
-                color: Colors.black.withValues(alpha: 0.55),
+                color: context.appPalette.muted,
               ),
             ),
           ],
@@ -579,13 +588,16 @@ class _ReviewsLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(vertical: 54),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 54),
       child: Center(
         child: SizedBox(
           width: 24,
           height: 24,
-          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Theme.of(context).colorScheme.primary,
+          ),
         ),
       ),
     );
@@ -609,10 +621,10 @@ class _ReviewsLoadError extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 34),
       child: Column(
         children: [
-          const Icon(
+          Icon(
             CupertinoIcons.exclamationmark_circle,
             size: 30,
-            color: Color(0xFF77777C),
+            color: context.appPalette.muted,
           ),
           const SizedBox(height: 10),
           Text(
@@ -645,6 +657,8 @@ class _FilterChipButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -652,7 +666,7 @@ class _FilterChipButton extends StatelessWidget {
         height: 34,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: selected ? Colors.black : const Color(0xFFE0E0E0),
+          color: selected ? scheme.primary : context.appPalette.surfaceMuted,
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
@@ -666,7 +680,7 @@ class _FilterChipButton extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
-                  color: selected ? Colors.white : Colors.black,
+                  color: selected ? scheme.onPrimary : context.appPalette.ink,
                 ),
               ),
             ),
@@ -675,7 +689,7 @@ class _FilterChipButton extends StatelessWidget {
               Icon(
                 icon,
                 size: 15,
-                color: selected ? Colors.white : Colors.black,
+                color: selected ? scheme.onPrimary : context.appPalette.ink,
               ),
             ],
           ],
@@ -807,6 +821,8 @@ class _SortOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return InkWell(
       onTap: onTap,
       child: Padding(
@@ -817,7 +833,7 @@ class _SortOption extends StatelessWidget {
               width: 13,
               height: 13,
               decoration: BoxDecoration(
-                color: selected ? Colors.black : const Color(0xFFD9D9D9),
+                color: selected ? scheme.primary : context.appPalette.border,
                 borderRadius: BorderRadius.circular(3),
               ),
             ),
@@ -875,7 +891,7 @@ class _ReviewEditorState extends State<_ReviewEditor> {
                   Icons.star,
                   color: value <= _rating
                       ? const Color(0xFFFFB21A)
-                      : const Color(0xFFD9D9D9),
+                      : context.appPalette.border,
                 ),
               );
             }),
@@ -886,13 +902,17 @@ class _ReviewEditorState extends State<_ReviewEditor> {
             maxLines: 5,
             decoration: const InputDecoration(hintText: 'Текст отзыва'),
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.photo_outlined, size: 19, color: Color(0xFF8A8A8F)),
-                SizedBox(width: 9),
+                Icon(
+                  Icons.photo_outlined,
+                  size: 19,
+                  color: context.appPalette.muted,
+                ),
+                const SizedBox(width: 9),
                 Expanded(
                   child: Text(
                     'Фото к отзыву станет доступно после подключения защищённого хранилища отзывов.',
@@ -900,7 +920,7 @@ class _ReviewEditorState extends State<_ReviewEditor> {
                       fontSize: 12,
                       height: 1.35,
                       fontWeight: FontWeight.w500,
-                      color: Color(0xFF8A8A8F),
+                      color: context.appPalette.muted,
                     ),
                   ),
                 ),
@@ -921,8 +941,8 @@ class _ReviewEditorState extends State<_ReviewEditor> {
                 );
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black,
-                foregroundColor: Colors.white,
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
                 shape: const RoundedRectangleBorder(),
               ),
               child: const Text('СОХРАНИТЬ'),

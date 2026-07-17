@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_appearance.dart';
+import 'app_glass_surface.dart';
+
 class AppBottomNav extends StatelessWidget {
   const AppBottomNav({
     super.key,
@@ -14,53 +17,67 @@ class AppBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final navigation = SafeArea(
+      top: false,
+      child: SizedBox(
+        height: context.appGlass.enabled ? 66 : 64,
+        child: Row(
+          children: [
+            _NavItem(
+              index: 0,
+              currentIndex: currentIndex,
+              icon: _NavIconKind.home,
+              onTap: onTabSelected,
+            ),
+            _NavItem(
+              index: 1,
+              currentIndex: currentIndex,
+              icon: _NavIconKind.hanger,
+              onTap: onTabSelected,
+            ),
+            _CreateItem(isActive: currentIndex == 2, onTap: onCreateTap),
+            _NavItem(
+              index: 3,
+              currentIndex: currentIndex,
+              icon: _NavIconKind.chat,
+              onTap: onTabSelected,
+            ),
+            _NavItem(
+              index: 4,
+              currentIndex: currentIndex,
+              icon: _NavIconKind.profile,
+              onTap: onTabSelected,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (context.appGlass.enabled) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+        child: AppGlassSurface(
+          density: 0.96,
+          borderRadius: BorderRadius.circular(27),
+          child: navigation,
+        ),
+      );
+    }
+
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFE8E8EE), width: 0.8)),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(top: BorderSide(color: palette.border, width: 0.8)),
         boxShadow: [
           BoxShadow(
-            color: Color(0x12000000),
+            color: palette.shadow,
             blurRadius: 18,
             offset: Offset(0, -4),
           ),
         ],
       ),
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          height: 64,
-          child: Row(
-            children: [
-              _NavItem(
-                index: 0,
-                currentIndex: currentIndex,
-                icon: _NavIconKind.home,
-                onTap: onTabSelected,
-              ),
-              _NavItem(
-                index: 1,
-                currentIndex: currentIndex,
-                icon: _NavIconKind.hanger,
-                onTap: onTabSelected,
-              ),
-              _CreateItem(isActive: currentIndex == 2, onTap: onCreateTap),
-              _NavItem(
-                index: 3,
-                currentIndex: currentIndex,
-                icon: _NavIconKind.chat,
-                onTap: onTabSelected,
-              ),
-              _NavItem(
-                index: 4,
-                currentIndex: currentIndex,
-                icon: _NavIconKind.profile,
-                onTap: onTabSelected,
-              ),
-            ],
-          ),
-        ),
-      ),
+      child: navigation,
     );
   }
 }
@@ -81,14 +98,26 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isActive = currentIndex == index;
+    final label = switch (icon) {
+      _NavIconKind.home => 'Главная',
+      _NavIconKind.hanger => 'Образы',
+      _NavIconKind.chat => 'Сообщения',
+      _NavIconKind.profile => 'Профиль',
+      _NavIconKind.gridPlus => 'Создать',
+    };
     return Expanded(
-      child: InkResponse(
-        onTap: () => onTap(index),
-        radius: 28,
-        splashColor: Colors.black12,
-        highlightColor: Colors.transparent,
-        child: Center(
-          child: _NavIcon(kind: icon, isActive: isActive),
+      child: Semantics(
+        button: true,
+        selected: isActive,
+        label: label,
+        child: AppGlassPressable(
+          onTap: () => onTap(index),
+          child: Center(
+            child: _GlassNavIconFrame(
+              isActive: isActive,
+              child: _NavIcon(kind: icon, isActive: isActive),
+            ),
+          ),
         ),
       ),
     );
@@ -104,20 +133,87 @@ class _CreateItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: InkResponse(
-        onTap: onTap,
-        radius: 32,
-        splashColor: Colors.black12,
-        highlightColor: Colors.transparent,
-        child: Center(
-          child: AnimatedScale(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            scale: isActive ? 1.06 : 1,
-            child: _NavIcon(kind: _NavIconKind.gridPlus, isActive: isActive),
+      child: Semantics(
+        button: true,
+        selected: isActive,
+        label: 'Создать',
+        child: AppGlassPressable(
+          onTap: onTap,
+          child: Center(
+            child: AnimatedScale(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              scale: isActive ? 1.06 : 1,
+              child: _GlassNavIconFrame(
+                isActive: isActive,
+                emphasize: true,
+                child: _NavIcon(
+                  kind: _NavIconKind.gridPlus,
+                  isActive: isActive,
+                ),
+              ),
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _GlassNavIconFrame extends StatelessWidget {
+  const _GlassNavIconFrame({
+    required this.isActive,
+    required this.child,
+    this.emphasize = false,
+  });
+
+  final bool isActive;
+  final bool emphasize;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!context.appGlass.enabled) return child;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final visible = isActive || emphasize;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      width: emphasize ? 48 : 44,
+      height: emphasize ? 40 : 38,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: visible
+            ? Colors.white.withValues(
+                alpha: isActive
+                    ? (isDark ? 0.15 : 0.58)
+                    : (isDark ? 0.065 : 0.3),
+              )
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(emphasize ? 16 : 15),
+        border: Border.all(
+          color: visible
+              ? Colors.white.withValues(
+                  alpha: isActive
+                      ? (isDark ? 0.28 : 0.72)
+                      : (isDark ? 0.1 : 0.34),
+                )
+              : Colors.transparent,
+          width: 0.8,
+        ),
+        boxShadow: isActive
+            ? [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.22 : 0.1),
+                  blurRadius: 12,
+                  spreadRadius: -6,
+                  offset: const Offset(0, 5),
+                ),
+              ]
+            : null,
+      ),
+      child: child,
     );
   }
 }
@@ -132,10 +228,11 @@ class _NavIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final color = switch (kind) {
       _NavIconKind.hanger =>
-        isActive ? const Color(0xFF9AA0A7) : const Color(0xFFB3B8BE),
-      _ => isActive ? const Color(0xFF7A8189) : const Color(0xFF9AA0A7),
+        isActive ? palette.ink : palette.muted.withValues(alpha: 0.72),
+      _ => isActive ? palette.ink : palette.muted,
     };
     switch (kind) {
       case _NavIconKind.home:

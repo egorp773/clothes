@@ -1,14 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/app_appearance.dart';
 import '../../../core/app_typography.dart';
 import '../data/listing_catalogs.dart';
 import '../listing_publish_controller.dart';
 import '../widgets/listing_publish_widgets.dart';
-
-const Color _textColor = Color(0xFF0B0B0B);
-const Color _secondaryTextColor = Color(0xFF8F8F94);
-const Color _borderColor = Color(0xFFE7E7EA);
 
 class ListingBasicsStep extends StatefulWidget {
   const ListingBasicsStep({super.key, required this.controller});
@@ -91,15 +88,13 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     if (!widget.controller.isInitialized) {
-      return const Center(
+      return Center(
         child: SizedBox(
           width: 22,
           height: 22,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: Color(0xFF070707),
-          ),
+          child: CircularProgressIndicator(strokeWidth: 2, color: palette.ink),
         ),
       );
     }
@@ -121,25 +116,25 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Основная информация',
               style: TextStyle(
                 fontFamily: AppTypography.fontFamily,
                 fontSize: 16,
                 fontWeight: AppTypography.semiBold,
-                color: _textColor,
+                color: palette.ink,
                 height: 1.2,
                 letterSpacing: 0,
               ),
             ),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               'Заполните только главное — остальные характеристики можно проверить на следующем шаге.',
               style: TextStyle(
                 fontFamily: AppTypography.fontFamily,
                 fontSize: 12,
                 fontWeight: AppTypography.medium,
-                color: _secondaryTextColor,
+                color: palette.muted,
                 height: 1.35,
                 letterSpacing: 0,
               ),
@@ -153,8 +148,9 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
               textInputAction: TextInputAction.next,
               inputFormatters: [LengthLimitingTextInputFormatter(80)],
               onChanged: widget.controller.setTitle,
-              style: _inputStyle,
+              style: _inputStyle(context),
               decoration: _inputDecoration(
+                context,
                 hintText: 'Например, худи Nike',
                 suffixText: '${_titleController.text.length}/80',
               ),
@@ -168,8 +164,9 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
               textInputAction: TextInputAction.next,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               onChanged: widget.controller.setPrice,
-              style: _inputStyle,
+              style: _inputStyle(context),
               decoration: _inputDecoration(
+                context,
                 hintText: 'Введите цену',
                 suffixText: '₽',
                 errorText: priceIsInvalid ? 'Цена должна быть больше 0' : null,
@@ -242,8 +239,9 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
               keyboardType: TextInputType.multiline,
               textCapitalization: TextCapitalization.sentences,
               onChanged: widget.controller.setDescription,
-              style: _inputStyle,
+              style: _inputStyle(context),
               decoration: _inputDecoration(
+                context,
                 hintText: 'Расскажите о вещи',
                 alignLabelWithHint: true,
               ).copyWith(counterText: ''),
@@ -319,7 +317,11 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
             child: const Text('Отмена'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.black),
+            style: FilledButton.styleFrom(
+              backgroundColor: dialogContext.appPalette.ink,
+              foregroundColor: dialogContext.appPalette.surface,
+              overlayColor: Colors.transparent,
+            ),
             onPressed: () {
               final value = textController.text.trim();
               if (value.isNotEmpty) Navigator.pop(dialogContext, value);
@@ -371,60 +373,63 @@ class _ListingBasicsStepState extends State<ListingBasicsStep> {
   }
 }
 
-const TextStyle _inputStyle = TextStyle(
+TextStyle _inputStyle(BuildContext context) => TextStyle(
   fontFamily: AppTypography.fontFamily,
   fontSize: 12.5,
   fontWeight: AppTypography.medium,
-  color: Color(0xFF111111),
+  color: context.appPalette.ink,
   height: 1.2,
   letterSpacing: 0,
 );
 
-InputDecoration _inputDecoration({
+InputDecoration _inputDecoration(
+  BuildContext context, {
   required String hintText,
   String? suffixText,
   String? errorText,
   bool alignLabelWithHint = false,
 }) {
+  final palette = context.appPalette;
   return InputDecoration(
+    filled: false,
     hintText: hintText,
-    hintStyle: const TextStyle(
+    hintStyle: TextStyle(
       fontFamily: AppTypography.fontFamily,
       fontSize: 12.5,
       fontWeight: AppTypography.medium,
-      color: _secondaryTextColor,
+      color: palette.muted,
       letterSpacing: 0,
     ),
     suffixText: suffixText,
-    suffixStyle: const TextStyle(
+    suffixStyle: TextStyle(
       fontFamily: AppTypography.fontFamily,
       fontSize: 11.5,
       fontWeight: AppTypography.medium,
-      color: _secondaryTextColor,
+      color: palette.muted,
       letterSpacing: 0,
     ),
     errorText: errorText,
-    errorStyle: const TextStyle(
+    errorStyle: TextStyle(
       fontFamily: AppTypography.fontFamily,
       fontSize: 10.5,
       fontWeight: AppTypography.medium,
-      color: Color(0xFF706E82),
+      color: Theme.of(context).colorScheme.error,
       letterSpacing: 0,
     ),
     alignLabelWithHint: alignLabelWithHint,
     isDense: true,
     contentPadding: const EdgeInsets.only(bottom: 9),
-    enabledBorder: const UnderlineInputBorder(
-      borderSide: BorderSide(color: _borderColor),
+    enabledBorder: UnderlineInputBorder(
+      borderSide: BorderSide(color: palette.border),
     ),
-    focusedBorder: const UnderlineInputBorder(
-      borderSide: BorderSide(color: _textColor),
+    focusedBorder: UnderlineInputBorder(
+      borderSide: BorderSide(color: palette.ink),
     ),
-    errorBorder: const UnderlineInputBorder(
-      borderSide: BorderSide(color: _borderColor),
+    errorBorder: UnderlineInputBorder(
+      borderSide: BorderSide(color: Theme.of(context).colorScheme.error),
     ),
-    focusedErrorBorder: const UnderlineInputBorder(
-      borderSide: BorderSide(color: _textColor),
+    focusedErrorBorder: UnderlineInputBorder(
+      borderSide: BorderSide(color: Theme.of(context).colorScheme.error),
     ),
   );
 }
@@ -451,11 +456,11 @@ class _FieldLabel extends StatelessWidget {
             ),
         ],
       ),
-      style: const TextStyle(
+      style: TextStyle(
         fontFamily: AppTypography.fontFamily,
         fontSize: 12.5,
         fontWeight: AppTypography.semiBold,
-        color: _textColor,
+        color: context.appPalette.ink,
         height: 1,
         letterSpacing: 0,
       ),
@@ -513,9 +518,9 @@ class _SizePickerSheetState extends State<_SizePickerSheet> {
         constraints: BoxConstraints(
           maxHeight: MediaQuery.sizeOf(context).height * 0.86,
         ),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        decoration: BoxDecoration(
+          color: context.appPalette.surfaceRaised,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: SafeArea(
           top: false,
@@ -526,13 +531,13 @@ class _SizePickerSheetState extends State<_SizePickerSheet> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text(
+                Text(
                   'Размер',
                   style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 16,
                     fontWeight: AppTypography.semiBold,
-                    color: _textColor,
+                    color: context.appPalette.ink,
                     letterSpacing: 0,
                   ),
                 ),
@@ -571,14 +576,14 @@ class _SizePickerSheetState extends State<_SizePickerSheet> {
                   textInputAction: TextInputAction.done,
                   onChanged: (_) => setState(() {}),
                   onSubmitted: (_) => _submitCustomSize(),
-                  style: _inputStyle,
+                  style: _inputStyle(context),
                   decoration: InputDecoration(
                     hintText: 'Например, 48–50 или рост 134',
-                    hintStyle: const TextStyle(
+                    hintStyle: TextStyle(
                       fontFamily: AppTypography.fontFamily,
                       fontSize: 12,
                       fontWeight: AppTypography.medium,
-                      color: _secondaryTextColor,
+                      color: context.appPalette.muted,
                     ),
                     counterText: '',
                     contentPadding: const EdgeInsets.symmetric(
@@ -587,11 +592,11 @@ class _SizePickerSheetState extends State<_SizePickerSheet> {
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: _borderColor),
+                      borderSide: BorderSide(color: context.appPalette.border),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10),
-                      borderSide: const BorderSide(color: _textColor),
+                      borderSide: BorderSide(color: context.appPalette.ink),
                     ),
                     suffixIcon: IconButton(
                       tooltip: 'Сохранить размер',
@@ -626,10 +631,16 @@ class _SizeOptionsWrap extends StatelessWidget {
           .map((option) {
             final selected = option.id == selectedValue;
             return Material(
-              color: selected ? Colors.black : const Color(0xFFF2F2F4),
+              color: selected
+                  ? context.appPalette.ink
+                  : context.appPalette.surfaceMuted,
               borderRadius: BorderRadius.circular(999),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+                focusColor: Colors.transparent,
                 onTap: () => Navigator.pop(context, option.id),
                 child: Container(
                   constraints: const BoxConstraints(
@@ -647,7 +658,9 @@ class _SizeOptionsWrap extends StatelessWidget {
                       fontFamily: AppTypography.fontFamily,
                       fontSize: 12.5,
                       fontWeight: AppTypography.medium,
-                      color: selected ? Colors.white : const Color(0xFF111111),
+                      color: selected
+                          ? context.appPalette.surface
+                          : context.appPalette.ink,
                       height: 1,
                       letterSpacing: 0,
                     ),
@@ -670,11 +683,11 @@ class _SheetSectionTitle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(
       label,
-      style: const TextStyle(
+      style: TextStyle(
         fontFamily: AppTypography.fontFamily,
         fontSize: 12.5,
         fontWeight: AppTypography.semiBold,
-        color: _textColor,
+        color: context.appPalette.ink,
         letterSpacing: 0,
       ),
     );
@@ -698,9 +711,9 @@ class _CatalogOptionsSheet extends StatelessWidget {
       constraints: BoxConstraints(
         maxHeight: MediaQuery.sizeOf(context).height * 0.76,
       ),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: context.appPalette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: SafeArea(
         top: false,
@@ -712,11 +725,11 @@ class _CatalogOptionsSheet extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 16,
                   fontWeight: AppTypography.semiBold,
-                  color: _textColor,
+                  color: context.appPalette.ink,
                   letterSpacing: 0,
                 ),
               ),
@@ -727,11 +740,15 @@ class _CatalogOptionsSheet extends StatelessWidget {
                   padding: EdgeInsets.zero,
                   itemCount: options.length,
                   separatorBuilder: (context, index) =>
-                      const Divider(height: 1, color: _borderColor),
+                      Divider(height: 1, color: context.appPalette.border),
                   itemBuilder: (context, index) {
                     final option = options[index];
                     final selected = option.id == selectedValue;
                     return InkWell(
+                      splashColor: Colors.transparent,
+                      highlightColor: Colors.transparent,
+                      hoverColor: Colors.transparent,
+                      focusColor: Colors.transparent,
                       onTap: () => Navigator.pop(context, option.id),
                       child: SizedBox(
                         height: 52,
@@ -740,20 +757,20 @@ class _CatalogOptionsSheet extends StatelessWidget {
                             Expanded(
                               child: Text(
                                 option.name,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontFamily: AppTypography.fontFamily,
                                   fontSize: 14,
                                   fontWeight: AppTypography.medium,
-                                  color: _textColor,
+                                  color: context.appPalette.ink,
                                   letterSpacing: 0,
                                 ),
                               ),
                             ),
                             if (selected)
-                              const Icon(
+                              Icon(
                                 Icons.check_rounded,
                                 size: 20,
-                                color: _textColor,
+                                color: context.appPalette.ink,
                               ),
                           ],
                         ),

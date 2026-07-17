@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_appearance.dart';
 import '../models/created_outfit.dart';
 import '../widgets/app_image.dart';
 
@@ -150,20 +151,20 @@ class _CreateOutfitScreenState extends State<CreateOutfitScreen> {
           GestureDetector(
             onTap: widget.onClose,
             behavior: HitTestBehavior.opaque,
-            child: const SizedBox(
+            child: SizedBox(
               width: 44,
               height: 44,
-              child: Icon(Icons.close, size: 26, color: Color(0xFF0B0B0B)),
+              child: Icon(Icons.close, size: 26, color: context.appPalette.ink),
             ),
           ),
-          const Expanded(
+          Expanded(
             child: Center(
               child: Text(
                 'Создать образ',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF0B0B0B),
+                  color: context.appPalette.ink,
                 ),
               ),
             ),
@@ -178,12 +179,12 @@ class _CreateOutfitScreenState extends State<CreateOutfitScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Выберите вещи',
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 12),
@@ -218,7 +219,7 @@ class _CreateOutfitScreenState extends State<CreateOutfitScreen> {
       height: 44,
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0F0F1),
+        color: context.appPalette.surfaceMuted,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -244,10 +245,10 @@ class _CreateOutfitScreenState extends State<CreateOutfitScreen> {
       children: [
         Text(
           'Вещи в образе (${_selectedItems.length})',
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 12),
@@ -256,13 +257,13 @@ class _CreateOutfitScreenState extends State<CreateOutfitScreen> {
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 20),
             decoration: BoxDecoration(
-              color: const Color(0xFFF6F6F7),
+              color: context.appPalette.surfaceMuted,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Center(
+            child: Center(
               child: Text(
                 'Выберите вещи из списка выше',
-                style: TextStyle(fontSize: 13, color: Color(0xFF8F8F94)),
+                style: TextStyle(fontSize: 13, color: context.appPalette.muted),
               ),
             ),
           )
@@ -288,13 +289,16 @@ class _CreateOutfitScreenState extends State<CreateOutfitScreen> {
   }
 
   Widget _buildSaveButton() {
+    final scheme = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
+
     return GestureDetector(
       onTap: _save,
       child: Container(
         width: double.infinity,
         height: 50,
         decoration: BoxDecoration(
-          color: _hasSelection ? Colors.black : const Color(0xFFC8C8CE),
+          color: _hasSelection ? scheme.primary : palette.surfaceMuted,
           borderRadius: BorderRadius.circular(25),
         ),
         child: Center(
@@ -303,7 +307,7 @@ class _CreateOutfitScreenState extends State<CreateOutfitScreen> {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: _hasSelection ? Colors.white : const Color(0xFF8E8E93),
+              color: _hasSelection ? scheme.onPrimary : palette.muted,
             ),
           ),
         ),
@@ -325,12 +329,14 @@ class _SegmentButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Expanded(
       child: GestureDetector(
         onTap: onTap,
         child: Container(
           decoration: BoxDecoration(
-            color: isSelected ? Colors.black : Colors.transparent,
+            color: isSelected ? scheme.primary : Colors.transparent,
             borderRadius: BorderRadius.circular(9),
           ),
           child: Center(
@@ -339,7 +345,7 @@ class _SegmentButton extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: isSelected ? Colors.white : const Color(0xFF111111),
+                color: isSelected ? scheme.onPrimary : context.appPalette.ink,
               ),
             ),
           ),
@@ -362,13 +368,16 @@ class _ItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final scheme = Theme.of(context).colorScheme;
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: palette.surface,
           border: Border.all(
-            color: isSelected ? Colors.black : const Color(0xFFE7E7EA),
+            color: isSelected ? scheme.primary : palette.border,
             width: isSelected ? 2 : 1,
           ),
           borderRadius: BorderRadius.circular(14),
@@ -385,7 +394,7 @@ class _ItemCard extends StatelessWidget {
                     child: Container(
                       width: double.infinity,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF8F8F8),
+                        color: palette.surfaceMuted,
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Center(
@@ -401,19 +410,19 @@ class _ItemCard extends StatelessWidget {
                     item.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF111111),
+                      color: palette.ink,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     item.price,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
-                      color: Color(0xFF111111),
+                      color: palette.ink,
                     ),
                   ),
                 ],
@@ -426,15 +435,15 @@ class _ItemCard extends StatelessWidget {
                 width: 26,
                 height: 26,
                 decoration: BoxDecoration(
-                  color: isSelected ? Colors.black : Colors.white,
+                  color: isSelected ? scheme.primary : palette.surfaceRaised,
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: isSelected ? Colors.black : const Color(0xFFC7C7CC),
+                    color: isSelected ? scheme.primary : palette.border,
                     width: 1.5,
                   ),
                 ),
                 child: isSelected
-                    ? const Icon(Icons.check, size: 16, color: Colors.white)
+                    ? Icon(Icons.check, size: 16, color: scheme.onPrimary)
                     : null,
               ),
             ),
@@ -453,11 +462,13 @@ class _SelectedItemCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+
     return Container(
       width: 130,
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: const Color(0xFFE7E7EA)),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
         borderRadius: BorderRadius.circular(14),
       ),
       clipBehavior: Clip.antiAlias,
@@ -467,9 +478,11 @@ class _SelectedItemCard extends StatelessWidget {
           Expanded(
             child: Container(
               width: double.infinity,
-              decoration: const BoxDecoration(
-                color: Color(0xFFF8F8F8),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(13)),
+              decoration: BoxDecoration(
+                color: palette.surfaceMuted,
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(13),
+                ),
               ),
               child: Stack(
                 children: [
@@ -484,15 +497,11 @@ class _SelectedItemCard extends StatelessWidget {
                       child: Container(
                         width: 22,
                         height: 22,
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
+                        decoration: BoxDecoration(
+                          color: palette.surfaceRaised,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
-                          Icons.close,
-                          size: 14,
-                          color: Color(0xFF111111),
-                        ),
+                        child: Icon(Icons.close, size: 14, color: palette.ink),
                       ),
                     ),
                   ),
@@ -509,19 +518,19 @@ class _SelectedItemCard extends StatelessWidget {
                   item.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF111111),
+                    color: palette.ink,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   item.price,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: Color(0xFF111111),
+                    color: palette.ink,
                   ),
                 ),
               ],

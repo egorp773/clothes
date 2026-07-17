@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
 import 'package:video_player/video_player.dart';
 
@@ -15,13 +16,6 @@ import '../features/chat/conversation_info_screen.dart';
 import '../models/app_profile.dart';
 import '../models/message_thread.dart';
 import '../widgets/app_image.dart';
-
-const _ink = Color(0xFF070707);
-const _muted = Color(0xFF7A7A82);
-const _line = Color(0xFFE8E8EA);
-const _soft = Color(0xFFF5F5F6);
-const _chatBg = Color(0xFFF1F2F4);
-const _accent = Color(0xFFFF3158);
 
 enum _InboxFilter { all, unread, purchases, archived }
 
@@ -183,7 +177,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Material(
-        color: Colors.white,
+        color: sheetContext.appPalette.surfaceRaised,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         clipBehavior: Clip.antiAlias,
         child: SafeArea(
@@ -193,7 +187,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
             children: [
               const SizedBox(height: 10),
               ListTile(
-                leading: const Icon(Icons.push_pin_outlined),
+                leading: Icon(Icons.push_pin_outlined),
                 title: Text(thread.isPinned ? 'Открепить' : 'Закрепить'),
                 onTap: () {
                   Navigator.pop(sheetContext);
@@ -207,7 +201,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.notifications_off_outlined),
+                leading: Icon(Icons.notifications_off_outlined),
                 title: Text(
                   thread.isMuted ? 'Включить звук' : 'Выключить звук',
                 ),
@@ -224,8 +218,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
               ),
               if (thread.unreadCount > 0)
                 ListTile(
-                  leading: const Icon(Icons.mark_chat_read_outlined),
-                  title: const Text('Отметить прочитанным'),
+                  leading: Icon(Icons.mark_chat_read_outlined),
+                  title: Text('Отметить прочитанным'),
                   onTap: () {
                     Navigator.pop(sheetContext);
                     unawaited(_markThreadReadFromInbox(thread.id));
@@ -336,7 +330,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
                 );
           }).toList();
     return ColoredBox(
-      color: Colors.white,
+      color: context.appPalette.page,
       child: Column(
         children: [
           _MessagesHeader(
@@ -367,8 +361,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
                     padding: const EdgeInsets.only(bottom: 112),
                     physics: const BouncingScrollPhysics(),
                     itemCount: visibleThreads.length,
-                    separatorBuilder: (context, index) =>
-                        const Divider(height: 1, indent: 84, color: _line),
+                    separatorBuilder: (context, index) => Divider(
+                      height: 1,
+                      indent: 84,
+                      color: context.appPalette.border,
+                    ),
                     itemBuilder: (context, index) {
                       final thread = visibleThreads[index];
                       return _ThreadTile(
@@ -427,9 +424,11 @@ class _MessagesHeader extends StatelessWidget {
 
     return Container(
       padding: EdgeInsets.fromLTRB(18, topInset + 12, 18, 14),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: _line, width: 0.5)),
+      decoration: BoxDecoration(
+        color: context.appPalette.surface,
+        border: Border(
+          bottom: BorderSide(color: context.appPalette.border, width: 0.5),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -439,7 +438,7 @@ class _MessagesHeader extends StatelessWidget {
             height: 44,
             child: Row(
               children: [
-                const Expanded(
+                Expanded(
                   child: Text(
                     'сообщения',
                     style: TextStyle(
@@ -448,37 +447,38 @@ class _MessagesHeader extends StatelessWidget {
                       height: 1,
                       fontWeight: AppTypography.bold,
                       letterSpacing: -0.4,
-                      color: _ink,
+                      color: context.appPalette.ink,
                     ),
                   ),
                 ),
                 IconButton.filled(
                   onPressed: onCompose,
                   style: IconButton.styleFrom(
-                    backgroundColor: _ink,
-                    foregroundColor: Colors.white,
+                    overlayColor: Colors.transparent,
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
                     minimumSize: Size.zero,
                     fixedSize: const Size(36, 36),
                     padding: EdgeInsets.zero,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
-                  icon: const Icon(Icons.edit_square, size: 18),
+                  icon: Icon(Icons.edit_square, size: 18),
                 ),
                 const SizedBox(width: 8),
                 Container(
                   height: 32,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
-                    color: _soft,
+                    color: context.appPalette.surfaceMuted,
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Center(
                     child: Text(
                       totalThreads.toString(),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
-                        color: _ink,
+                        color: context.appPalette.ink,
                       ),
                     ),
                   ),
@@ -541,21 +541,21 @@ class _SearchField extends StatelessWidget {
         textInputAction: TextInputAction.search,
         decoration: InputDecoration(
           hintText: 'Найти человека по @username',
-          hintStyle: const TextStyle(color: Color(0xFF9A9AA1)),
-          prefixIcon: const Icon(
+          hintStyle: TextStyle(color: context.appPalette.muted),
+          prefixIcon: Icon(
             Icons.search,
             size: 20,
-            color: Color(0xFF9A9AA1),
+            color: context.appPalette.muted,
           ),
           filled: true,
-          fillColor: _soft,
+          fillColor: context.appPalette.surfaceMuted,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none,
           ),
           contentPadding: EdgeInsets.zero,
         ),
-        style: const TextStyle(fontSize: 15, color: _ink),
+        style: TextStyle(fontSize: 15, color: context.appPalette.ink),
       ),
     );
   }
@@ -583,8 +583,11 @@ class _SearchResults extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isSearching) {
-      return const Center(
-        child: CircularProgressIndicator(strokeWidth: 2, color: _ink),
+      return Center(
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: context.appPalette.ink,
+        ),
       );
     }
     if (results.isEmpty && threads.isEmpty) {
@@ -626,19 +629,19 @@ class _SearchResults extends StatelessWidget {
                 profile.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: _ink,
+                  color: context.appPalette.ink,
                 ),
               ),
               subtitle: Text(
                 profile.handle,
-                style: const TextStyle(fontSize: 14, color: _muted),
+                style: TextStyle(fontSize: 14, color: context.appPalette.muted),
               ),
-              trailing: const Icon(
+              trailing: Icon(
                 Icons.chevron_right,
-                color: Color(0xFFB8B8BE),
+                color: context.appPalette.muted,
               ),
             ),
           ),
@@ -659,10 +662,10 @@ class _SearchSectionTitle extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 8),
       child: Text(
         title,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w600,
-          color: _muted,
+          color: context.appPalette.muted,
         ),
       ),
     );
@@ -774,7 +777,7 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
       child: FractionallySizedBox(
         heightFactor: 0.84,
         child: Material(
-          color: Colors.white,
+          color: context.appPalette.surfaceRaised,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
           clipBehavior: Clip.antiAlias,
           child: SafeArea(
@@ -786,7 +789,7 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                   height: 4,
                   margin: const EdgeInsets.only(top: 10, bottom: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFD7D7DB),
+                    color: context.appPalette.border,
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
@@ -794,19 +797,19 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                   padding: const EdgeInsets.fromLTRB(18, 5, 10, 14),
                   child: Row(
                     children: [
-                      const Expanded(
+                      Expanded(
                         child: Text(
                           'Новая беседа',
                           style: TextStyle(
                             fontSize: 21,
                             fontWeight: FontWeight.w700,
-                            color: _ink,
+                            color: context.appPalette.ink,
                           ),
                         ),
                       ),
                       IconButton(
                         onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close_rounded),
+                        icon: Icon(Icons.close_rounded),
                       ),
                     ],
                   ),
@@ -839,16 +842,20 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                                   name: user.name,
                                   isSquare: false,
                                 ),
-                                const Positioned(
+                                Positioned(
                                   right: 0,
                                   top: 0,
                                   child: CircleAvatar(
                                     radius: 9,
-                                    backgroundColor: _ink,
+                                    backgroundColor: Theme.of(
+                                      context,
+                                    ).colorScheme.primary,
                                     child: Icon(
                                       Icons.close,
                                       size: 12,
-                                      color: Colors.white,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onPrimary,
                                     ),
                                   ),
                                 ),
@@ -867,7 +874,7 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                         decoration: InputDecoration(
                           hintText: 'Название беседы (необязательно)',
                           filled: true,
-                          fillColor: _soft,
+                          fillColor: context.appPalette.surfaceMuted,
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: BorderSide.none,
@@ -876,13 +883,13 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                       ),
                     ),
                 ],
-                const Divider(height: 1, color: _line),
+                Divider(height: 1, color: context.appPalette.border),
                 Expanded(
                   child: _searching
-                      ? const Center(
+                      ? Center(
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: _ink,
+                            color: context.appPalette.ink,
                           ),
                         )
                       : _results.isEmpty
@@ -893,10 +900,10 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                         )
                       : ListView.separated(
                           itemCount: _results.length,
-                          separatorBuilder: (_, _) => const Divider(
+                          separatorBuilder: (_, _) => Divider(
                             height: 1,
                             indent: 84,
-                            color: _line,
+                            color: context.appPalette.border,
                           ),
                           itemBuilder: (context, index) {
                             final user = _results[index];
@@ -914,9 +921,9 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                               ),
                               title: Text(
                                 user.name,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontWeight: FontWeight.w600,
-                                  color: _ink,
+                                  color: context.appPalette.ink,
                                 ),
                               ),
                               subtitle: Text(user.handle),
@@ -925,19 +932,23 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                                 width: 26,
                                 height: 26,
                                 decoration: BoxDecoration(
-                                  color: selected ? _ink : Colors.white,
+                                  color: selected
+                                      ? Theme.of(context).colorScheme.primary
+                                      : context.appPalette.surface,
                                   shape: BoxShape.circle,
                                   border: Border.all(
                                     color: selected
-                                        ? _ink
-                                        : const Color(0xFFD2D2D7),
+                                        ? Theme.of(context).colorScheme.primary
+                                        : context.appPalette.border,
                                   ),
                                 ),
                                 child: selected
-                                    ? const Icon(
+                                    ? Icon(
                                         Icons.check,
                                         size: 16,
-                                        color: Colors.white,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onPrimary,
                                       )
                                     : null,
                               ),
@@ -955,25 +966,29 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                           ? null
                           : _create,
                       style: FilledButton.styleFrom(
-                        backgroundColor: _ink,
+                        overlayColor: Colors.transparent,
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        foregroundColor: Theme.of(
+                          context,
+                        ).colorScheme.onPrimary,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
                         ),
                       ),
                       child: _creating
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 20,
                               height: 20,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: Theme.of(context).colorScheme.onPrimary,
                               ),
                             )
                           : Text(
                               _selected.length > 1
                                   ? 'Создать беседу · ${_selected.length + 1}'
                                   : 'Начать диалог',
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 15.5,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -1261,16 +1276,16 @@ class _ChatScreenState extends State<ChatScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Удалить сообщение?'),
-        content: const Text('Оно исчезнет у всех участников беседы.'),
+        title: Text('Удалить сообщение?'),
+        content: Text('Оно исчезнет у всех участников беседы.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
+            child: Text('Отмена'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Удалить'),
+            child: Text('Удалить'),
           ),
         ],
       ),
@@ -1293,7 +1308,7 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Material(
-        color: Colors.white,
+        color: sheetContext.appPalette.surfaceRaised,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         clipBehavior: Clip.antiAlias,
         child: SafeArea(
@@ -1307,14 +1322,14 @@ class _ChatScreenState extends State<ChatScreen> {
                   width: 42,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFD7D7DB),
+                    color: sheetContext.appPalette.border,
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
                 const SizedBox(height: 14),
                 ListTile(
-                  leading: const Icon(Icons.reply_rounded),
-                  title: const Text('Ответить'),
+                  leading: Icon(Icons.reply_rounded),
+                  title: Text('Ответить'),
                   onTap: () {
                     Navigator.pop(sheetContext);
                     _replyToMessage(message);
@@ -1322,8 +1337,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 if (message.text.isNotEmpty)
                   ListTile(
-                    leading: const Icon(Icons.copy_rounded),
-                    title: const Text('Копировать'),
+                    leading: Icon(Icons.copy_rounded),
+                    title: Text('Копировать'),
                     onTap: () async {
                       await Clipboard.setData(
                         ClipboardData(text: message.text),
@@ -1335,8 +1350,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     !message.isProductShare &&
                     widget.actions?.editMessage != null)
                   ListTile(
-                    leading: const Icon(Icons.edit_outlined),
-                    title: const Text('Редактировать'),
+                    leading: Icon(Icons.edit_outlined),
+                    title: Text('Редактировать'),
                     onTap: () {
                       Navigator.pop(sheetContext);
                       _editChatMessage(message);
@@ -1344,11 +1359,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 if (message.isMine && widget.actions?.deleteMessage != null)
                   ListTile(
-                    leading: const Icon(
+                    leading: Icon(
                       Icons.delete_outline_rounded,
                       color: Color(0xFFE5484D),
                     ),
-                    title: const Text(
+                    title: Text(
                       'Удалить',
                       style: TextStyle(color: Color(0xFFE5484D)),
                     ),
@@ -1376,7 +1391,7 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => Material(
-        color: Colors.white,
+        color: context.appPalette.surfaceRaised,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         clipBehavior: Clip.antiAlias,
         child: SafeArea(
@@ -1387,7 +1402,7 @@ class _ChatScreenState extends State<ChatScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Вложение',
                   style: TextStyle(fontSize: 21, fontWeight: FontWeight.w700),
                 ),
@@ -1650,7 +1665,7 @@ class _ChatScreenState extends State<ChatScreen> {
               )
               .toList(growable: false);
     return Scaffold(
-      backgroundColor: _chatBg,
+      backgroundColor: context.appPalette.page,
       body: SafeArea(
         top: false,
         child: Column(
@@ -1791,27 +1806,31 @@ class _CenteredHint extends StatelessWidget {
             Container(
               width: 72,
               height: 72,
-              decoration: const BoxDecoration(
-                color: _soft,
+              decoration: BoxDecoration(
+                color: context.appPalette.surfaceMuted,
                 shape: BoxShape.circle,
               ),
-              child: Icon(icon, size: 32, color: _ink),
+              child: Icon(icon, size: 32, color: context.appPalette.ink),
             ),
             const SizedBox(height: 16),
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w500,
-                color: _ink,
+                color: context.appPalette.ink,
               ),
             ),
             const SizedBox(height: 7),
             Text(
               subtitle,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, height: 1.35, color: _muted),
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.35,
+                color: context.appPalette.muted,
+              ),
             ),
           ],
         ),
@@ -1846,6 +1865,10 @@ class _ThreadTile extends StatelessWidget {
         ? 'Напишите сообщение'
         : thread.lastMessage;
     return InkWell(
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      focusColor: Colors.transparent,
       onTap: onTap,
       onLongPress: onLongPress,
       child: Padding(
@@ -1865,18 +1888,21 @@ class _ThreadTile extends StatelessWidget {
                           title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 16,
                             height: 1.15,
                             fontWeight: FontWeight.w500,
-                            color: _ink,
+                            color: context.appPalette.ink,
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
                       Text(
                         _threadTimeLabel(thread.updatedAt),
-                        style: const TextStyle(fontSize: 12, color: _muted),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: context.appPalette.muted,
+                        ),
                       ),
                     ],
                   ),
@@ -1886,7 +1912,10 @@ class _ThreadTile extends StatelessWidget {
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 13, color: _muted),
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: context.appPalette.muted,
+                      ),
                     ),
                   const SizedBox(height: 4),
                   Row(
@@ -1902,25 +1931,29 @@ class _ThreadTile extends StatelessWidget {
                                 ? FontWeight.w600
                                 : FontWeight.w500,
                             color: hasDraft
-                                ? _accent
+                                ? Theme.of(context).colorScheme.primary
                                 : thread.lastMessage.isEmpty
-                                ? _muted
-                                : _ink,
+                                ? context.appPalette.muted
+                                : context.appPalette.ink,
                           ),
                         ),
                       ),
                       if (thread.isPinned)
-                        const Padding(
+                        Padding(
                           padding: EdgeInsets.only(left: 6),
-                          child: Icon(Icons.push_pin, size: 14, color: _muted),
+                          child: Icon(
+                            Icons.push_pin,
+                            size: 14,
+                            color: context.appPalette.muted,
+                          ),
                         ),
                       if (thread.isMuted)
-                        const Padding(
+                        Padding(
                           padding: EdgeInsets.only(left: 5),
                           child: Icon(
                             Icons.volume_off_rounded,
                             size: 15,
-                            color: _muted,
+                            color: context.appPalette.muted,
                           ),
                         ),
                       if (thread.unreadCount > 0)
@@ -1931,17 +1964,21 @@ class _ThreadTile extends StatelessWidget {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: thread.isMuted ? _muted : _accent,
+                            color: thread.isMuted
+                                ? context.appPalette.surfaceMuted
+                                : Theme.of(context).colorScheme.primary,
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
                             thread.unreadCount > 99
                                 ? '99+'
                                 : thread.unreadCount.toString(),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 10.5,
                               fontWeight: FontWeight.w600,
-                              color: Colors.white,
+                              color: thread.isMuted
+                                  ? context.appPalette.ink
+                                  : Theme.of(context).colorScheme.onPrimary,
                             ),
                           ),
                         ),
@@ -1993,8 +2030,10 @@ class _Avatar extends StatelessWidget {
         width: 54,
         height: 54,
         decoration: BoxDecoration(
-          color: _soft,
-          border: isSquare ? Border.all(color: _line) : null,
+          color: context.appPalette.surfaceMuted,
+          border: isSquare
+              ? Border.all(color: context.appPalette.border)
+              : null,
         ),
         child: imageUrl.isNotEmpty
             ? AppImage(
@@ -2007,10 +2046,10 @@ class _Avatar extends StatelessWidget {
             : Center(
                 child: Text(
                   _initials(name),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w500,
-                    color: _ink,
+                    color: context.appPalette.ink,
                   ),
                 ),
               ),
@@ -2055,18 +2094,28 @@ class _ChatHeader extends StatelessWidget {
     return Container(
       height: topInset + 62,
       padding: EdgeInsets.fromLTRB(4, topInset + 4, 12, 4),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: _line, width: 0.5)),
+      decoration: BoxDecoration(
+        color: context.appPalette.surface,
+        border: Border(
+          bottom: BorderSide(color: context.appPalette.border, width: 0.5),
+        ),
       ),
       child: Row(
         children: [
           IconButton(
             onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back_ios_new, size: 20, color: _ink),
+            icon: Icon(
+              Icons.arrow_back_ios_new,
+              size: 20,
+              color: context.appPalette.ink,
+            ),
           ),
           Expanded(
             child: InkWell(
+              splashColor: Colors.transparent,
+              highlightColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              focusColor: Colors.transparent,
               onTap: onTap,
               borderRadius: BorderRadius.circular(14),
               child: Row(
@@ -2082,11 +2131,11 @@ class _ChatHeader extends StatelessWidget {
                           thread.displayTitle(currentUserId),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 16,
                             height: 1.1,
                             fontWeight: FontWeight.w500,
-                            color: _ink,
+                            color: context.appPalette.ink,
                           ),
                         ),
                         const SizedBox(height: 3),
@@ -2114,7 +2163,7 @@ class _ChatHeader extends StatelessWidget {
                                   fontSize: 12.5,
                                   color: isOnline
                                       ? const Color(0xFF2C9F62)
-                                      : _muted,
+                                      : context.appPalette.muted,
                                 ),
                               ),
                             ),
@@ -2129,13 +2178,16 @@ class _ChatHeader extends StatelessWidget {
           ),
           IconButton(
             onPressed: onSearch,
-            icon: const Icon(Icons.search_rounded, color: _ink),
+            icon: Icon(Icons.search_rounded, color: context.appPalette.ink),
           ),
           if (onOpenSeller != null)
             IconButton(
               tooltip: 'Профиль продавца',
               onPressed: onOpenSeller,
-              icon: const Icon(Icons.person_outline_rounded, color: _ink),
+              icon: Icon(
+                Icons.person_outline_rounded,
+                color: context.appPalette.ink,
+              ),
             ),
         ],
       ),
@@ -2162,12 +2214,12 @@ class _ChatSearchHeader extends StatelessWidget {
     return Container(
       height: topInset + 62,
       padding: EdgeInsets.fromLTRB(6, topInset + 7, 10, 7),
-      color: Colors.white,
+      color: context.appPalette.surface,
       child: Row(
         children: [
           IconButton(
             onPressed: onClose,
-            icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+            icon: Icon(Icons.arrow_back_ios_new_rounded, size: 20),
           ),
           Expanded(
             child: TextField(
@@ -2177,7 +2229,7 @@ class _ChatSearchHeader extends StatelessWidget {
               decoration: InputDecoration(
                 hintText: 'Поиск в чате',
                 filled: true,
-                fillColor: _soft,
+                fillColor: context.appPalette.surfaceMuted,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(14),
                   borderSide: BorderSide.none,
@@ -2191,7 +2243,7 @@ class _ChatSearchHeader extends StatelessWidget {
             child: Text(
               controller.text.isEmpty ? '' : '$resultCount',
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, color: _muted),
+              style: TextStyle(fontSize: 12, color: context.appPalette.muted),
             ),
           ),
         ],
@@ -2211,13 +2263,13 @@ class _EmptyChat extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
       children: [
         SizedBox(height: thread.isProductChat ? 58 : 88),
-        const Center(
+        Center(
           child: Text(
             'Начните диалог',
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w500,
-              color: _muted,
+              color: context.appPalette.muted,
             ),
           ),
         ),
@@ -2243,9 +2295,9 @@ class _ProductContextCard extends StatelessWidget {
       width: imageOnly ? 96 : double.infinity,
       constraints: BoxConstraints(maxWidth: imageOnly ? 96 : 420),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
+        color: context.appPalette.surfaceRaised.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _line),
+        border: Border.all(color: context.appPalette.border),
       ),
       child: imageOnly
           ? ClipRRect(
@@ -2254,9 +2306,12 @@ class _ProductContextCard extends StatelessWidget {
                 width: 84,
                 height: 84,
                 child: thread.productImage.isEmpty
-                    ? const ColoredBox(
-                        color: _soft,
-                        child: Icon(Icons.checkroom_outlined, color: _muted),
+                    ? ColoredBox(
+                        color: context.appPalette.surfaceMuted,
+                        child: Icon(
+                          Icons.checkroom_outlined,
+                          color: context.appPalette.muted,
+                        ),
                       )
                     : AppImage(
                         imageUrl: thread.productImage,
@@ -2274,11 +2329,11 @@ class _ProductContextCard extends StatelessWidget {
                     width: 48,
                     height: 48,
                     child: thread.productImage.isEmpty
-                        ? const ColoredBox(
-                            color: _soft,
+                        ? ColoredBox(
+                            color: context.appPalette.surfaceMuted,
                             child: Icon(
                               Icons.checkroom_outlined,
-                              color: _muted,
+                              color: context.appPalette.muted,
                             ),
                           )
                         : AppImage(
@@ -2295,11 +2350,11 @@ class _ProductContextCard extends StatelessWidget {
                     title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 15,
                       height: 1.18,
                       fontWeight: FontWeight.w500,
-                      color: _ink,
+                      color: context.appPalette.ink,
                     ),
                   ),
                 ),
@@ -2310,14 +2365,17 @@ class _ProductContextCard extends StatelessWidget {
                     child: FilledButton(
                       onPressed: onBuy,
                       style: FilledButton.styleFrom(
-                        backgroundColor: _ink,
-                        foregroundColor: Colors.white,
+                        overlayColor: Colors.transparent,
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        foregroundColor: Theme.of(
+                          context,
+                        ).colorScheme.onPrimary,
                         padding: const EdgeInsets.symmetric(horizontal: 13),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(11),
                         ),
                       ),
-                      child: const Text(
+                      child: Text(
                         'Купить',
                         style: TextStyle(
                           fontSize: 12,
@@ -2335,6 +2393,10 @@ class _ProductContextCard extends StatelessWidget {
       child: onTap == null
           ? card
           : InkWell(
+              splashColor: Colors.transparent,
+              highlightColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              focusColor: Colors.transparent,
               onTap: onTap,
               borderRadius: BorderRadius.circular(14),
               child: card,
@@ -2356,15 +2418,15 @@ class _DateChip extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.08),
+            color: context.appPalette.surfaceMuted,
             borderRadius: BorderRadius.circular(999),
           ),
           child: Text(
             _dateLabel(date),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 11.5,
               fontWeight: FontWeight.w500,
-              color: _muted,
+              color: context.appPalette.muted,
             ),
           ),
         ),
@@ -2400,10 +2462,10 @@ class _MessageBubble extends StatelessWidget {
       child: DecoratedBox(
         decoration: BoxDecoration(
           color: message.isProductShare
-              ? Colors.white
+              ? context.appPalette.surfaceRaised
               : isMine
-              ? _ink
-              : Colors.white,
+              ? Theme.of(context).colorScheme.primary
+              : context.appPalette.surfaceRaised,
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(18),
             topRight: const Radius.circular(18),
@@ -2412,7 +2474,7 @@ class _MessageBubble extends StatelessWidget {
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
+              color: context.appPalette.shadow,
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),
@@ -2436,7 +2498,7 @@ class _MessageBubble extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(6, 1, 6, 5),
                   child: Text(
                     message.senderName,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                       color: Color(0xFF2C79D6),
@@ -2451,10 +2513,15 @@ class _MessageBubble extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(9, 6, 8, 6),
                   decoration: BoxDecoration(
                     color: isMine
-                        ? Colors.white.withValues(alpha: 0.12)
-                        : _soft,
-                    border: const Border(
-                      left: BorderSide(color: Color(0xFFFF3158), width: 3),
+                        ? Theme.of(
+                            context,
+                          ).colorScheme.onPrimary.withValues(alpha: 0.12)
+                        : context.appPalette.surfaceMuted,
+                    border: Border(
+                      left: BorderSide(
+                        color: context.appPalette.accent,
+                        width: 3,
+                      ),
                     ),
                     borderRadius: BorderRadius.circular(8),
                   ),
@@ -2467,7 +2534,9 @@ class _MessageBubble extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
-                            color: isMine ? Colors.white : _ink,
+                            color: isMine
+                                ? Theme.of(context).colorScheme.onPrimary
+                                : context.appPalette.ink,
                           ),
                         ),
                       Text(
@@ -2477,8 +2546,10 @@ class _MessageBubble extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 11.5,
                           color: isMine
-                              ? Colors.white.withValues(alpha: 0.72)
-                              : _muted,
+                              ? Theme.of(
+                                  context,
+                                ).colorScheme.onPrimary.withValues(alpha: 0.72)
+                              : context.appPalette.muted,
                         ),
                       ),
                     ],
@@ -2491,8 +2562,10 @@ class _MessageBubble extends StatelessWidget {
                     fontSize: 14,
                     fontStyle: FontStyle.italic,
                     color: isMine
-                        ? Colors.white.withValues(alpha: 0.65)
-                        : _muted,
+                        ? Theme.of(
+                            context,
+                          ).colorScheme.onPrimary.withValues(alpha: 0.65)
+                        : context.appPalette.muted,
                   ),
                 )
               else if (message.isImage)
@@ -2520,7 +2593,9 @@ class _MessageBubble extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 15,
                     height: 1.24,
-                    color: isMine ? Colors.white : _ink,
+                    color: isMine
+                        ? Theme.of(context).colorScheme.onPrimary
+                        : context.appPalette.ink,
                   ),
                 ),
               if (message.isMedia && message.text.trim().isNotEmpty)
@@ -2530,7 +2605,9 @@ class _MessageBubble extends StatelessWidget {
                     message.text,
                     style: TextStyle(
                       fontSize: 14.5,
-                      color: isMine ? Colors.white : _ink,
+                      color: isMine
+                          ? Theme.of(context).colorScheme.onPrimary
+                          : context.appPalette.ink,
                     ),
                   ),
                 ),
@@ -2546,8 +2623,10 @@ class _MessageBubble extends StatelessWidget {
                         style: TextStyle(
                           fontSize: 10,
                           color: isMine
-                              ? Colors.white.withValues(alpha: 0.64)
-                              : const Color(0xFF9A9AA1),
+                              ? Theme.of(
+                                  context,
+                                ).colorScheme.onPrimary.withValues(alpha: 0.64)
+                              : context.appPalette.muted,
                         ),
                       ),
                     Text(
@@ -2555,10 +2634,12 @@ class _MessageBubble extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 10.5,
                         color: message.isProductShare
-                            ? const Color(0xFF9A9AA1)
+                            ? context.appPalette.muted
                             : isMine
-                            ? Colors.white.withValues(alpha: 0.64)
-                            : const Color(0xFF9A9AA1),
+                            ? Theme.of(
+                                context,
+                              ).colorScheme.onPrimary.withValues(alpha: 0.64)
+                            : context.appPalette.muted,
                       ),
                     ),
                     if (isMine) ...[
@@ -2574,7 +2655,9 @@ class _MessageBubble extends StatelessWidget {
                         size: 14,
                         color: message.hasError
                             ? const Color(0xFFFF6B6B)
-                            : Colors.white.withValues(alpha: 0.7),
+                            : Theme.of(
+                                context,
+                              ).colorScheme.onPrimary.withValues(alpha: 0.7),
                       ),
                     ],
                   ],
@@ -2724,7 +2807,7 @@ class _ChatVideoPlayerState extends State<_ChatVideoPlayer> {
         child: ColoredBox(
           color: const Color(0xFF151518),
           child: _failed
-              ? const Center(
+              ? Center(
                   child: Icon(
                     Icons.videocam_off_outlined,
                     color: Colors.white70,
@@ -2732,7 +2815,7 @@ class _ChatVideoPlayerState extends State<_ChatVideoPlayer> {
                   ),
                 )
               : !isReady
-              ? const Center(
+              ? Center(
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
                     color: Colors.white,
@@ -2753,7 +2836,7 @@ class _ChatVideoPlayerState extends State<_ChatVideoPlayer> {
                         ),
                       ),
                       if (!controller.value.isPlaying)
-                        const Center(
+                        Center(
                           child: CircleAvatar(
                             radius: 25,
                             backgroundColor: Color(0xB8000000),
@@ -2769,8 +2852,8 @@ class _ChatVideoPlayerState extends State<_ChatVideoPlayer> {
                         child: VideoProgressIndicator(
                           controller,
                           allowScrubbing: true,
-                          colors: const VideoProgressColors(
-                            playedColor: _accent,
+                          colors: VideoProgressColors(
+                            playedColor: context.appPalette.accent,
                             bufferedColor: Colors.white38,
                             backgroundColor: Colors.white12,
                           ),
@@ -2801,13 +2884,19 @@ class _FilterChip extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: InkWell(
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
           padding: const EdgeInsets.symmetric(horizontal: 13),
           decoration: BoxDecoration(
-            color: selected ? _ink : _soft,
+            color: selected
+                ? Theme.of(context).colorScheme.primary
+                : context.appPalette.surfaceMuted,
             borderRadius: BorderRadius.circular(999),
           ),
           alignment: Alignment.center,
@@ -2815,7 +2904,9 @@ class _FilterChip extends StatelessWidget {
             label,
             style: TextStyle(
               fontSize: 12,
-              color: selected ? Colors.white : _ink,
+              color: selected
+                  ? Theme.of(context).colorScheme.onPrimary
+                  : context.appPalette.ink,
             ),
           ),
         ),
@@ -2836,15 +2927,15 @@ class _SystemMessage extends StatelessWidget {
         margin: const EdgeInsets.symmetric(vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
         decoration: BoxDecoration(
-          color: const Color(0xFFD9DCDF).withValues(alpha: 0.72),
+          color: context.appPalette.surfaceMuted.withValues(alpha: 0.9),
           borderRadius: BorderRadius.circular(999),
         ),
         child: Text(
           message.text,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 11.5,
             fontWeight: FontWeight.w500,
-            color: _muted,
+            color: context.appPalette.muted,
           ),
         ),
       ),
@@ -2881,11 +2972,11 @@ class _SharedProductCard extends StatelessWidget {
                   product.title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14.5,
                     height: 1.15,
                     fontWeight: FontWeight.w700,
-                    color: _ink,
+                    color: context.appPalette.ink,
                   ),
                 ),
                 const SizedBox(height: 5),
@@ -2894,17 +2985,17 @@ class _SharedProductCard extends StatelessWidget {
                     Expanded(
                       child: Text(
                         product.price,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: _ink,
+                          color: context.appPalette.ink,
                         ),
                       ),
                     ),
-                    const Icon(
+                    Icon(
                       Icons.arrow_forward_rounded,
                       size: 18,
-                      color: _ink,
+                      color: context.appPalette.ink,
                     ),
                   ],
                 ),
@@ -2917,6 +3008,10 @@ class _SharedProductCard extends StatelessWidget {
     return onTap == null
         ? card
         : InkWell(
+            splashColor: Colors.transparent,
+            highlightColor: Colors.transparent,
+            hoverColor: Colors.transparent,
+            focusColor: Colors.transparent,
             onTap: onTap,
             borderRadius: BorderRadius.circular(13),
             child: card,
@@ -2946,9 +3041,11 @@ class _MessageComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: _line, width: 0.5)),
+      decoration: BoxDecoration(
+        color: context.appPalette.surface,
+        border: Border(
+          top: BorderSide(color: context.appPalette.border, width: 0.5),
+        ),
       ),
       child: SafeArea(
         top: false,
@@ -2964,7 +3061,7 @@ class _MessageComposer extends StatelessWidget {
                       width: 3,
                       height: 38,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFF3158),
+                        color: context.appPalette.accent,
                         borderRadius: BorderRadius.circular(999),
                       ),
                     ),
@@ -2977,10 +3074,10 @@ class _MessageComposer extends StatelessWidget {
                             editingMessage != null
                                 ? 'Редактирование'
                                 : 'Ответ ${replyTo!.senderName.isEmpty ? '' : replyTo!.senderName}',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
-                              color: _ink,
+                              color: context.appPalette.ink,
                             ),
                           ),
                           const SizedBox(height: 2),
@@ -2988,14 +3085,17 @@ class _MessageComposer extends StatelessWidget {
                             editingMessage?.previewText ?? replyTo!.previewText,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12, color: _muted),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: context.appPalette.muted,
+                            ),
                           ),
                         ],
                       ),
                     ),
                     IconButton(
                       onPressed: onCancelContext,
-                      icon: const Icon(Icons.close_rounded, size: 20),
+                      icon: Icon(Icons.close_rounded, size: 20),
                     ),
                   ],
                 ),
@@ -3016,18 +3116,18 @@ class _MessageComposer extends StatelessWidget {
                         onSubmitted: (_) => onSend(),
                         decoration: InputDecoration(
                           hintText: 'Сообщение',
-                          hintStyle: const TextStyle(color: Color(0xFF9A9AA1)),
+                          hintStyle: TextStyle(color: context.appPalette.muted),
                           prefixIcon: IconButton(
                             onPressed: onAttach,
-                            icon: const Icon(
+                            icon: Icon(
                               Icons.add_rounded,
                               size: 23,
-                              color: Color(0xFF9A9AA1),
+                              color: context.appPalette.muted,
                             ),
                           ),
                           border: InputBorder.none,
                           filled: true,
-                          fillColor: _soft,
+                          fillColor: context.appPalette.surfaceMuted,
                           contentPadding: const EdgeInsets.fromLTRB(
                             0,
                             12,
@@ -3043,7 +3143,10 @@ class _MessageComposer extends StatelessWidget {
                             borderSide: BorderSide.none,
                           ),
                         ),
-                        style: const TextStyle(fontSize: 15, color: _ink),
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: context.appPalette.ink,
+                        ),
                       ),
                     ),
                   ),
@@ -3054,24 +3157,28 @@ class _MessageComposer extends StatelessWidget {
                       width: 44,
                       height: 44,
                       decoration: BoxDecoration(
-                        color: isSending ? const Color(0xFF9A9AA1) : _ink,
+                        color: isSending
+                            ? context.appPalette.muted
+                            : Theme.of(context).colorScheme.primary,
                         shape: BoxShape.circle,
                       ),
                       child: isSending
-                          ? const Center(
+                          ? Center(
                               child: SizedBox(
                                 width: 18,
                                 height: 18,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Colors.white,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onPrimary,
                                 ),
                               ),
                             )
-                          : const Icon(
+                          : Icon(
                               Icons.arrow_upward,
                               size: 21,
-                              color: Colors.white,
+                              color: Theme.of(context).colorScheme.onPrimary,
                             ),
                     ),
                   ),
@@ -3100,20 +3207,27 @@ class _AttachmentAction extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: InkWell(
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Container(
           height: 86,
           decoration: BoxDecoration(
-            color: _soft,
+            color: context.appPalette.surfaceMuted,
             borderRadius: BorderRadius.circular(16),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 25, color: _ink),
+              Icon(icon, size: 25, color: context.appPalette.ink),
               const SizedBox(height: 8),
-              Text(label, style: const TextStyle(fontSize: 12, color: _ink)),
+              Text(
+                label,
+                style: TextStyle(fontSize: 12, color: context.appPalette.ink),
+              ),
             ],
           ),
         ),

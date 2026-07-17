@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
 import '../features/catalog_search/catalog_search_engine.dart';
 import '../features/catalog_search/catalog_search_history.dart';
@@ -68,6 +69,7 @@ class CatalogScreen extends StatefulWidget {
   final bool Function(String sellerId)? canFollowSeller;
   final bool Function(String sellerId)? isFollowingSeller;
   final Future<bool> Function(String sellerId)? onToggleSellerFollow;
+  final VoidCallback? onOpenAppearance;
 
   const CatalogScreen({
     super.key,
@@ -99,6 +101,7 @@ class CatalogScreen extends StatefulWidget {
     this.canFollowSeller,
     this.isFollowingSeller,
     this.onToggleSellerFollow,
+    this.onOpenAppearance,
   });
 
   @override
@@ -130,18 +133,18 @@ class _CatalogScreenState extends State<CatalogScreen>
   List<PromoBanner> get _promoBanners {
     return [
       PromoBanner(
+        image: 'assets/products/try_theme.jpg',
+        title: '',
+        subtitle: '',
+        buttonText: 'НАСТРОИТЬ ТЕМУ',
+        onTap: widget.onOpenAppearance,
+      ),
+      PromoBanner(
         image: 'assets/products/try_photo.png',
         title: '',
         subtitle: '',
         buttonText: 'ПОПРОБОВАТЬ',
         onTap: _openVisualSearch,
-      ),
-      PromoBanner(
-        image: 'assets/mock/post_8.jpg',
-        title: 'ДЕНИМ',
-        subtitle: 'Свободные силуэты, винтажные оттенки и чистые линии',
-        buttonText: 'ПЕРЕЙТИ',
-        onTap: () => _selectCatalogTab('Деним'),
       ),
     ];
   }
@@ -423,10 +426,11 @@ class _CatalogScreenState extends State<CatalogScreen>
   }
 
   Widget _buildFloatingSearch(double scale) {
+    final palette = context.appPalette;
     return Material(
-      color: Colors.white,
+      color: palette.surfaceRaised,
       elevation: 8,
-      shadowColor: Colors.black.withValues(alpha: 0.08),
+      shadowColor: palette.shadow,
       child: Padding(
         padding: EdgeInsets.fromLTRB(
           widget.sidePadding,
@@ -452,8 +456,9 @@ class _CatalogScreenState extends State<CatalogScreen>
   }
 
   Widget _buildSearchActions(double scale) {
+    final palette = context.appPalette;
     return Material(
-      color: const Color(0xFFF2F2F3),
+      color: palette.surfaceMuted,
       borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
       child: Row(
@@ -461,15 +466,15 @@ class _CatalogScreenState extends State<CatalogScreen>
           Expanded(
             child: InkWell(
               onTap: _showTextSearch,
+              splashColor: Colors.transparent,
+              highlightColor: Colors.transparent,
+              hoverColor: Colors.transparent,
+              focusColor: Colors.transparent,
               child: Padding(
                 padding: const EdgeInsets.only(left: 14, right: 8),
                 child: Row(
                   children: [
-                    const Icon(
-                      Icons.search_rounded,
-                      size: 21,
-                      color: Color(0xFF0B0B0C),
-                    ),
+                    Icon(Icons.search_rounded, size: 21, color: palette.ink),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -480,7 +485,7 @@ class _CatalogScreenState extends State<CatalogScreen>
                           fontFamily: AppTypography.fontFamily,
                           fontSize: 13.5 * scale,
                           fontWeight: AppTypography.medium,
-                          color: const Color(0xFF74747C),
+                          color: palette.muted,
                           letterSpacing: 0,
                         ),
                       ),
@@ -493,18 +498,22 @@ class _CatalogScreenState extends State<CatalogScreen>
           Padding(
             padding: const EdgeInsets.all(5),
             child: Material(
-              color: const Color(0xFF0B0B0C),
+              color: palette.ink,
               borderRadius: BorderRadius.circular(10),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
                 onTap: _openVisualSearch,
-                child: const SizedBox(
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+                focusColor: Colors.transparent,
+                child: SizedBox(
                   width: 32,
                   height: 32,
                   child: Icon(
                     Icons.center_focus_strong_rounded,
                     size: 20,
-                    color: Colors.white,
+                    color: palette.surface,
                   ),
                 ),
               ),
@@ -516,6 +525,7 @@ class _CatalogScreenState extends State<CatalogScreen>
   }
 
   Widget _buildTabs(double scale) {
+    final palette = context.appPalette;
     return Column(
       children: [
         SizedBox(
@@ -539,9 +549,7 @@ class _CatalogScreenState extends State<CatalogScreen>
                         fontWeight: isActive
                             ? FontWeight.w500
                             : FontWeight.w500,
-                        color: isActive
-                            ? const Color(0xFF050505)
-                            : const Color(0xFF706E82),
+                        color: isActive ? palette.ink : palette.muted,
                       ),
                     ),
                     const Spacer(),
@@ -549,9 +557,7 @@ class _CatalogScreenState extends State<CatalogScreen>
                       height: 2,
                       width: isActive ? _tabs[index].length * 7.1 * scale : 0,
                       decoration: BoxDecoration(
-                        color: isActive
-                            ? const Color(0xFF050505)
-                            : Colors.transparent,
+                        color: isActive ? palette.ink : Colors.transparent,
                         borderRadius: BorderRadius.circular(999),
                       ),
                     ),
@@ -561,12 +567,13 @@ class _CatalogScreenState extends State<CatalogScreen>
             },
           ),
         ),
-        Container(height: 1, color: const Color(0xFFE7E7EA)),
+        Container(height: 1, color: palette.border),
       ],
     );
   }
 
   Widget _buildFilterRow(double scale) {
+    final palette = context.appPalette;
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: widget.sidePadding),
       child: SizedBox(
@@ -586,15 +593,11 @@ class _CatalogScreenState extends State<CatalogScreen>
                     style: TextStyle(
                       fontSize: 14.5 * scale,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFF0B0B0B),
+                      color: palette.ink,
                     ),
                   ),
                   SizedBox(width: 10 * scale),
-                  Icon(
-                    Icons.tune,
-                    size: 21 * scale,
-                    color: const Color(0xFF111111),
-                  ),
+                  Icon(Icons.tune, size: 21 * scale, color: palette.ink),
                 ],
               ),
             ),
@@ -608,14 +611,14 @@ class _CatalogScreenState extends State<CatalogScreen>
                     style: TextStyle(
                       fontSize: 14.5 * scale,
                       fontWeight: FontWeight.w500,
-                      color: const Color(0xFF0B0B0B),
+                      color: palette.ink,
                     ),
                   ),
                   SizedBox(width: 4 * scale),
                   Icon(
                     Icons.keyboard_arrow_down,
                     size: 17 * scale,
-                    color: const Color(0xFF111111),
+                    color: palette.ink,
                   ),
                 ],
               ),
@@ -662,19 +665,6 @@ class _CatalogScreenState extends State<CatalogScreen>
 
   Future<void> _hideProduct(String productId) async {
     await widget.onHideProduct(productId);
-  }
-
-  void _selectCatalogTab(String label) {
-    final index = _tabs.indexOf(label);
-    if (index < 0 || index == _selectedTabIndex) return;
-    setState(() => _selectedTabIndex = index);
-    if (_scrollController.hasClients) {
-      _scrollController.animateTo(
-        0,
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeOut,
-      );
-    }
   }
 
   Future<void> _openVisualSearch() async {
@@ -758,10 +748,9 @@ class _CatalogScreenState extends State<CatalogScreen>
 
   void _showProductDetails(Product product) {
     final route = PageRouteBuilder<void>(
-      opaque: false,
-      barrierColor: Colors.black.withValues(alpha: 0.24),
+      opaque: true,
       transitionDuration: Duration.zero,
-      reverseTransitionDuration: const Duration(milliseconds: 350),
+      reverseTransitionDuration: Duration.zero,
       pageBuilder: (context, animation, secondaryAnimation) {
         return ProductScreen(
           sourceProduct: product,
@@ -1194,11 +1183,11 @@ class ProductCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildImage(),
+            _buildImage(context),
             SizedBox(height: 2 * scale),
             Padding(
               padding: EdgeInsets.only(left: 2 * scale),
-              child: SizedBox(height: 50 * scale, child: _buildInfo()),
+              child: SizedBox(height: 50 * scale, child: _buildInfo(context)),
             ),
           ],
         ),
@@ -1206,13 +1195,14 @@ class ProductCard extends StatelessWidget {
     );
   }
 
-  Widget _buildImage() {
+  Widget _buildImage(BuildContext context) {
+    final palette = context.appPalette;
     return SizedBox(
       width: double.infinity,
       height: 266 * scale,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFFF8F8F9),
+          color: palette.surfaceMuted,
           borderRadius: BorderRadius.circular(5 * scale),
         ),
         child: Stack(
@@ -1250,7 +1240,8 @@ class ProductCard extends StatelessWidget {
     );
   }
 
-  Widget _buildInfo() {
+  Widget _buildInfo(BuildContext context) {
+    final palette = context.appPalette;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1260,7 +1251,7 @@ class ProductCard extends StatelessWidget {
             fontSize: 13.5 * scale,
             height: 1.08,
             fontWeight: FontWeight.w500,
-            color: const Color(0xFF070707),
+            color: palette.ink,
           ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -1276,7 +1267,7 @@ class ProductCard extends StatelessWidget {
                   fontSize: 13.5 * scale,
                   height: 1,
                   fontWeight: FontWeight.w700,
-                  color: const Color(0xFF070707),
+                  color: palette.ink,
                 ),
               ),
             ),
@@ -1345,12 +1336,13 @@ class ProductDetailsSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
+    final palette = context.appPalette;
 
     return Container(
       height: screenHeight * 0.93,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
       ),
       child: Column(
         children: [
@@ -1365,16 +1357,16 @@ class ProductDetailsSheet extends StatelessWidget {
                   _buildHeroImage(context),
 
                   // Title Row: heart + title + send
-                  _buildTitleRow(),
+                  _buildTitleRow(context),
 
                   // Price
-                  _buildPrice(),
+                  _buildPrice(context),
 
                   // Seller Card
-                  _buildSellerCard(),
+                  _buildSellerCard(context),
 
                   // CTA Button
-                  _buildCTAButton(bottomInset),
+                  _buildCTAButton(context, bottomInset),
                 ],
               ),
             ),
@@ -1430,7 +1422,8 @@ class ProductDetailsSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildTitleRow() {
+  Widget _buildTitleRow(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Row(
@@ -1448,10 +1441,10 @@ class ProductDetailsSheet extends StatelessWidget {
                   ? product.detailTitle
                   : product.title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF111111),
+                color: palette.ink,
               ),
             ),
           ),
@@ -1463,30 +1456,31 @@ class ProductDetailsSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildPrice() {
+  Widget _buildPrice(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 24),
       child: Text(
         product.price,
         textAlign: TextAlign.center,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 17,
           fontWeight: FontWeight.w700,
-          color: Color(0xFF111111),
+          color: context.appPalette.ink,
         ),
       ),
     );
   }
 
-  Widget _buildSellerCard() {
+  Widget _buildSellerCard(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 14),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE7E7EA)),
+          border: Border.all(color: palette.border),
         ),
         child: Row(
           children: [
@@ -1494,15 +1488,11 @@ class ProductDetailsSheet extends StatelessWidget {
             Container(
               width: 44,
               height: 44,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Color(0xFFF2F2F7),
+                color: palette.surfaceMuted,
               ),
-              child: const Icon(
-                Icons.person_outline,
-                size: 24,
-                color: Color(0xFF8E8E93),
-              ),
+              child: Icon(Icons.person_outline, size: 24, color: palette.muted),
             ),
             const SizedBox(width: 14),
 
@@ -1512,38 +1502,34 @@ class ProductDetailsSheet extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text(
+                  Text(
                     'Продавец',
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF111111),
+                      color: palette.ink,
                     ),
                   ),
                   const SizedBox(height: 3),
                   Row(
                     children: [
-                      const Icon(
-                        Icons.star,
-                        size: 12,
-                        color: Color(0xFF111111),
-                      ),
+                      Icon(Icons.star, size: 12, color: palette.ink),
                       const SizedBox(width: 4),
-                      const Text(
+                      Text(
                         '4.8',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF111111),
+                          color: palette.ink,
                         ),
                       ),
                       const SizedBox(width: 6),
-                      const Text(
+                      Text(
                         '126 отзывов',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
-                          color: Color(0xFF8F8F94),
+                          color: palette.muted,
                         ),
                       ),
                     ],
@@ -1551,10 +1537,10 @@ class ProductDetailsSheet extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     '@${product.brand.toLowerCase().replaceAll(' ', '')}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
-                      color: Color(0xFF8F8F94),
+                      color: palette.muted,
                     ),
                   ),
                 ],
@@ -1562,14 +1548,15 @@ class ProductDetailsSheet extends StatelessWidget {
             ),
 
             // Chevron
-            const Icon(Icons.chevron_right, size: 22, color: Color(0xFFC7C7CC)),
+            Icon(Icons.chevron_right, size: 22, color: palette.muted),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildCTAButton(double bottomInset) {
+  Widget _buildCTAButton(BuildContext context, double bottomInset) {
+    final palette = context.appPalette;
     return Padding(
       padding: EdgeInsets.fromLTRB(20, 22, 20, 24 + bottomInset),
       child: GestureDetector(
@@ -1577,17 +1564,17 @@ class ProductDetailsSheet extends StatelessWidget {
         child: Container(
           height: 56,
           decoration: BoxDecoration(
-            color: const Color(0xFF111111),
+            color: palette.ink,
             borderRadius: BorderRadius.circular(14),
           ),
-          child: const Center(
+          child: Center(
             child: Text(
               'НАПИСАТЬ ПРОДАВЦУ',
               style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w500,
                 letterSpacing: 2.5,
-                color: Colors.white,
+                color: palette.surface,
               ),
             ),
           ),
@@ -1944,39 +1931,46 @@ class _CompactFilterRow extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: onTap,
-    child: Container(
-      height: 52,
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFE7E7EA))),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(
-                fontSize: 14.5,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF0B0B0B),
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return InkWell(
+      onTap: onTap,
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      hoverColor: Colors.transparent,
+      focusColor: Colors.transparent,
+      child: Container(
+        height: 52,
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: palette.border)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w500,
+                  color: palette.ink,
+                ),
               ),
             ),
-          ),
-          Flexible(
-            child: Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13.5, color: Color(0xFF8F8F94)),
+            Flexible(
+              child: Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 13.5, color: palette.muted),
+              ),
             ),
-          ),
-          const SizedBox(width: 6),
-          const Icon(Icons.chevron_right, size: 17, color: Color(0xFFC7C7CC)),
-        ],
+            const SizedBox(width: 6),
+            Icon(Icons.chevron_right, size: 17, color: palette.muted),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _PriceField extends StatelessWidget {
@@ -2002,12 +1996,13 @@ class _AppActionSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
+    final palette = context.appPalette;
 
     return Container(
       width: double.infinity,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomInset),
       child: ConstrainedBox(
@@ -2021,10 +2016,10 @@ class _AppActionSheet extends StatelessWidget {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF0B0B0B),
+                  color: palette.ink,
                 ),
               ),
               const SizedBox(height: 16),
@@ -2053,6 +2048,7 @@ class _SheetOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -2063,24 +2059,23 @@ class _SheetOption extends StatelessWidget {
             if (icon != null) ...[
               SizedBox(
                 width: 22,
-                child: Icon(icon, size: 21, color: const Color(0xFF0B0B0B)),
+                child: Icon(icon, size: 21, color: palette.ink),
               ),
               const SizedBox(width: 14),
             ],
             Expanded(
               child: Text(
                 label,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF0B0B0B),
+                  color: palette.ink,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            if (isSelected)
-              const Icon(Icons.check, size: 20, color: Color(0xFF0B0B0B)),
+            if (isSelected) Icon(Icons.check, size: 20, color: palette.ink),
           ],
         ),
       ),
@@ -2101,15 +2096,14 @@ class _SheetButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         height: 50,
         decoration: BoxDecoration(
-          color: isPrimary ? Colors.black : Colors.white,
-          border: Border.all(
-            color: isPrimary ? Colors.black : const Color(0xFFE7E7EA),
-          ),
+          color: isPrimary ? palette.ink : palette.surface,
+          border: Border.all(color: isPrimary ? palette.ink : palette.border),
           borderRadius: BorderRadius.circular(999),
         ),
         child: Center(
@@ -2118,7 +2112,7 @@ class _SheetButton extends StatelessWidget {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.w600,
-              color: isPrimary ? Colors.white : const Color(0xFF0B0B0B),
+              color: isPrimary ? palette.surface : palette.ink,
             ),
           ),
         ),
@@ -2138,7 +2132,12 @@ class _OutlineHeartIcon extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size,
-      child: CustomPaint(painter: _HeartPainter(isFilled: isFilled)),
+      child: CustomPaint(
+        painter: _HeartPainter(
+          isFilled: isFilled,
+          color: context.appPalette.ink,
+        ),
+      ),
     );
   }
 }
@@ -2217,15 +2216,18 @@ class _PaperPlaneIcon extends StatelessWidget {
     return SizedBox(
       width: size,
       height: size,
-      child: CustomPaint(painter: _PaperPlanePainter()),
+      child: CustomPaint(
+        painter: _PaperPlanePainter(color: context.appPalette.ink),
+      ),
     );
   }
 }
 
 class _HeartPainter extends CustomPainter {
   final bool isFilled;
+  final Color color;
 
-  _HeartPainter({required this.isFilled});
+  _HeartPainter({required this.isFilled, required this.color});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2265,7 +2267,7 @@ class _HeartPainter extends CustomPainter {
       );
 
     final paint = Paint()
-      ..color = const Color(0xFF050505)
+      ..color = color
       ..style = isFilled ? PaintingStyle.fill : PaintingStyle.stroke
       ..strokeWidth = 1.8
       ..strokeCap = StrokeCap.round
@@ -2276,15 +2278,19 @@ class _HeartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _HeartPainter oldDelegate) {
-    return oldDelegate.isFilled != isFilled;
+    return oldDelegate.isFilled != isFilled || oldDelegate.color != color;
   }
 }
 
 class _PaperPlanePainter extends CustomPainter {
+  const _PaperPlanePainter({required this.color});
+
+  final Color color;
+
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = const Color(0xFF050505)
+      ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.75
       ..strokeCap = StrokeCap.round
@@ -2303,5 +2309,6 @@ class _PaperPlanePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _PaperPlanePainter oldDelegate) =>
+      oldDelegate.color != color;
 }

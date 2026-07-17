@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
+import '../widgets/app_theme_picker_sheet.dart';
+import 'appearance_editor_screen.dart';
 import 'catalog_screen.dart';
 
-const _ink = Color(0xFF050505);
 const _muted = Color(0xFF8A8A8F);
-const _line = Color(0xFFD7D7DA);
-const _chip = Color(0xFFDCDDE0);
 const _lime = Color(0xFFB6FF00);
 const _pagePadding = 18.0;
 const _darkPanel = Color(0xFF1C1C1E);
@@ -20,7 +20,6 @@ const _featureTitleStyle = TextStyle(
   height: 1,
   fontWeight: AppTypography.bold,
   letterSpacing: 0,
-  color: _ink,
 );
 const _featureBodyStyle = TextStyle(
   fontFamily: AppTypography.fontFamily,
@@ -28,7 +27,6 @@ const _featureBodyStyle = TextStyle(
   height: 1.35,
   fontWeight: AppTypography.medium,
   letterSpacing: 0,
-  color: _ink,
 );
 const _featureSmallStyle = TextStyle(
   fontFamily: AppTypography.fontFamily,
@@ -36,7 +34,6 @@ const _featureSmallStyle = TextStyle(
   height: 1.2,
   fontWeight: AppTypography.medium,
   letterSpacing: 0,
-  color: _ink,
 );
 
 class ProfileNotificationsScreen extends StatefulWidget {
@@ -184,7 +181,8 @@ class _ProfileNotificationsScreenState
           ? TextButton(
               onPressed: _markAllRead,
               style: TextButton.styleFrom(
-                foregroundColor: _ink,
+                foregroundColor: context.appPalette.ink,
+                overlayColor: Colors.transparent,
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
@@ -253,6 +251,7 @@ class _NotificationSettingsScreenState
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return _PlainProfilePage(
       title: 'настройки уведомлений',
       child: Column(
@@ -270,7 +269,7 @@ class _NotificationSettingsScreenState
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
             decoration: BoxDecoration(
-              color: const Color(0xFFF5F5F7),
+              color: palette.surfaceMuted,
               borderRadius: BorderRadius.circular(18),
             ),
             child: _PreferenceRow(
@@ -358,10 +357,11 @@ class _NotificationSettingsScreenState
             child: ElevatedButton(
               onPressed: _isSaving ? null : _save,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black,
-                foregroundColor: Colors.white,
+                backgroundColor: palette.ink,
+                foregroundColor: palette.page,
+                overlayColor: Colors.transparent,
                 elevation: 0,
-                disabledBackgroundColor: Colors.black,
+                disabledBackgroundColor: palette.muted,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
@@ -392,6 +392,10 @@ class ProfileSettingsScreen extends StatelessWidget {
     required this.onSupport,
     required this.onFaq,
     required this.onDocuments,
+    this.appearance = const AppAppearanceSettings(),
+    this.onThemePreferenceChanged,
+    this.onLiquidGlassChanged,
+    this.onCustomAppearanceSaved,
   });
 
   final VoidCallback onEditProfile;
@@ -400,6 +404,10 @@ class ProfileSettingsScreen extends StatelessWidget {
   final VoidCallback onSupport;
   final VoidCallback onFaq;
   final VoidCallback onDocuments;
+  final AppAppearanceSettings appearance;
+  final ValueChanged<AppThemePreference>? onThemePreferenceChanged;
+  final ValueChanged<bool>? onLiquidGlassChanged;
+  final AppAppearanceSaver? onCustomAppearanceSaved;
 
   @override
   Widget build(BuildContext context) {
@@ -409,7 +417,22 @@ class ProfileSettingsScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const SizedBox(height: 18),
-          const Text('профиль и аккаунт', style: _featureTitleStyle),
+          Text(
+            'оформление',
+            style: _featureTitleStyle.copyWith(color: context.appPalette.ink),
+          ),
+          const SizedBox(height: 10),
+          _AppearanceSelector(
+            settings: appearance,
+            onThemeChanged: onThemePreferenceChanged,
+            onLiquidGlassChanged: onLiquidGlassChanged,
+            onCustomAppearanceSaved: onCustomAppearanceSaved,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'профиль и аккаунт',
+            style: _featureTitleStyle.copyWith(color: context.appPalette.ink),
+          ),
           const SizedBox(height: 8),
           _SettingsRouteTile(
             key: const Key('profile-settings-edit-profile'),
@@ -433,7 +456,10 @@ class ProfileSettingsScreen extends StatelessWidget {
             onTap: onAddresses,
           ),
           const SizedBox(height: 20),
-          const Text('помощь и информация', style: _featureTitleStyle),
+          Text(
+            'помощь и информация',
+            style: _featureTitleStyle.copyWith(color: context.appPalette.ink),
+          ),
           const SizedBox(height: 8),
           _SettingsRouteTile(
             key: const Key('profile-settings-support'),
@@ -457,13 +483,13 @@ class ProfileSettingsScreen extends StatelessWidget {
             onTap: onDocuments,
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'Изменение контактов, безопасность входа и удаление аккаунта находятся в разделе «Редактировать профиль».',
             style: TextStyle(
               fontSize: 12.5,
               height: 1.4,
               fontWeight: FontWeight.w500,
-              color: _muted,
+              color: context.appPalette.muted,
             ),
           ),
         ],
@@ -471,6 +497,152 @@ class ProfileSettingsScreen extends StatelessWidget {
     );
   }
 }
+
+class _AppearanceSelector extends StatefulWidget {
+  const _AppearanceSelector({
+    required this.settings,
+    required this.onThemeChanged,
+    required this.onLiquidGlassChanged,
+    required this.onCustomAppearanceSaved,
+  });
+
+  final AppAppearanceSettings settings;
+  final ValueChanged<AppThemePreference>? onThemeChanged;
+  final ValueChanged<bool>? onLiquidGlassChanged;
+  final AppAppearanceSaver? onCustomAppearanceSaved;
+
+  @override
+  State<_AppearanceSelector> createState() => _AppearanceSelectorState();
+}
+
+class _AppearanceSelectorState extends State<_AppearanceSelector> {
+  late AppAppearanceSettings _settings = widget.settings;
+
+  AppThemePreference get _value => _settings.theme;
+
+  @override
+  void didUpdateWidget(covariant _AppearanceSelector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.settings != widget.settings) _settings = widget.settings;
+  }
+
+  Future<void> _openPicker() async {
+    final selection = await showAppThemePicker(
+      context: context,
+      value: _value,
+      liquidGlassEnabled: _settings.liquidGlassEnabled,
+      onLiquidGlassChanged: (enabled) {
+        if (!mounted) return;
+        setState(
+          () => _settings = _settings.copyWith(liquidGlassEnabled: enabled),
+        );
+        widget.onLiquidGlassChanged?.call(enabled);
+      },
+    );
+    if (selection == null || !mounted) return;
+    final glassEnabled = selection.liquidGlassEnabled;
+    if (glassEnabled != null) {
+      setState(
+        () => _settings = _settings.copyWith(liquidGlassEnabled: glassEnabled),
+      );
+      widget.onLiquidGlassChanged?.call(glassEnabled);
+      return;
+    }
+    final selected = selection.theme;
+    if (selected == null) return;
+    if (selected == AppThemePreference.custom) {
+      await _openCustomEditor();
+      return;
+    }
+    if (selected == _value) return;
+    setState(() => _settings = _settings.copyWith(theme: selected));
+    widget.onThemeChanged?.call(selected);
+  }
+
+  Future<void> _openCustomEditor() async {
+    if (widget.onCustomAppearanceSaved == null) return;
+    final result = await Navigator.of(context).push<AppearanceEditorResult>(
+      MaterialPageRoute<AppearanceEditorResult>(
+        builder: (context) => AppearanceEditorScreen(
+          initialSettings: _settings.copyWith(theme: AppThemePreference.custom),
+        ),
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() => _settings = result.settings);
+    await widget.onCustomAppearanceSaved!(
+      result.settings,
+      result.wallpaperFile,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    return Material(
+      key: const Key('profile-appearance-selector'),
+      color: palette.surfaceMuted,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap:
+            widget.onThemeChanged == null &&
+                widget.onLiquidGlassChanged == null &&
+                widget.onCustomAppearanceSaved == null
+            ? null
+            : _openPicker,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          height: 62,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: palette.border),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.contrast_rounded, size: 21, color: palette.ink),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Тема',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: AppTypography.bold,
+                        color: palette.ink,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${_themePreferenceLabel(_value)}'
+                      '${_settings.liquidGlassEnabled ? ' · Стекло' : ''}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: AppTypography.medium,
+                        color: palette.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: palette.muted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _themePreferenceLabel(AppThemePreference value) => switch (value) {
+  AppThemePreference.system => 'Системная',
+  AppThemePreference.light => 'Светлая',
+  AppThemePreference.dark => 'Тёмная',
+  AppThemePreference.custom => 'Своя тема',
+};
 
 enum ProfileInformationTopic {
   support,
@@ -717,30 +889,31 @@ class _InformationLead extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F3F5),
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 25, color: _ink),
+          Icon(icon, size: 25, color: palette.ink),
           const SizedBox(height: 14),
           Text(
             title,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 17,
               height: 1.15,
               fontWeight: AppTypography.bold,
-              color: _ink,
+              color: palette.ink,
             ),
           ),
           const SizedBox(height: 8),
-          Text(body, style: _featureBodyStyle.copyWith(color: _muted)),
+          Text(body, style: _featureBodyStyle.copyWith(color: palette.muted)),
         ],
       ),
     );
@@ -760,11 +933,13 @@ class _InformationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        border: Border.all(color: _line),
+        color: palette.surface,
+        border: Border.all(color: palette.border),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -776,11 +951,11 @@ class _InformationCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 14,
                     fontWeight: AppTypography.bold,
-                    color: _ink,
+                    color: palette.ink,
                   ),
                 ),
               ),
@@ -789,7 +964,7 @@ class _InformationCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Text(body, style: _featureBodyStyle.copyWith(color: _muted)),
+          Text(body, style: _featureBodyStyle.copyWith(color: palette.muted)),
         ],
       ),
     );
@@ -803,20 +978,21 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0F0F2),
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         label,
-        style: const TextStyle(
+        style: TextStyle(
           fontFamily: AppTypography.fontFamily,
           fontSize: 9,
           height: 1,
           fontWeight: AppTypography.bold,
-          color: _muted,
+          color: palette.muted,
         ),
       ),
     );
@@ -831,25 +1007,26 @@ class _FaqTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return DecoratedBox(
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: _line)),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: palette.border)),
       ),
       child: ExpansionTile(
         tilePadding: EdgeInsets.zero,
         childrenPadding: const EdgeInsets.only(bottom: 16),
-        iconColor: _ink,
-        collapsedIconColor: _ink,
+        iconColor: palette.ink,
+        collapsedIconColor: palette.ink,
         shape: const Border(),
         collapsedShape: const Border(),
         title: Text(
           question,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: AppTypography.fontFamily,
             fontSize: 14,
             height: 1.25,
             fontWeight: AppTypography.semiBold,
-            color: _ink,
+            color: palette.ink,
           ),
         ),
         children: [
@@ -857,7 +1034,7 @@ class _FaqTile extends StatelessWidget {
             alignment: Alignment.centerLeft,
             child: Text(
               answer,
-              style: _featureBodyStyle.copyWith(color: _muted),
+              style: _featureBodyStyle.copyWith(color: palette.muted),
             ),
           ),
         ],
@@ -873,23 +1050,24 @@ class _DocumentStatusRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       constraints: const BoxConstraints(minHeight: 54),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: _line)),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: palette.border)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.description_outlined, size: 19, color: _muted),
+          Icon(Icons.description_outlined, size: 19, color: palette.muted),
           const SizedBox(width: 11),
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: AppTypography.fontFamily,
                 fontSize: 13,
                 fontWeight: AppTypography.semiBold,
-                color: _ink,
+                color: palette.ink,
               ),
             ),
           ),
@@ -917,23 +1095,24 @@ class _SettingsRouteTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: 8),
           child: Row(
             children: [
               Container(
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF3F3F5),
+                  color: palette.surfaceMuted,
                   borderRadius: BorderRadius.circular(13),
                 ),
-                child: Icon(icon, size: 21, color: _ink),
+                child: Icon(icon, size: 21, color: palette.ink),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -942,26 +1121,26 @@ class _SettingsRouteTile extends StatelessWidget {
                   children: [
                     Text(
                       title,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
-                        color: _ink,
+                        color: palette.ink,
                       ),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       subtitle,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         height: 1.25,
                         fontWeight: FontWeight.w500,
-                        color: _muted,
+                        color: palette.muted,
                       ),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: _muted),
+              Icon(Icons.chevron_right_rounded, color: palette.muted),
             ],
           ),
         ),
@@ -1088,6 +1267,7 @@ class _ProfileAddressesScreenState extends State<ProfileAddressesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final hasPickup =
         _profile.pickupPointId.trim().isNotEmpty &&
         _profile.pickupPointAddress.trim().isNotEmpty;
@@ -1148,9 +1328,10 @@ class _ProfileAddressesScreenState extends State<ProfileAddressesScreen> {
               key: const Key('save-profile-address'),
               onPressed: _isSaving ? null : _save,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.black,
-                foregroundColor: Colors.white,
-                disabledBackgroundColor: Colors.black38,
+                backgroundColor: palette.ink,
+                foregroundColor: palette.page,
+                overlayColor: Colors.transparent,
+                disabledBackgroundColor: palette.muted,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
@@ -1174,7 +1355,7 @@ class _ProfileAddressesScreenState extends State<ProfileAddressesScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFF3F3F5),
+                color: palette.surfaceMuted,
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Row(
@@ -1257,6 +1438,7 @@ class _ProfileAddressField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
@@ -1267,7 +1449,7 @@ class _ProfileAddressField extends StatelessWidget {
         decoration: InputDecoration(
           labelText: label,
           filled: true,
-          fillColor: const Color(0xFFF7F7F8),
+          fillColor: palette.surfaceMuted,
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 14,
             vertical: 14,
@@ -1278,7 +1460,7 @@ class _ProfileAddressField extends StatelessWidget {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Colors.black, width: 1.3),
+            borderSide: BorderSide(color: palette.ink, width: 1.3),
           ),
         ),
       ),
@@ -1439,6 +1621,7 @@ class _SellerDashboardScreenState extends State<SellerDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final stats = widget.stats;
+    final palette = context.appPalette;
     return _PlainProfilePage(
       title: 'дашборд продавца',
       child: Column(
@@ -1448,34 +1631,34 @@ class _SellerDashboardScreenState extends State<SellerDashboardScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
             decoration: BoxDecoration(
-              color: const Color(0xFFF0F0F2),
+              color: palette.surfaceMuted,
               borderRadius: BorderRadius.circular(10),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.all_inclusive_rounded, size: 17, color: _ink),
-                SizedBox(width: 7),
+                Icon(Icons.all_inclusive_rounded, size: 17, color: palette.ink),
+                const SizedBox(width: 7),
                 Text(
                   'За весь период',
                   style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 12.5,
                     fontWeight: AppTypography.semiBold,
-                    color: _ink,
+                    color: palette.ink,
                   ),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'Статистика рассчитана по всем заказам аккаунта.',
             style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 11.5,
               fontWeight: AppTypography.medium,
-              color: _muted,
+              color: palette.muted,
             ),
           ),
           const SizedBox(height: 18),
@@ -1536,10 +1719,11 @@ class _PlainProfilePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final topInset = MediaQuery.of(context).viewPadding.top;
     const horizontalPadding = _pagePadding;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: palette.page,
       body: SafeArea(
         top: false,
         child: Column(
@@ -1560,7 +1744,7 @@ class _PlainProfilePage extends StatelessWidget {
                 ),
               ),
             ),
-            const Divider(height: 1, thickness: 1, color: _ink),
+            Divider(height: 1, thickness: 1, color: palette.border),
             Expanded(
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
@@ -1595,9 +1779,10 @@ class _OrdersShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final topInset = MediaQuery.of(context).viewPadding.top;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: palette.page,
       body: SafeArea(
         top: false,
         child: Column(
@@ -1615,12 +1800,12 @@ class _OrdersShell extends StatelessWidget {
                   title: title,
                   onBack: () => Navigator.maybePop(context),
                   trailing: showSearch
-                      ? const Icon(Icons.search, size: 22, color: _ink)
+                      ? Icon(Icons.search, size: 22, color: palette.ink)
                       : null,
                 ),
               ),
             ),
-            const Divider(height: 1, thickness: 1, color: _ink),
+            Divider(height: 1, thickness: 1, color: palette.border),
             ?header,
             Expanded(child: child),
           ],
@@ -1643,6 +1828,7 @@ class _TopProfileBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Transform.translate(
       offset: const Offset(0, -1),
       child: SizedBox(
@@ -1653,12 +1839,12 @@ class _TopProfileBar extends StatelessWidget {
             GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: onBack,
-              child: const SizedBox(
+              child: SizedBox(
                 width: 39,
                 height: 39,
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: Icon(Icons.chevron_left, size: 28, color: _ink),
+                  child: Icon(Icons.chevron_left, size: 28, color: palette.ink),
                 ),
               ),
             ),
@@ -1668,7 +1854,7 @@ class _TopProfileBar extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: _featureTitleStyle,
+                style: _featureTitleStyle.copyWith(color: palette.ink),
               ),
             ),
             if (trailing != null)
@@ -1688,10 +1874,16 @@ class _NotificationTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final title = notification.title.trim();
     final body = notification.body.trim();
     return Material(
-      color: notification.isRead ? Colors.white : const Color(0xFFF5F7F1),
+      color: notification.isRead
+          ? palette.surface
+          : Color.alphaBlend(
+              palette.accent.withValues(alpha: 0.07),
+              palette.surfaceRaised,
+            ),
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         onTap: onTap,
@@ -1711,7 +1903,7 @@ class _NotificationTile extends StatelessWidget {
                 child: Icon(
                   _notificationKindIcon(notification.kind),
                   size: 20,
-                  color: _ink,
+                  color: const Color(0xFF17181B),
                 ),
               ),
               const SizedBox(width: 12),
@@ -1735,7 +1927,7 @@ class _NotificationTile extends StatelessWidget {
                           _notificationTime(notification.createdAt),
                           style: _featureSmallStyle.copyWith(
                             fontSize: 10.5,
-                            color: _muted,
+                            color: palette.muted,
                           ),
                         ),
                       ],
@@ -1750,7 +1942,7 @@ class _NotificationTile extends StatelessWidget {
                           fontSize: 12.5,
                           height: 1.38,
                           fontWeight: FontWeight.w600,
-                          color: _muted,
+                          color: palette.muted,
                         ),
                       ),
                     ],
@@ -1818,6 +2010,7 @@ class _NotificationEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Padding(
       padding: const EdgeInsets.only(top: 56),
       child: Center(
@@ -1826,24 +2019,27 @@ class _NotificationEmptyState extends StatelessWidget {
             Container(
               width: 72,
               height: 72,
-              decoration: const BoxDecoration(
-                color: Color(0xFFF3F3F5),
+              decoration: BoxDecoration(
+                color: palette.surfaceMuted,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.notifications_none_rounded,
                 size: 31,
-                color: _ink,
+                color: palette.ink,
               ),
             ),
             const SizedBox(height: 18),
-            const Text('Пока всё спокойно', style: _featureTitleStyle),
+            Text(
+              'Пока всё спокойно',
+              style: _featureTitleStyle.copyWith(color: palette.ink),
+            ),
             const SizedBox(height: 8),
             Text(
               'Изменения заказов, избранного и другие важные события появятся здесь.',
               textAlign: TextAlign.center,
               style: _featureBodyStyle.copyWith(
-                color: _muted,
+                color: palette.muted,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -1873,6 +2069,7 @@ class _PreferenceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 160),
       opacity: enabled ? 1 : 0.46,
@@ -1880,7 +2077,7 @@ class _PreferenceRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 21, color: _ink),
+            Icon(icon, size: 21, color: palette.ink),
             const SizedBox(width: 12),
           ],
           Expanded(
@@ -1895,7 +2092,7 @@ class _PreferenceRow extends StatelessWidget {
                     Text(
                       subtitle!,
                       style: _featureSmallStyle.copyWith(
-                        color: _muted,
+                        color: palette.muted,
                         height: 1.3,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1915,7 +2112,7 @@ class _PreferenceRow extends StatelessWidget {
               height: 26,
               padding: const EdgeInsets.all(3),
               decoration: BoxDecoration(
-                color: value ? Colors.black : const Color(0xFFE1E1E4),
+                color: value ? palette.accent : palette.surfaceMuted,
                 borderRadius: BorderRadius.circular(999),
               ),
               alignment: value ? Alignment.centerRight : Alignment.centerLeft,
@@ -1923,11 +2120,11 @@ class _PreferenceRow extends StatelessWidget {
                 width: 20,
                 height: 20,
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: value ? const Color(0xFF17181B) : palette.muted,
                   shape: BoxShape.circle,
                   border: value
                       ? null
-                      : Border.all(color: Colors.black, width: 1),
+                      : Border.all(color: palette.border, width: 1),
                 ),
               ),
             ),
@@ -1955,6 +2152,7 @@ class _EmptyOrders extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final recommended = products
         .where((product) => !product.isHidden)
         .take(2)
@@ -1974,8 +2172,9 @@ class _EmptyOrders extends StatelessWidget {
           child: ElevatedButton(
             onPressed: onOpenCatalog,
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.black,
-              foregroundColor: Colors.white,
+              backgroundColor: palette.ink,
+              foregroundColor: palette.page,
+              overlayColor: Colors.transparent,
               elevation: 0,
               shape: const RoundedRectangleBorder(),
             ),
@@ -2063,8 +2262,9 @@ class _NoFilteredOrders extends StatelessWidget {
             OutlinedButton(
               onPressed: onReset,
               style: OutlinedButton.styleFrom(
-                foregroundColor: _ink,
-                side: const BorderSide(color: _line),
+                foregroundColor: context.appPalette.ink,
+                overlayColor: Colors.transparent,
+                side: BorderSide(color: context.appPalette.border),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -2138,6 +2338,7 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -2147,14 +2348,14 @@ class _FilterChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFF4E4E52) : _chip,
+          color: selected ? palette.ink : palette.surfaceMuted,
           borderRadius: BorderRadius.circular(6),
         ),
         child: Text(
           label,
           style: _featureSmallStyle.copyWith(
             fontSize: 12,
-            color: selected ? Colors.white : _ink,
+            color: selected ? palette.page : palette.ink,
           ),
         ),
       ),
@@ -2238,6 +2439,7 @@ class _OrderRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final trackingNumber = order.trackingNumber.trim();
     final role = order.sellerId == currentUserId
         ? AppOrderRole.seller
@@ -2245,7 +2447,7 @@ class _OrderRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
-        color: Colors.white,
+        color: palette.surfaceRaised,
         borderRadius: BorderRadius.circular(17),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -2254,7 +2456,7 @@ class _OrderRow extends StatelessWidget {
           child: Ink(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(17),
-              border: Border.all(color: const Color(0xFFE6E6E9)),
+              border: Border.all(color: palette.border),
             ),
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 11),
             child: Column(
@@ -2373,10 +2575,10 @@ class _OrderRow extends StatelessWidget {
                           height: 30,
                         ),
                         padding: EdgeInsets.zero,
-                        icon: const Icon(
+                        icon: Icon(
                           Icons.copy_rounded,
                           size: 16,
-                          color: _ink,
+                          color: context.appPalette.ink,
                         ),
                       ),
                     ],
@@ -2398,10 +2600,11 @@ class _OrderRoleBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xFFF1F1F3),
+        color: palette.surfaceMuted,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
@@ -2447,6 +2650,7 @@ class _OrderDetailsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     final trackingNumber = order.trackingNumber.trim();
     final role = order.sellerId == currentUserId
@@ -2459,9 +2663,9 @@ class _OrderDetailsSheet extends StatelessWidget {
           maxHeight: MediaQuery.sizeOf(context).height * 0.84,
         ),
         padding: EdgeInsets.fromLTRB(18, 10, 18, 18 + bottomInset),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        decoration: BoxDecoration(
+          color: palette.surfaceRaised,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: SingleChildScrollView(
           child: Column(
@@ -2472,7 +2676,7 @@ class _OrderDetailsSheet extends StatelessWidget {
                   width: 38,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFD5D5D8),
+                    color: palette.border,
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
@@ -2654,14 +2858,15 @@ class _OrderStatusSheetState extends State<_OrderStatusSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
       child: Container(
         padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        decoration: BoxDecoration(
+          color: palette.surfaceRaised,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -2670,7 +2875,7 @@ class _OrderStatusSheetState extends State<_OrderStatusSheet> {
               children: [
                 GestureDetector(
                   onTap: () => Navigator.pop(context),
-                  child: const Icon(Icons.close, size: 22, color: _muted),
+                  child: Icon(Icons.close, size: 22, color: palette.muted),
                 ),
                 Expanded(
                   child: Center(
@@ -2689,7 +2894,7 @@ class _OrderStatusSheetState extends State<_OrderStatusSheet> {
                     'сбросить',
                     style: _featureSmallStyle.copyWith(
                       fontSize: 11,
-                      color: _muted,
+                      color: palette.muted,
                     ),
                   ),
                 ),
@@ -2716,8 +2921,9 @@ class _OrderStatusSheetState extends State<_OrderStatusSheet> {
                   Navigator.pop(context);
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.black,
-                  foregroundColor: Colors.white,
+                  backgroundColor: palette.ink,
+                  foregroundColor: palette.page,
+                  overlayColor: Colors.transparent,
                   elevation: 0,
                   shape: const RoundedRectangleBorder(),
                 ),
@@ -2747,6 +2953,7 @@ class _StatusOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -2758,7 +2965,7 @@ class _StatusOption extends StatelessWidget {
               width: 16,
               height: 16,
               decoration: BoxDecoration(
-                color: selected ? Colors.black : const Color(0xFFD9D9DB),
+                color: selected ? palette.accent : palette.surfaceMuted,
                 borderRadius: BorderRadius.circular(4),
               ),
             ),

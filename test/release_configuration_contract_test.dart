@@ -77,6 +77,7 @@ void main() {
 
     for (final file in Directory('.github/workflows').listSync()) {
       if (file is! File || !file.path.endsWith('.yml')) continue;
+      if (file.path.endsWith('build_sideloadly_ipa.yml')) continue;
       final source = file.readAsStringSync();
       final fakesUnsignedIpa =
           source.contains('--no-codesign') &&
@@ -84,6 +85,17 @@ void main() {
           source.contains('.ipa');
       expect(fakesUnsignedIpa, isFalse, reason: file.path);
     }
+  });
+
+  test('Sideloadly IPA is an explicit manual unsigned artifact', () {
+    final workflow = read('.github/workflows/build_sideloadly_ipa.yml');
+
+    expect(workflow, contains('Build unsigned IPA for Sideloadly'));
+    expect(workflow, contains('workflow_dispatch:'));
+    expect(workflow, isNot(contains('\n  push:')));
+    expect(workflow, contains('flutter build ios --release --no-codesign'));
+    expect(workflow, contains('clothes-sideloadly-'));
+    expect(workflow, contains('retention-days: 14'));
   });
 
   test('release builds never fall back to Android debug signing', () {

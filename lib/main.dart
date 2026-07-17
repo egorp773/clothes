@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'core/app_typography.dart';
+import 'core/app_appearance.dart';
 import 'core/supabase_config.dart';
 import 'data/app_repository.dart';
 import 'features/catalog_search/catalog_search_engine.dart';
@@ -16,6 +16,7 @@ import 'models/message_thread.dart';
 import 'models/product.dart';
 import 'models/profile_feature.dart';
 import 'screens/catalog_screen.dart';
+import 'screens/appearance_editor_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/messages_screen.dart';
 import 'screens/outfit_create_screen.dart';
@@ -29,6 +30,9 @@ import 'screens/reviews_screen.dart';
 import 'screens/seller_profile_screen.dart';
 import 'services/push_notification_service.dart';
 import 'widgets/app_bottom_nav.dart';
+import 'widgets/app_appearance_background.dart';
+import 'widgets/app_glass_surface.dart';
+import 'widgets/app_theme_picker_sheet.dart';
 import 'widgets/create_entry_sheet.dart';
 
 void main() async {
@@ -44,63 +48,86 @@ void main() async {
   );
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
-  runApp(const FashionApp());
+  final appearance = AppAppearanceController();
+  await appearance.load();
+  runApp(FashionApp(appearanceController: appearance));
 }
 
-class FashionApp extends StatelessWidget {
-  const FashionApp({super.key});
+class FashionApp extends StatefulWidget {
+  const FashionApp({super.key, this.appearanceController});
+
+  final AppAppearanceController? appearanceController;
+
+  @override
+  State<FashionApp> createState() => _FashionAppState();
+}
+
+class _FashionAppState extends State<FashionApp> {
+  late final AppAppearanceController _appearance;
+  late final bool _ownsAppearance;
+
+  @override
+  void initState() {
+    super.initState();
+    _ownsAppearance = widget.appearanceController == null;
+    _appearance = widget.appearanceController ?? AppAppearanceController();
+    if (_ownsAppearance) unawaited(_appearance.load());
+  }
+
+  @override
+  void dispose() {
+    if (_ownsAppearance) _appearance.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Fashion App',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        fontFamily: 'Montserrat',
-        textTheme: _montserratMediumTextTheme(ThemeData.light().textTheme),
-        primaryTextTheme: _montserratMediumTextTheme(
-          ThemeData.light().primaryTextTheme,
+    return AnimatedBuilder(
+      animation: _appearance,
+      builder: (context, _) => MaterialApp(
+        title: 'Fashion App',
+        debugShowCheckedModeBanner: false,
+        theme: buildAppTheme(Brightness.light, settings: _appearance.settings),
+        darkTheme: buildAppTheme(
+          Brightness.dark,
+          settings: _appearance.settings,
         ),
-        scaffoldBackgroundColor: Colors.white,
-        colorScheme: const ColorScheme.light(
-          primary: Color(0xFF070707),
-          surface: Colors.white,
-        ),
-        textSelectionTheme: const TextSelectionThemeData(
-          cursorColor: Color(0xFF070707),
-          selectionColor: Color(0x22070707),
-          selectionHandleColor: Color(0xFF070707),
+        themeMode: _appearance.themeMode,
+        themeAnimationDuration: const Duration(milliseconds: 280),
+        themeAnimationCurve: Curves.easeOutCubic,
+        builder: (context, child) {
+          final isDark = Theme.of(context).brightness == Brightness.dark;
+          return AnnotatedRegion<SystemUiOverlayStyle>(
+            value: SystemUiOverlayStyle(
+              statusBarColor: Colors.transparent,
+              statusBarIconBrightness: isDark
+                  ? Brightness.light
+                  : Brightness.dark,
+              statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+              systemNavigationBarColor: context.appGlass.enabled
+                  ? Colors.transparent
+                  : context.appPalette.surface,
+              systemNavigationBarIconBrightness: isDark
+                  ? Brightness.light
+                  : Brightness.dark,
+              systemNavigationBarDividerColor: Colors.transparent,
+              systemNavigationBarContrastEnforced: false,
+            ),
+            child: AppAppearanceBackground(
+              settings: _appearance.settings,
+              child: child ?? const SizedBox.shrink(),
+            ),
+          );
+        },
+        home: AppShell(
+          appearance: _appearance.settings,
+          onThemePreferenceChanged: _appearance.setTheme,
+          onLiquidGlassChanged: _appearance.setLiquidGlass,
+          onCustomAppearanceSaved: _appearance.applyCustomTheme,
         ),
       ),
-      home: const AppShell(),
     );
   }
-}
-
-TextTheme _montserratMediumTextTheme(TextTheme base) {
-  TextStyle? medium(TextStyle? style) => style?.copyWith(
-    fontFamily: AppTypography.fontFamily,
-    fontWeight: AppTypography.medium,
-    letterSpacing: 0,
-  );
-
-  return base.copyWith(
-    displayLarge: medium(base.displayLarge),
-    displayMedium: medium(base.displayMedium),
-    displaySmall: medium(base.displaySmall),
-    headlineLarge: medium(base.headlineLarge),
-    headlineMedium: medium(base.headlineMedium),
-    headlineSmall: medium(base.headlineSmall),
-    titleLarge: medium(base.titleLarge),
-    titleMedium: medium(base.titleMedium),
-    titleSmall: medium(base.titleSmall),
-    bodyLarge: medium(base.bodyLarge),
-    bodyMedium: medium(base.bodyMedium),
-    bodySmall: medium(base.bodySmall),
-    labelLarge: medium(base.labelLarge),
-    labelMedium: medium(base.labelMedium),
-    labelSmall: medium(base.labelSmall),
-  );
 }
 
 enum _CreateMode {
@@ -112,7 +139,18 @@ enum _CreateMode {
 }
 
 class AppShell extends StatefulWidget {
-  const AppShell({super.key});
+  const AppShell({
+    super.key,
+    this.appearance = const AppAppearanceSettings(),
+    this.onThemePreferenceChanged,
+    this.onLiquidGlassChanged,
+    this.onCustomAppearanceSaved,
+  });
+
+  final AppAppearanceSettings appearance;
+  final ValueChanged<AppThemePreference>? onThemePreferenceChanged;
+  final ValueChanged<bool>? onLiquidGlassChanged;
+  final AppAppearanceSaver? onCustomAppearanceSaved;
 
   @override
   State<AppShell> createState() => _AppShellState();
@@ -126,6 +164,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   bool _returnToPublishOutfitAfterItem = false;
   bool _createItemForOutfitOnly = false;
   bool _isAppActive = true;
+  int _modalSurfaceDepth = 0;
   MessageNotification? _visibleMessageNotification;
   String? _handledMessageNotificationId;
   Timer? _messageNotificationTimer;
@@ -146,6 +185,21 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     saveDraft: _repository.saveThreadDraft,
     markRead: _repository.markThreadRead,
   );
+
+  Future<T?> _trackModalSurface<T>(Future<T?> Function() show) async {
+    if (mounted) setState(() => _modalSurfaceDepth++);
+    try {
+      return await show();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _modalSurfaceDepth = _modalSurfaceDepth > 0
+              ? _modalSurfaceDepth - 1
+              : 0;
+        });
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -389,10 +443,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   void _openProductDetails(Product product) {
     final route = PageRouteBuilder<void>(
-      opaque: false,
-      barrierColor: Colors.black.withValues(alpha: 0.24),
+      opaque: true,
       transitionDuration: Duration.zero,
-      reverseTransitionDuration: const Duration(milliseconds: 350),
+      reverseTransitionDuration: Duration.zero,
       pageBuilder: (context, animation, secondaryAnimation) {
         return ProductScreen(
           sourceProduct: product,
@@ -713,9 +766,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
-  void _shareProduct(Product product) {
-    unawaited(
-      showProductShareSheet(
+  Future<void> _shareProduct(Product product) async {
+    await _trackModalSurface(
+      () => showProductShareSheet(
         context,
         product: product,
         threads: _repository.threads,
@@ -895,62 +948,106 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _changeTab(0);
   }
 
-  void _showCreateSheet() {
+  Future<void> _showCreateSheet() async {
     if (!_repository.isSignedIn) {
       _openLoginScreen(onSignedIn: _showCreateSheet);
       return;
     }
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.35),
-      builder: (ctx) => CreateEntrySheet(
-        onCreateOutfit: () {
-          Navigator.pop(ctx);
-          _openCreateOutfit();
-        },
-        onPublishOutfit: () {
-          Navigator.pop(ctx);
-          _openPublishOutfit();
-        },
-        onCreateItem: () {
-          Navigator.pop(ctx);
-          _openCreateItem();
-        },
+    await _trackModalSurface(
+      () => showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        barrierColor: Colors.black.withValues(alpha: 0.35),
+        builder: (ctx) => CreateEntrySheet(
+          onCreateOutfit: () {
+            Navigator.pop(ctx);
+            _openCreateOutfit();
+          },
+          onPublishOutfit: () {
+            Navigator.pop(ctx);
+            _openPublishOutfit();
+          },
+          onCreateItem: () {
+            Navigator.pop(ctx);
+            _openCreateItem();
+          },
+        ),
       ),
     );
   }
 
-  void _showOutfitItemChoiceSheet() {
+  Future<void> _openAppearancePicker() async {
+    final selection = await _trackModalSurface(
+      () => showAppThemePicker(
+        context: context,
+        value: widget.appearance.theme,
+        liquidGlassEnabled: widget.appearance.liquidGlassEnabled,
+        onLiquidGlassChanged: (enabled) {
+          widget.onLiquidGlassChanged?.call(enabled);
+        },
+      ),
+    );
+    if (selection == null || !mounted) return;
+    final glassEnabled = selection.liquidGlassEnabled;
+    if (glassEnabled != null) {
+      widget.onLiquidGlassChanged?.call(glassEnabled);
+      return;
+    }
+    final selected = selection.theme;
+    if (selected == null) return;
+    if (selected == AppThemePreference.custom) {
+      final save = widget.onCustomAppearanceSaved;
+      if (save == null) return;
+      final result = await Navigator.of(context).push<AppearanceEditorResult>(
+        MaterialPageRoute<AppearanceEditorResult>(
+          builder: (context) => AppearanceEditorScreen(
+            initialSettings: widget.appearance.copyWith(
+              theme: AppThemePreference.custom,
+            ),
+          ),
+        ),
+      );
+      if (result == null || !mounted) return;
+      await save(result.settings, result.wallpaperFile);
+      return;
+    }
+    if (selected != widget.appearance.theme) {
+      widget.onThemePreferenceChanged?.call(selected);
+    }
+  }
+
+  Future<void> _showOutfitItemChoiceSheet() async {
     if (!_repository.isSignedIn) {
       _openLoginScreen(onSignedIn: _showOutfitItemChoiceSheet);
       return;
     }
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.35),
-      isScrollControlled: true,
-      useSafeArea: false,
-      builder: (ctx) => _OutfitItemChoiceSheet(
-        onPublishItem: () {
-          Navigator.pop(ctx);
-          setState(() {
-            _returnToPublishOutfitAfterItem = true;
-            _createItemForOutfitOnly = false;
-            _createMode = _CreateMode.createItem;
-            _currentIndex = 2;
-          });
-        },
-        onOutfitOnlyItem: () {
-          Navigator.pop(ctx);
-          setState(() {
-            _returnToPublishOutfitAfterItem = true;
-            _createItemForOutfitOnly = true;
-            _createMode = _CreateMode.outfitOnlyItem;
-            _currentIndex = 2;
-          });
-        },
+    await _trackModalSurface(
+      () => showModalBottomSheet<void>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        barrierColor: Colors.black.withValues(alpha: 0.35),
+        isScrollControlled: true,
+        useSafeArea: false,
+        builder: (ctx) => _OutfitItemChoiceSheet(
+          onPublishItem: () {
+            Navigator.pop(ctx);
+            setState(() {
+              _returnToPublishOutfitAfterItem = true;
+              _createItemForOutfitOnly = false;
+              _createMode = _CreateMode.createItem;
+              _currentIndex = 2;
+            });
+          },
+          onOutfitOnlyItem: () {
+            Navigator.pop(ctx);
+            setState(() {
+              _returnToPublishOutfitAfterItem = true;
+              _createItemForOutfitOnly = true;
+              _createMode = _CreateMode.outfitOnlyItem;
+              _currentIndex = 2;
+            });
+          },
+        ),
       ),
     );
   }
@@ -1016,15 +1113,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         _handleMessageNotification(_repository.latestMessageNotification);
 
         if (!_repository.isReady) {
-          return const Scaffold(
-            backgroundColor: Colors.white,
+          return Scaffold(
+            backgroundColor: context.appPalette.page,
             body: Center(
               child: SizedBox(
                 width: 22,
                 height: 22,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: Color(0xFF070707),
+                  color: context.appPalette.ink,
                 ),
               ),
             ),
@@ -1032,9 +1129,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         }
 
         return Scaffold(
-          backgroundColor: _currentIndex == 1
-              ? const Color(0xFFF4F4F4)
-              : Colors.white,
+          backgroundColor:
+              widget.appearance.theme == AppThemePreference.custom &&
+                  widget.appearance.background != AppBackgroundStyle.plain
+              ? Colors.transparent
+              : context.appPalette.page,
+          extendBody: context.appGlass.enabled,
           body: SafeArea(
             top: false,
             bottom: false,
@@ -1071,6 +1171,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   canFollowSeller: _repository.canFollowSeller,
                   isFollowingSeller: _repository.isFollowingSeller,
                   onToggleSellerFollow: _repository.toggleSellerFollow,
+                  onOpenAppearance: _openAppearancePicker,
                 ),
                 OutfitsScreen(
                   scale: 1.0,
@@ -1110,6 +1211,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   onBuyProduct: _buyFromChat,
                 ),
                 ProfileScreen(
+                  appearance: widget.appearance,
+                  onThemePreferenceChanged: widget.onThemePreferenceChanged,
+                  onLiquidGlassChanged: widget.onLiquidGlassChanged,
+                  onCustomAppearanceSaved: widget.onCustomAppearanceSaved,
                   profile: _repository.profile,
                   products: _repository.myProducts,
                   likedProducts: _repository.likedProducts,
@@ -1162,7 +1267,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             ),
           ),
           bottomNavigationBar:
-              _currentIndex == 2 && _createMode != _CreateMode.none
+              (_currentIndex == 2 && _createMode != _CreateMode.none) ||
+                  (context.appGlass.enabled && _modalSurfaceDepth > 0)
               ? null
               : AppBottomNav(
                   currentIndex: _currentIndex,
@@ -1261,6 +1367,7 @@ class _MessageNotificationOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final topInset = MediaQuery.of(context).viewPadding.top;
+    final palette = context.appPalette;
     final current = notification;
     final isVisible = current != null;
 
@@ -1288,81 +1395,91 @@ class _MessageNotificationOverlay extends StatelessWidget {
                 : GestureDetector(
                     onTap: () => onTap(current),
                     behavior: HitTestBehavior.opaque,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0xFFE8E8EA)),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.14),
-                            blurRadius: 24,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 42,
-                              height: 42,
-                              decoration: const BoxDecoration(
-                                color: Color(0xFF070707),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Center(
-                                child: Text(
-                                  _notificationInitial(current.senderName),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
+                    child: AppGlassSurface(
+                      density: 0.93,
+                      borderRadius: BorderRadius.circular(20),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: context.appGlass.enabled
+                              ? Colors.transparent
+                              : palette.surfaceRaised,
+                          borderRadius: BorderRadius.circular(20),
+                          border: context.appGlass.enabled
+                              ? null
+                              : Border.all(color: palette.border),
+                          boxShadow: context.appGlass.enabled
+                              ? null
+                              : [
+                                  BoxShadow(
+                                    color: palette.shadow,
+                                    blurRadius: 24,
+                                    offset: const Offset(0, 10),
+                                  ),
+                                ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  color: palette.ink,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    _notificationInitial(current.senderName),
+                                    style: TextStyle(
+                                      color: palette.page,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 11),
-                            Expanded(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    current.senderName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 14.5,
-                                      height: 1.15,
-                                      fontWeight: FontWeight.w600,
-                                      color: Color(0xFF070707),
+                              const SizedBox(width: 11),
+                              Expanded(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      current.senderName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 14.5,
+                                        height: 1.15,
+                                        fontWeight: FontWeight.w600,
+                                        color: palette.ink,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    current.text,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      height: 1.2,
-                                      color: Color(0xFF6F6F76),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      current.text,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        height: 1.2,
+                                        color: palette.muted,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                            IconButton(
-                              onPressed: onDismiss,
-                              icon: const Icon(
-                                Icons.close,
-                                size: 18,
-                                color: Color(0xFF8F8F94),
+                              IconButton(
+                                onPressed: onDismiss,
+                                icon: Icon(
+                                  Icons.close,
+                                  size: 18,
+                                  color: palette.muted,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -1392,19 +1509,23 @@ class _OutfitItemChoiceSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
-    return Container(
+    final palette = context.appPalette;
+    final glassEnabled = context.appGlass.enabled;
+    final content = Container(
       width: double.infinity,
       padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
+        color: glassEnabled ? Colors.transparent : palette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: glassEnabled
+            ? null
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.12),
+                  blurRadius: 24,
+                  offset: const Offset(0, 12),
+                ),
+              ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1414,7 +1535,7 @@ class _OutfitItemChoiceSheet extends StatelessWidget {
             height: 4,
             margin: const EdgeInsets.only(bottom: 16),
             decoration: BoxDecoration(
-              color: const Color(0xFFE0E0E4),
+              color: palette.border,
               borderRadius: BorderRadius.circular(999),
             ),
           ),
@@ -1434,6 +1555,12 @@ class _OutfitItemChoiceSheet extends StatelessWidget {
         ],
       ),
     );
+    if (!glassEnabled) return content;
+    return AppGlassSurface(
+      density: 0.98,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      child: content,
+    );
   }
 }
 
@@ -1452,6 +1579,8 @@ class _OutfitItemChoiceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final glassEnabled = context.appGlass.enabled;
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
@@ -1459,9 +1588,15 @@ class _OutfitItemChoiceTile extends StatelessWidget {
         height: 76,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8F8F9),
+          color: glassEnabled
+              ? palette.ink.withValues(alpha: 0.055)
+              : palette.surfaceMuted,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFEDEDF0)),
+          border: Border.all(
+            color: glassEnabled
+                ? palette.ink.withValues(alpha: 0.12)
+                : palette.border,
+          ),
         ),
         child: Row(
           children: [
@@ -1469,10 +1604,10 @@ class _OutfitItemChoiceTile extends StatelessWidget {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: palette.surfaceRaised,
                 borderRadius: BorderRadius.circular(13),
               ),
-              child: Icon(icon, size: 22, color: const Color(0xFF111111)),
+              child: Icon(icon, size: 22, color: palette.ink),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1484,10 +1619,10 @@ class _OutfitItemChoiceTile extends StatelessWidget {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14.5,
                       fontWeight: FontWeight.w500,
-                      color: Color(0xFF111111),
+                      color: palette.ink,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -1495,10 +1630,10 @@ class _OutfitItemChoiceTile extends StatelessWidget {
                     subtitle,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       height: 1.15,
-                      color: Color(0xFF8F8F94),
+                      color: palette.muted,
                     ),
                   ),
                 ],
@@ -1526,6 +1661,7 @@ class CreateOutfitComingSoonScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final topInset = MediaQuery.of(context).viewPadding.top;
+    final palette = context.appPalette;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -1543,24 +1679,20 @@ class CreateOutfitComingSoonScreen extends StatelessWidget {
                 GestureDetector(
                   onTap: onClose,
                   behavior: HitTestBehavior.opaque,
-                  child: const SizedBox(
+                  child: SizedBox(
                     width: 44,
                     height: 44,
-                    child: Icon(
-                      Icons.close,
-                      size: 26,
-                      color: Color(0xFF0B0B0B),
-                    ),
+                    child: Icon(Icons.close, size: 26, color: palette.ink),
                   ),
                 ),
-                const Expanded(
+                Expanded(
                   child: Center(
                     child: Text(
                       'Создать образ',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w500,
-                        color: Color(0xFF0B0B0B),
+                        color: palette.ink,
                       ),
                     ),
                   ),
@@ -1569,7 +1701,7 @@ class CreateOutfitComingSoonScreen extends StatelessWidget {
               ],
             ),
           ),
-          const Expanded(
+          Expanded(
             child: Center(
               child: Text(
                 'Будет доступно потом',
@@ -1577,7 +1709,7 @@ class CreateOutfitComingSoonScreen extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF111111),
+                  color: palette.ink,
                 ),
               ),
             ),

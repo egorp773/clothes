@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../core/app_appearance.dart';
+
 class LoginScreen extends StatelessWidget {
   const LoginScreen({
     super.key,
@@ -22,11 +24,12 @@ class LoginScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final topInset = MediaQuery.of(context).viewPadding.top;
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         top: false,
         child: Padding(
@@ -37,12 +40,11 @@ class LoginScreen extends StatelessWidget {
                 alignment: Alignment.centerRight,
                 child: IconButton(
                   onPressed: onClose,
-                  icon: const Icon(Icons.close, size: 24, color: Colors.black),
-                  splashRadius: 22,
+                  icon: Icon(Icons.close, size: 24, color: palette.ink),
                 ),
               ),
               const SizedBox(height: 54),
-              const SizedBox(
+              SizedBox(
                 width: 300,
                 child: Text(
                   'войти в личный\nкабинет',
@@ -51,20 +53,20 @@ class LoginScreen extends StatelessWidget {
                     fontSize: 28,
                     height: 1.12,
                     fontWeight: FontWeight.w500,
-                    color: Colors.black,
+                    color: palette.ink,
                     letterSpacing: 0.2,
                   ),
                 ),
               ),
               const Spacer(flex: 2),
-              const Text(
+              Text(
                 'через сервис',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 14,
                   height: 1.2,
                   fontWeight: FontWeight.w500,
-                  color: Colors.black,
+                  color: palette.ink,
                 ),
               ),
               const SizedBox(height: 18),
@@ -90,14 +92,14 @@ class LoginScreen extends StatelessWidget {
               SizedBox(
                 height: 42,
                 child: isSigningIn
-                    ? const Center(
+                    ? Center(
                         child: SizedBox(
                           key: Key('login-auth-loading'),
                           width: 22,
                           height: 22,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.black,
+                            color: palette.ink,
                           ),
                         ),
                       )
@@ -125,7 +127,7 @@ class LoginScreen extends StatelessWidget {
                 onTap: isSigningIn ? null : onPhoneTap,
               ),
               const SizedBox(height: 11),
-              const Padding(
+              Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
                   'При входе и регистрации вы соглашаетесь с политикой\nобработки персональных данных.',
@@ -134,7 +136,7 @@ class LoginScreen extends StatelessWidget {
                     fontSize: 10.5,
                     height: 1.25,
                     fontWeight: FontWeight.w500,
-                    color: Color(0xFF8E8E93),
+                    color: palette.muted,
                   ),
                 ),
               ),
@@ -160,6 +162,7 @@ class _ServiceLoginButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap == null ? null : () => unawaited(onTap!()),
@@ -171,7 +174,7 @@ class _ServiceLoginButton extends StatelessWidget {
               width: 68,
               height: 68,
               decoration: BoxDecoration(
-                color: onTap == null ? const Color(0xFFB6B6BA) : Colors.black,
+                color: onTap == null ? palette.surfaceMuted : palette.ink,
                 shape: BoxShape.circle,
               ),
               child: Center(
@@ -181,7 +184,7 @@ class _ServiceLoginButton extends StatelessWidget {
                     fontSize: logo.length > 1 ? 20 : 28,
                     height: 1,
                     fontWeight: FontWeight.w500,
-                    color: Colors.white,
+                    color: palette.page,
                     letterSpacing: 0,
                   ),
                 ),
@@ -197,7 +200,7 @@ class _ServiceLoginButton extends StatelessWidget {
                 fontSize: 11.5,
                 height: 1,
                 fontWeight: FontWeight.w500,
-                color: onTap == null ? const Color(0xFF8E8E93) : Colors.black,
+                color: onTap == null ? palette.muted : palette.ink,
               ),
             ),
           ],
@@ -214,6 +217,7 @@ class _PhoneLoginButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -221,12 +225,10 @@ class _PhoneLoginButton extends StatelessWidget {
         width: double.infinity,
         height: 42,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(3),
           border: Border.all(
-            color: onTap == null
-                ? const Color(0xFFB6B6BA)
-                : const Color(0xFF222222),
+            color: onTap == null ? palette.surfaceMuted : palette.border,
             width: 0.8,
           ),
         ),
@@ -237,7 +239,7 @@ class _PhoneLoginButton extends StatelessWidget {
               fontSize: 13,
               height: 1,
               fontWeight: FontWeight.w500,
-              color: onTap == null ? const Color(0xFF8E8E93) : Colors.black,
+              color: onTap == null ? palette.muted : palette.ink,
               letterSpacing: 0,
             ),
           ),

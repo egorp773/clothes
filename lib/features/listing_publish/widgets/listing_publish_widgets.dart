@@ -1,11 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/app_appearance.dart';
 import '../../../core/app_typography.dart';
-
-const Color _primaryText = Color(0xFF0B0B0B);
-const Color _secondaryText = Color(0xFF8F8F94);
-const Color _divider = Color(0xFFE7E7EA);
-const Color _disabledButton = Color(0xFFC7C7CC);
 
 /// Header shared by the steps of the listing publication flow.
 ///
@@ -36,6 +32,7 @@ class ListingStepHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final progress = currentStep / totalSteps;
+    final palette = context.appPalette;
 
     return Padding(
       padding: padding,
@@ -57,11 +54,11 @@ class ListingStepHeader extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: AppTypography.fontFamily,
                       fontSize: 16,
                       fontWeight: AppTypography.medium,
-                      color: _primaryText,
+                      color: palette.ink,
                       height: 1.1,
                       letterSpacing: 0,
                     ),
@@ -80,11 +77,11 @@ class ListingStepHeader extends StatelessWidget {
             children: [
               Text(
                 'Шаг $currentStep из $totalSteps',
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: AppTypography.fontFamily,
                   fontSize: 11.5,
                   fontWeight: AppTypography.medium,
-                  color: _secondaryText,
+                  color: palette.muted,
                   height: 1,
                   letterSpacing: 0,
                 ),
@@ -97,11 +94,11 @@ class ListingStepHeader extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.end,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: AppTypography.fontFamily,
                       fontSize: 11.5,
                       fontWeight: AppTypography.medium,
-                      color: _secondaryText,
+                      color: palette.muted,
                       height: 1,
                       letterSpacing: 0,
                     ),
@@ -116,8 +113,8 @@ class ListingStepHeader extends StatelessWidget {
             child: LinearProgressIndicator(
               value: progress,
               minHeight: 3,
-              color: const Color(0xFF070707),
-              backgroundColor: _divider,
+              color: palette.ink,
+              backgroundColor: palette.border,
             ),
           ),
         ],
@@ -147,9 +144,8 @@ class _HeaderAction extends StatelessWidget {
       child: IconButton(
         tooltip: tooltip,
         padding: EdgeInsets.zero,
-        splashRadius: 22,
         onPressed: onPressed,
-        icon: Icon(icon, size: 20, color: _primaryText),
+        icon: Icon(icon, size: 20, color: context.appPalette.ink),
       ),
     );
   }
@@ -175,12 +171,13 @@ class ListingPrimaryBottomButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isEnabled = onPressed != null && !isLoading;
+    final palette = context.appPalette;
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: palette.surface,
         border: showTopDivider
-            ? const Border(top: BorderSide(color: _divider))
+            ? Border(top: BorderSide(color: palette.border))
             : null,
       ),
       child: SafeArea(
@@ -194,30 +191,34 @@ class ListingPrimaryBottomButton extends StatelessWidget {
             width: double.infinity,
             height: 50,
             child: Material(
-              color: isEnabled ? Colors.black : _disabledButton,
+              color: isEnabled ? palette.ink : palette.surfaceMuted,
               borderRadius: BorderRadius.circular(25),
               clipBehavior: Clip.antiAlias,
               child: InkWell(
+                splashColor: Colors.transparent,
+                highlightColor: Colors.transparent,
+                hoverColor: Colors.transparent,
+                focusColor: Colors.transparent,
                 onTap: isEnabled ? onPressed : null,
                 child: Center(
                   child: isLoading
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 20,
                           height: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: palette.ink,
                           ),
                         )
                       : Text(
                           label,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontFamily: AppTypography.fontFamily,
                             fontSize: 14,
                             fontWeight: AppTypography.semiBold,
-                            color: Colors.white,
+                            color: isEnabled ? palette.surface : palette.muted,
                             height: 1,
                             letterSpacing: 0,
                           ),
@@ -261,6 +262,7 @@ class ListingSelectionRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final resolvedValue = value?.trim();
     final hasValue =
         valueWidget != null ||
@@ -270,13 +272,17 @@ class ListingSelectionRow extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
         onTap: canTap ? onTap : null,
         child: Container(
           constraints: const BoxConstraints(minHeight: 62),
           padding: const EdgeInsets.symmetric(vertical: 11),
           decoration: BoxDecoration(
             border: showDivider
-                ? const Border(bottom: BorderSide(color: _divider))
+                ? Border(bottom: BorderSide(color: palette.border))
                 : null,
           ),
           child: Row(
@@ -307,7 +313,7 @@ class ListingSelectionRow extends StatelessWidget {
                         fontFamily: AppTypography.fontFamily,
                         fontSize: 12.5,
                         fontWeight: AppTypography.semiBold,
-                        color: enabled ? _primaryText : _secondaryText,
+                        color: enabled ? palette.ink : palette.muted,
                         height: 1.1,
                         letterSpacing: 0,
                       ),
@@ -325,8 +331,8 @@ class ListingSelectionRow extends StatelessWidget {
                           fontSize: 12.5,
                           fontWeight: AppTypography.medium,
                           color: hasValue && enabled
-                              ? const Color(0xFF111111)
-                              : _secondaryText,
+                              ? palette.ink
+                              : palette.muted,
                           height: 1.1,
                           letterSpacing: 0,
                         ),
@@ -339,7 +345,7 @@ class ListingSelectionRow extends StatelessWidget {
               Icon(
                 Icons.chevron_right_rounded,
                 size: 18,
-                color: enabled ? const Color(0xFFC7C7CC) : _divider,
+                color: enabled ? palette.muted : palette.border,
               ),
             ],
           ),
@@ -380,19 +386,14 @@ class ListingAnalysisStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final (background, foreground) = switch (tone) {
-      ListingAnalysisBadgeTone.neutral => (
-        const Color(0xFFF2F2F4),
-        const Color(0xFF706E82),
-      ),
+      ListingAnalysisBadgeTone.neutral => (palette.surfaceMuted, palette.muted),
       ListingAnalysisBadgeTone.processing => (
-        const Color(0xFFF2F2F4),
-        const Color(0xFF111111),
+        palette.surfaceMuted,
+        palette.ink,
       ),
-      ListingAnalysisBadgeTone.completed => (
-        const Color(0xFFEDF4EF),
-        const Color(0xFF42624C),
-      ),
+      ListingAnalysisBadgeTone.completed => (palette.surfaceMuted, palette.ink),
     };
 
     return Semantics(

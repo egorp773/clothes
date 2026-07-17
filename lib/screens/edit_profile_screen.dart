@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../core/app_appearance.dart';
 import '../models/app_profile.dart';
 import '../widgets/app_image.dart';
 
@@ -114,11 +115,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: palette.page,
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+        backgroundColor: palette.page,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,
         toolbarHeight: 58,
@@ -127,14 +129,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.arrow_back_ios_new, size: 19),
         ),
-        title: const Text(
+        title: Text(
           'Редактировать профиль',
           style: TextStyle(
             fontFamily: 'Montserrat',
             fontSize: 17,
             fontWeight: FontWeight.w700,
             letterSpacing: -0.25,
-            color: Colors.black,
+            color: palette.ink,
           ),
         ),
       ),
@@ -281,6 +283,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Widget _buildAvatar() {
+    final palette = context.appPalette;
     final selectedSource = _pickedAvatar?.path ?? '';
     final source = selectedSource.isNotEmpty
         ? selectedSource
@@ -305,16 +308,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       width: 84,
                       height: 84,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF1F1F3),
+                        color: palette.surfaceMuted,
                         shape: BoxShape.circle,
-                        border: Border.all(color: const Color(0xFFE3E3E6)),
+                        border: Border.all(color: palette.border),
                       ),
                       clipBehavior: Clip.antiAlias,
                       child: source.isEmpty
-                          ? const Icon(
+                          ? Icon(
                               Icons.person_outline_rounded,
                               size: 40,
-                              color: Color(0xFF77777E),
+                              color: palette.muted,
                             )
                           : AppImage(
                               imageUrl: source,
@@ -330,14 +333,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         width: 30,
                         height: 30,
                         decoration: BoxDecoration(
-                          color: Colors.black,
+                          color: palette.ink,
                           shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 2.5),
+                          border: Border.all(color: palette.page, width: 2.5),
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.photo_camera_outlined,
                           size: 15,
-                          color: Colors.white,
+                          color: palette.page,
                         ),
                       ),
                     ),
@@ -345,13 +348,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
               ),
               const SizedBox(height: 7),
-              const Text(
+              Text(
                 'Изменить фото',
                 style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 11.5,
                   fontWeight: FontWeight.w700,
-                  color: Colors.black,
+                  color: palette.ink,
                 ),
               ),
             ],
@@ -364,7 +367,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _showAvatarActions() async {
     final action = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: context.appPalette.surfaceRaised,
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: Column(
@@ -436,7 +439,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Future<void> _selectCity() async {
     final selected = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: context.appPalette.surfaceRaised,
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: ListView(
@@ -681,6 +684,7 @@ class _UnderlineField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
@@ -710,21 +714,21 @@ class _UnderlineField extends StatelessWidget {
           ],
         ),
         prefixText: prefixText,
-        prefixStyle: const TextStyle(
+        prefixStyle: TextStyle(
           fontFamily: 'Montserrat',
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: Colors.black,
+          color: palette.ink,
         ),
-        labelStyle: const TextStyle(
+        labelStyle: TextStyle(
           fontFamily: 'Montserrat',
           fontSize: 12,
           fontWeight: FontWeight.w500,
-          color: Color(0xFF67676D),
+          color: palette.muted,
         ),
         floatingLabelBehavior: FloatingLabelBehavior.auto,
         filled: true,
-        fillColor: const Color(0xFFF5F5F7),
+        fillColor: palette.surfaceMuted,
         contentPadding: const EdgeInsets.fromLTRB(15, 16, 15, 14),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(13),
@@ -732,7 +736,7 @@ class _UnderlineField extends StatelessWidget {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(13),
-          borderSide: const BorderSide(color: Colors.black, width: 1.2),
+          borderSide: BorderSide(color: palette.ink, width: 1.2),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(13),
@@ -754,6 +758,7 @@ class _PhoneField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return TextFormField(
       controller: controller,
       keyboardType: TextInputType.phone,
@@ -771,19 +776,19 @@ class _PhoneField extends StatelessWidget {
         labelText: 'Телефон',
         hintText: '900-000-00-00',
         prefixText: '+7  ',
-        labelStyle: const TextStyle(
+        labelStyle: TextStyle(
           fontFamily: 'Montserrat',
           fontSize: 12,
-          color: Color(0xFF67676D),
+          color: palette.muted,
         ),
-        prefixStyle: const TextStyle(
+        prefixStyle: TextStyle(
           fontFamily: 'Montserrat',
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: Colors.black,
+          color: palette.ink,
         ),
         filled: true,
-        fillColor: const Color(0xFFF5F5F7),
+        fillColor: palette.surfaceMuted,
         contentPadding: const EdgeInsets.fromLTRB(15, 16, 15, 14),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(13),
@@ -791,7 +796,7 @@ class _PhoneField extends StatelessWidget {
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(13),
-          borderSide: const BorderSide(color: Colors.black, width: 1.2),
+          borderSide: BorderSide(color: palette.ink, width: 1.2),
         ),
       ),
     );
@@ -831,6 +836,7 @@ class _GenderChoice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(13),
@@ -839,11 +845,9 @@ class _GenderChoice extends StatelessWidget {
         height: 48,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFEEEEF0) : const Color(0xFFF7F7F8),
+          color: selected ? palette.surfaceRaised : palette.surfaceMuted,
           borderRadius: BorderRadius.circular(13),
-          border: Border.all(
-            color: selected ? Colors.black : const Color(0xFFE8E8EB),
-          ),
+          border: Border.all(color: selected ? palette.ink : palette.border),
         ),
         child: Row(
           children: [
@@ -852,16 +856,16 @@ class _GenderChoice extends StatelessWidget {
               height: 17,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: selected ? Colors.black : Colors.white,
-                border: Border.all(color: Colors.black, width: 1.2),
+                color: selected ? palette.ink : palette.surfaceRaised,
+                border: Border.all(color: palette.ink, width: 1.2),
               ),
               child: selected
                   ? Center(
                       child: Container(
                         width: 4,
                         height: 4,
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
+                        decoration: BoxDecoration(
+                          color: palette.page,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -897,6 +901,7 @@ class _TapValueField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(13),
@@ -904,7 +909,7 @@ class _TapValueField extends StatelessWidget {
         height: 52,
         padding: const EdgeInsets.symmetric(horizontal: 15),
         decoration: BoxDecoration(
-          color: const Color(0xFFF5F5F7),
+          color: palette.surfaceMuted,
           borderRadius: BorderRadius.circular(13),
         ),
         child: Row(
@@ -942,21 +947,23 @@ class _OutlineActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return SizedBox(
       height: 50,
       child: OutlinedButton(
         onPressed: loading ? null : onPressed,
         style: OutlinedButton.styleFrom(
+          overlayColor: Colors.transparent,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
           side: BorderSide(
-            color: destructive
-                ? const Color(0xFFFFD4D1)
-                : const Color(0xFFDADADF),
+            color: destructive ? const Color(0xFFFFD4D1) : palette.border,
           ),
-          foregroundColor: destructive ? const Color(0xFFD92D20) : Colors.black,
-          backgroundColor: destructive ? const Color(0xFFFFF7F6) : Colors.white,
+          foregroundColor: destructive ? const Color(0xFFFF6B61) : palette.ink,
+          backgroundColor: destructive
+              ? const Color(0x22FF3B30)
+              : palette.surfaceRaised,
         ),
         child: loading
             ? const SizedBox(
@@ -990,24 +997,26 @@ class _BlackActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return SizedBox(
       height: 52,
       child: FilledButton(
         onPressed: loading ? null : onPressed,
         style: FilledButton.styleFrom(
+          overlayColor: Colors.transparent,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
-          backgroundColor: Colors.black,
-          foregroundColor: Colors.white,
+          backgroundColor: palette.ink,
+          foregroundColor: palette.page,
         ),
         child: loading
-            ? const SizedBox(
+            ? SizedBox(
                 width: 16,
                 height: 16,
                 child: CircularProgressIndicator(
                   strokeWidth: 2,
-                  color: Colors.white,
+                  color: palette.page,
                 ),
               )
             : Text(

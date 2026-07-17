@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/app_appearance.dart';
 import '../../core/app_typography.dart';
 import 'catalog_search_engine.dart';
 import 'catalog_search_history.dart';
@@ -94,7 +95,7 @@ class _CatalogSearchSheetState extends State<CatalogSearchSheet> {
       child: SizedBox(
         height: sheetHeight,
         child: Material(
-          color: Colors.white,
+          color: context.appPalette.surfaceRaised,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           clipBehavior: Clip.antiAlias,
           child: Padding(
@@ -123,7 +124,7 @@ class _CatalogSearchSheetState extends State<CatalogSearchSheet> {
                                     icon: const Icon(Icons.close_rounded),
                                   ),
                             filled: true,
-                            fillColor: const Color(0xFFF2F2F3),
+                            fillColor: context.appPalette.surfaceMuted,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(14),
                               borderSide: BorderSide.none,
@@ -204,16 +205,16 @@ class _RecentQueries extends StatelessWidget {
                 key: Key('catalog-recent-$index'),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 4),
                 minLeadingWidth: 24,
-                leading: const Icon(
+                leading: Icon(
                   Icons.history_rounded,
                   size: 21,
-                  color: Color(0xFF77777E),
+                  color: context.appPalette.muted,
                 ),
                 title: Text(
                   query,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 14,
                     fontWeight: AppTypography.medium,
@@ -271,13 +272,13 @@ class _SearchSuggestions extends StatelessWidget {
                 leading: Icon(
                   _iconFor(suggestion.kind),
                   size: 21,
-                  color: const Color(0xFF77777E),
+                  color: context.appPalette.muted,
                 ),
                 title: Text(
                   suggestion.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontFamily: AppTypography.fontFamily,
                     fontSize: 14,
                     fontWeight: AppTypography.medium,
@@ -285,9 +286,9 @@ class _SearchSuggestions extends StatelessWidget {
                 ),
                 subtitle: Text(
                   _kindLabel(suggestion.kind),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: Color(0xFF8F8F94),
+                    color: context.appPalette.muted,
                   ),
                 ),
                 trailing: const Icon(Icons.north_west_rounded, size: 17),
@@ -329,11 +330,11 @@ class _SectionHeader extends StatelessWidget {
       children: [
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: AppTypography.fontFamily,
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF77777E),
+            color: context.appPalette.muted,
           ),
         ),
         const Spacer(),
@@ -341,6 +342,7 @@ class _SectionHeader extends StatelessWidget {
           TextButton(
             onPressed: onTap,
             style: TextButton.styleFrom(
+              overlayColor: Colors.transparent,
               minimumSize: Size.zero,
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -365,15 +367,15 @@ class _SearchEmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 34, color: const Color(0xFFB5B5BA)),
+          Icon(icon, size: 34, color: context.appPalette.muted),
           const SizedBox(height: 10),
           Text(
             text,
             textAlign: TextAlign.center,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: AppTypography.fontFamily,
               fontSize: 13.5,
-              color: Color(0xFF77777E),
+              color: context.appPalette.muted,
               height: 1.3,
             ),
           ),

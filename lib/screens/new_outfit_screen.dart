@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/app_appearance.dart';
 import '../models/created_outfit.dart';
 import '../widgets/app_image.dart';
-
-const _outfitMediaBackground = Color(0xFFF4F4F4);
-const _outfitItemBackground = Color(0xFFFFFFFF);
 
 class NewOutfitPreviewItem {
   const NewOutfitPreviewItem({
@@ -103,7 +101,7 @@ class _NewOutfitScreenState extends State<NewOutfitScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         child: Column(
           children: [
@@ -146,14 +144,14 @@ class _NewOutfitHeader extends StatelessWidget {
               onPressed: () => Navigator.maybePop(context),
               icon: const Icon(Icons.chevron_left),
               iconSize: 28,
-              color: Colors.black,
+              color: context.appPalette.ink,
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints.tightFor(width: 40, height: 40),
               splashColor: Colors.transparent,
               highlightColor: Colors.transparent,
             ),
             const SizedBox(width: 4),
-            const Expanded(
+            Expanded(
               child: Text(
                 'новый образ',
                 style: TextStyle(
@@ -162,7 +160,7 @@ class _NewOutfitHeader extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                   height: 1,
                   letterSpacing: 0,
-                  color: Colors.black,
+                  color: context.appPalette.ink,
                 ),
               ),
             ),
@@ -178,10 +176,12 @@ class _HeaderDivider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const SizedBox(
+    return SizedBox(
       width: double.infinity,
       height: 2,
-      child: DecoratedBox(decoration: BoxDecoration(color: Colors.black)),
+      child: DecoratedBox(
+        decoration: BoxDecoration(color: context.appPalette.ink),
+      ),
     );
   }
 }
@@ -245,12 +245,12 @@ class _PreviewOutfitCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appPalette.surfaceRaised,
         borderRadius: BorderRadius.circular(30 * scale),
-        border: Border.all(color: const Color(0xFFF0F0F2)),
+        border: Border.all(color: context.appPalette.border),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.055),
+            color: context.appPalette.shadow,
             blurRadius: 30,
             offset: const Offset(0, 14),
           ),
@@ -321,8 +321,8 @@ class _PreviewCanvasItems extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return const DecoratedBox(
-        decoration: BoxDecoration(color: _outfitMediaBackground),
+      return DecoratedBox(
+        decoration: BoxDecoration(color: context.appPalette.surfaceMuted),
       );
     }
 
@@ -384,11 +384,11 @@ class _AuthorCard extends StatelessWidget {
       height: 64 * scale,
       padding: EdgeInsets.symmetric(horizontal: 12 * scale),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appPalette.surfaceRaised,
         borderRadius: BorderRadius.circular(18 * scale),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.13),
+            color: context.appPalette.shadow,
             blurRadius: 24,
             offset: const Offset(0, 10),
           ),
@@ -400,15 +400,15 @@ class _AuthorCard extends StatelessWidget {
             child: Container(
               width: 38 * scale,
               height: 38 * scale,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: Color(0xFFE9E9EC),
+                color: context.appPalette.surfaceMuted,
               ),
               child: authorAvatarUrl.trim().isEmpty
                   ? Icon(
                       Icons.person_outline,
                       size: 20 * scale,
-                      color: const Color(0xFF8F8F94),
+                      color: context.appPalette.muted,
                     )
                   : AppImage(
                       imageUrl: authorAvatarUrl,
@@ -434,7 +434,7 @@ class _AuthorCard extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                     height: 1.05,
                     letterSpacing: 0,
-                    color: const Color(0xFF111111),
+                    color: context.appPalette.ink,
                   ),
                 ),
                 SizedBox(height: 3 * scale),
@@ -448,7 +448,7 @@ class _AuthorCard extends StatelessWidget {
                     fontWeight: FontWeight.w500,
                     height: 1,
                     letterSpacing: 0,
-                    color: const Color(0xFF8F8F94),
+                    color: context.appPalette.muted,
                   ),
                 ),
               ],
@@ -458,7 +458,7 @@ class _AuthorCard extends StatelessWidget {
           Icon(
             Icons.favorite_outline,
             size: 22 * scale,
-            color: const Color(0xFF8F8F94),
+            color: context.appPalette.muted,
           ),
         ],
       ),
@@ -518,7 +518,7 @@ class _ProductsSectionState extends State<_ProductsSection> {
         22 * widget.scale,
       ),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.appPalette.surfaceRaised,
         borderRadius: BorderRadius.vertical(
           bottom: Radius.circular(30 * widget.scale),
         ),
@@ -584,7 +584,7 @@ class _ProductCard extends StatelessWidget {
       width: 80 * scale,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: _outfitItemBackground,
+          color: context.appPalette.surface,
           borderRadius: BorderRadius.circular(5 * scale),
         ),
         child: ClipRRect(
@@ -593,7 +593,7 @@ class _ProductCard extends StatelessWidget {
             imageUrl: item.image,
             fit: BoxFit.contain,
             alignment: Alignment.center,
-            placeholderColor: _outfitItemBackground,
+            placeholderColor: context.appPalette.surface,
           ),
         ),
       ),
@@ -616,17 +616,17 @@ class _ScrollArrow extends StatelessWidget {
           width: 28 * scale,
           height: 28 * scale,
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.94),
+            color: context.appPalette.surfaceRaised.withValues(alpha: 0.94),
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.10),
+                color: context.appPalette.shadow,
                 blurRadius: 8,
                 offset: const Offset(0, 4),
               ),
             ],
           ),
-          child: Icon(icon, size: 18 * scale, color: const Color(0xFF111111)),
+          child: Icon(icon, size: 18 * scale, color: context.appPalette.ink),
         ),
       ),
     );
@@ -644,12 +644,14 @@ class _PublishBottomBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Container(
       width: double.infinity,
       height: 82,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFE0E0E0))),
+      decoration: BoxDecoration(
+        color: context.appPalette.surfaceRaised,
+        border: Border(top: BorderSide(color: context.appPalette.border)),
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 22, 10, 0),
@@ -659,18 +661,18 @@ class _PublishBottomBar extends StatelessWidget {
           child: Container(
             width: double.infinity,
             height: 40,
-            color: Colors.black,
+            color: scheme.primary,
             alignment: Alignment.center,
             child: isPublishing
-                ? const SizedBox(
+                ? SizedBox(
                     width: 18,
                     height: 18,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Colors.white,
+                      color: scheme.onPrimary,
                     ),
                   )
-                : const Text(
+                : Text(
                     'ОПУБЛИКОВАТЬ ОБРАЗ',
                     textAlign: TextAlign.center,
                     style: TextStyle(
@@ -679,7 +681,7 @@ class _PublishBottomBar extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                       height: 1,
                       letterSpacing: 0,
-                      color: Colors.white,
+                      color: scheme.onPrimary,
                     ),
                   ),
           ),

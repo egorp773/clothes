@@ -164,6 +164,7 @@ class _VisualSearchObjectSelectionScreenState
                       )
                     : null,
                 style: FilledButton.styleFrom(
+                  overlayColor: Colors.transparent,
                   backgroundColor: Colors.white,
                   foregroundColor: Colors.black,
                   disabledBackgroundColor: Colors.white24,
@@ -217,6 +218,10 @@ class _SelectionRoundButton extends StatelessWidget {
       color: const Color(0x80171719),
       shape: const CircleBorder(),
       child: InkWell(
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
+        focusColor: Colors.transparent,
         customBorder: const CircleBorder(),
         onTap: onTap,
         child: SizedBox(

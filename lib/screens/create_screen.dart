@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/app_appearance.dart';
 import '../models/product.dart';
 import '../widgets/app_image.dart';
 
@@ -316,7 +317,9 @@ class _CreateScreenState extends State<CreateScreen> {
               height: 38,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               decoration: BoxDecoration(
-                color: isSelected ? Colors.black : const Color(0xFFF2F2F4),
+                color: isSelected
+                    ? Theme.of(context).colorScheme.primary
+                    : context.appPalette.surfaceMuted,
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Center(
@@ -325,7 +328,9 @@ class _CreateScreenState extends State<CreateScreen> {
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
-                    color: isSelected ? Colors.white : const Color(0xFF111111),
+                    color: isSelected
+                        ? Theme.of(context).colorScheme.onPrimary
+                        : context.appPalette.ink,
                   ),
                 ),
               ),
@@ -381,18 +386,14 @@ class _CreateScreenState extends State<CreateScreen> {
                     Expanded(
                       child: Text(
                         value,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
-                          color: Color(0xFF0B0B0B),
+                          color: ctx.appPalette.ink,
                         ),
                       ),
                     ),
                     if (isSelected)
-                      const Icon(
-                        Icons.check,
-                        size: 18,
-                        color: Color(0xFF0B0B0B),
-                      ),
+                      Icon(Icons.check, size: 18, color: ctx.appPalette.ink),
                   ],
                 ),
               ),
@@ -409,9 +410,9 @@ class _CreateScreenState extends State<CreateScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        decoration: BoxDecoration(
+          color: ctx.appPalette.surfaceRaised,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         padding: const EdgeInsets.all(20),
         child: SafeArea(
@@ -422,10 +423,10 @@ class _CreateScreenState extends State<CreateScreen> {
             children: [
               Text(
                 title,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF0B0B0B),
+                  color: ctx.appPalette.ink,
                 ),
               ),
               const SizedBox(height: 16),
@@ -461,9 +462,9 @@ class _CreateScreenState extends State<CreateScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        decoration: BoxDecoration(
+          color: ctx.appPalette.surfaceRaised,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         padding: const EdgeInsets.all(20),
         child: SafeArea(
@@ -472,12 +473,12 @@ class _CreateScreenState extends State<CreateScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Выберите цвет',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF0B0B0B),
+                  color: ctx.appPalette.ink,
                 ),
               ),
               const SizedBox(height: 16),
@@ -510,9 +511,9 @@ class _CreateScreenState extends State<CreateScreen> {
                           const SizedBox(height: 6),
                           Text(
                             option.name,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 10.5,
-                              color: Color(0xFF0B0B0B),
+                              color: ctx.appPalette.ink,
                             ),
                             textAlign: TextAlign.center,
                             maxLines: 2,
@@ -585,7 +586,7 @@ class _CreateScreenState extends State<CreateScreen> {
   }
 
   Widget _buildHeader() {
-    return const SizedBox(
+    return SizedBox(
       height: 44,
       child: Center(
         child: Text(
@@ -593,7 +594,7 @@ class _CreateScreenState extends State<CreateScreen> {
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w500,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
       ),
@@ -607,10 +608,11 @@ class _CreateScreenState extends State<CreateScreen> {
         width: double.infinity,
         height: 96,
         decoration: BoxDecoration(
-          border: Border.all(color: const Color(0xFFE7E7EA)),
+          color: context.appPalette.surface,
+          border: Border.all(color: context.appPalette.border),
           borderRadius: BorderRadius.circular(12),
         ),
-        child: const Column(
+        child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
@@ -618,22 +620,22 @@ class _CreateScreenState extends State<CreateScreen> {
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.w500,
-                color: Color(0xFF0B0B0B),
+                color: context.appPalette.ink,
               ),
             ),
-            SizedBox(height: 8),
+            const SizedBox(height: 8),
             Text(
               'Добавить фото',
               style: TextStyle(
                 fontSize: 12.5,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF0B0B0B),
+                color: context.appPalette.ink,
               ),
             ),
-            SizedBox(height: 4),
+            const SizedBox(height: 4),
             Text(
               'Можно добавить до 10 фото',
-              style: TextStyle(fontSize: 10.5, color: Color(0xFF8F8F94)),
+              style: TextStyle(fontSize: 10.5, color: context.appPalette.muted),
             ),
           ],
         ),
@@ -657,7 +659,8 @@ class _CreateScreenState extends State<CreateScreen> {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                border: Border.all(color: const Color(0xFFE7E7EA)),
+                color: context.appPalette.surface,
+                border: Border.all(color: context.appPalette.border),
                 borderRadius: BorderRadius.circular(8),
               ),
               clipBehavior: Clip.antiAlias,
@@ -665,10 +668,10 @@ class _CreateScreenState extends State<CreateScreen> {
                   ? Center(
                       child: Text(
                         '${index + 1}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w500,
-                          color: Color(0xFF9A9A9F),
+                          color: context.appPalette.muted,
                         ),
                       ),
                     )
@@ -715,9 +718,9 @@ class _CreateScreenState extends State<CreateScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       builder: (ctx) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        decoration: BoxDecoration(
+          color: ctx.appPalette.surfaceRaised,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
         padding: const EdgeInsets.all(20),
         child: SafeArea(
@@ -725,18 +728,18 @@ class _CreateScreenState extends State<CreateScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
+              Text(
                 'Добавить фото',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF0B0B0B),
+                  color: ctx.appPalette.ink,
                 ),
               ),
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 'Можно добавить до 10 фото',
-                style: TextStyle(fontSize: 12, color: Color(0xFF8F8F94)),
+                style: TextStyle(fontSize: 12, color: ctx.appPalette.muted),
               ),
               const SizedBox(height: 20),
               _SheetOption(
@@ -775,27 +778,30 @@ class _CreateScreenState extends State<CreateScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Название вещи',
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 8),
         TextField(
           controller: _titleController,
-          style: const TextStyle(fontSize: 12.5, color: Color(0xFF111111)),
-          decoration: const InputDecoration(
+          style: TextStyle(fontSize: 12.5, color: context.appPalette.ink),
+          decoration: InputDecoration(
             hintText: 'Введите название',
-            hintStyle: TextStyle(fontSize: 12.5, color: Color(0xFF8F8F94)),
+            hintStyle: TextStyle(
+              fontSize: 12.5,
+              color: context.appPalette.muted,
+            ),
             border: InputBorder.none,
             isDense: true,
             contentPadding: EdgeInsets.zero,
           ),
         ),
-        const Divider(color: Color(0xFFE7E7EA), height: 1),
+        Divider(color: context.appPalette.border, height: 1),
       ],
     );
   }
@@ -804,12 +810,12 @@ class _CreateScreenState extends State<CreateScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Описание (необязательно)',
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 8),
@@ -821,16 +827,13 @@ class _CreateScreenState extends State<CreateScreen> {
                 controller: _descriptionController,
                 maxLines: null,
                 minLines: 1,
-                style: const TextStyle(
-                  fontSize: 11.5,
-                  color: Color(0xFF111111),
-                ),
-                decoration: const InputDecoration(
+                style: TextStyle(fontSize: 11.5, color: context.appPalette.ink),
+                decoration: InputDecoration(
                   hintText:
                       'Расскажите о вещи: материал, бренд, состояние, размер и т.д.',
                   hintStyle: TextStyle(
                     fontSize: 11.5,
-                    color: Color(0xFF8F8F94),
+                    color: context.appPalette.muted,
                   ),
                   border: InputBorder.none,
                   isDense: true,
@@ -841,11 +844,11 @@ class _CreateScreenState extends State<CreateScreen> {
             const SizedBox(width: 8),
             Text(
               '0/300',
-              style: TextStyle(fontSize: 11.5, color: const Color(0xFFB0B0B5)),
+              style: TextStyle(fontSize: 11.5, color: context.appPalette.muted),
             ),
           ],
         ),
-        const Divider(color: Color(0xFFE7E7EA), height: 1),
+        Divider(color: context.appPalette.border, height: 1),
       ],
     );
   }
@@ -854,12 +857,12 @@ class _CreateScreenState extends State<CreateScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Категория',
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 10),
@@ -877,8 +880,8 @@ class _CreateScreenState extends State<CreateScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
                       color: isActive
-                          ? const Color(0xFF000000)
-                          : const Color(0xFFF0F0F1),
+                          ? Theme.of(context).colorScheme.primary
+                          : context.appPalette.surfaceMuted,
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Center(
@@ -887,8 +890,8 @@ class _CreateScreenState extends State<CreateScreen> {
                         style: TextStyle(
                           fontSize: 11.5,
                           color: isActive
-                              ? Colors.white
-                              : const Color(0xFF111111),
+                              ? Theme.of(context).colorScheme.onPrimary
+                              : context.appPalette.ink,
                         ),
                       ),
                     ),
@@ -906,12 +909,12 @@ class _CreateScreenState extends State<CreateScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Тип вещи',
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 8),
@@ -919,8 +922,10 @@ class _CreateScreenState extends State<CreateScreen> {
           onTap: _showItemTypePicker,
           child: Container(
             padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xFFE7E7EA))),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: context.appPalette.border),
+              ),
             ),
             child: Row(
               children: [
@@ -930,15 +935,15 @@ class _CreateScreenState extends State<CreateScreen> {
                     style: TextStyle(
                       fontSize: 12.5,
                       color: _selectedItemType == 'Выберите тип вещи'
-                          ? const Color(0xFF8F8F94)
-                          : const Color(0xFF111111),
+                          ? context.appPalette.muted
+                          : context.appPalette.ink,
                     ),
                   ),
                 ),
-                const Icon(
+                Icon(
                   Icons.chevron_right,
                   size: 16,
-                  color: Color(0xFFC7C7CC),
+                  color: context.appPalette.muted,
                 ),
               ],
             ),
@@ -952,34 +957,36 @@ class _CreateScreenState extends State<CreateScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Бренд',
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 8),
         Container(
           height: 31,
-          decoration: const BoxDecoration(
-            border: Border(bottom: BorderSide(color: Color(0xFFE7E7EA))),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: context.appPalette.border),
+            ),
           ),
           child: Row(
             children: [
               Expanded(
                 child: TextField(
                   controller: _brandController,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12.5,
-                    color: Color(0xFF111111),
+                    color: context.appPalette.ink,
                   ),
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: 'Введите бренд',
                     hintStyle: TextStyle(
                       fontSize: 12.5,
-                      color: Color(0xFF8F8F94),
+                      color: context.appPalette.muted,
                     ),
                     border: InputBorder.none,
                     isDense: true,
@@ -987,10 +994,10 @@ class _CreateScreenState extends State<CreateScreen> {
                   ),
                 ),
               ),
-              const Icon(
+              Icon(
                 Icons.chevron_right,
                 size: 16,
-                color: Color(0xFFC7C7CC),
+                color: context.appPalette.muted,
               ),
             ],
           ),
@@ -1003,12 +1010,12 @@ class _CreateScreenState extends State<CreateScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Цена',
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 8),
@@ -1018,15 +1025,12 @@ class _CreateScreenState extends State<CreateScreen> {
               child: TextField(
                 controller: _priceController,
                 keyboardType: TextInputType.number,
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  color: Color(0xFF111111),
-                ),
-                decoration: const InputDecoration(
+                style: TextStyle(fontSize: 12.5, color: context.appPalette.ink),
+                decoration: InputDecoration(
                   hintText: 'Введите цену',
                   hintStyle: TextStyle(
                     fontSize: 12.5,
-                    color: Color(0xFF8F8F94),
+                    color: context.appPalette.muted,
                   ),
                   border: InputBorder.none,
                   isDense: true,
@@ -1036,11 +1040,11 @@ class _CreateScreenState extends State<CreateScreen> {
             ),
             Text(
               '\u20BD',
-              style: TextStyle(fontSize: 12.5, color: const Color(0xFF0B0B0B)),
+              style: TextStyle(fontSize: 12.5, color: context.appPalette.ink),
             ),
           ],
         ),
-        const Divider(color: Color(0xFFE7E7EA), height: 1),
+        Divider(color: context.appPalette.border, height: 1),
       ],
     );
   }
@@ -1069,10 +1073,10 @@ class _CreateScreenState extends State<CreateScreen> {
       children: [
         Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 8),
@@ -1082,7 +1086,8 @@ class _CreateScreenState extends State<CreateScreen> {
             height: 42,
             padding: const EdgeInsets.symmetric(horizontal: 10),
             decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFFE7E7EA)),
+              color: context.appPalette.surface,
+              border: Border.all(color: context.appPalette.border),
               borderRadius: BorderRadius.circular(10),
             ),
             child: Row(
@@ -1093,16 +1098,16 @@ class _CreateScreenState extends State<CreateScreen> {
                     style: TextStyle(
                       fontSize: 12,
                       color: value.startsWith('Выберите')
-                          ? const Color(0xFF8F8F94)
-                          : const Color(0xFF111111),
+                          ? context.appPalette.muted
+                          : context.appPalette.ink,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const Icon(
+                Icon(
                   Icons.keyboard_arrow_down,
                   size: 14,
-                  color: Color(0xFFC7C7CC),
+                  color: context.appPalette.muted,
                 ),
               ],
             ),
@@ -1121,12 +1126,12 @@ class _CreateScreenState extends State<CreateScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
+        Text(
           'Цвет',
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF0B0B0B),
+            color: context.appPalette.ink,
           ),
         ),
         const SizedBox(height: 10),
@@ -1152,15 +1157,15 @@ class _CreateScreenState extends State<CreateScreen> {
                 height: 28,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white,
-                  border: Border.all(color: const Color(0xFFDCDCE0)),
+                  color: context.appPalette.surface,
+                  border: Border.all(color: context.appPalette.border),
                 ),
-                child: const Center(
+                child: Center(
                   child: Text(
                     '+',
                     style: TextStyle(
                       fontSize: 15,
-                      color: Color(0xFF0B0B0B),
+                      color: context.appPalette.ink,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -1179,8 +1184,8 @@ class _CreateScreenState extends State<CreateScreen> {
     required double size,
   }) {
     final ringColor = option.color == const Color(0xFFFFFFFF)
-        ? const Color(0xFFBFC0C5)
-        : const Color(0xFF0B0B0B);
+        ? context.appPalette.muted
+        : context.appPalette.ink;
 
     return Container(
       width: size + 6,
@@ -1207,6 +1212,8 @@ class _CreateScreenState extends State<CreateScreen> {
   }
 
   Widget _buildPublishButton() {
+    final scheme = Theme.of(context).colorScheme;
+
     return GestureDetector(
       onTap: _isUploading ? null : _onPublish,
       child: Container(
@@ -1214,26 +1221,28 @@ class _CreateScreenState extends State<CreateScreen> {
         height: 50,
         decoration: BoxDecoration(
           color: _isUploading
-              ? const Color(0xFF888888)
-              : const Color(0xFF000000),
+              ? context.appPalette.surfaceMuted
+              : scheme.primary,
           borderRadius: BorderRadius.circular(25),
         ),
         child: Center(
           child: _isUploading
-              ? const SizedBox(
+              ? SizedBox(
                   width: 20,
                   height: 20,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.white,
+                    color: _isUploading
+                        ? context.appPalette.muted
+                        : scheme.onPrimary,
                   ),
                 )
               : Text(
                   widget.publishButtonText,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                    color: scheme.onPrimary,
                   ),
                 ),
         ),
@@ -1262,14 +1271,14 @@ class _SheetOption extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Row(
           children: [
-            Icon(icon, size: 22, color: const Color(0xFF0B0B0B)),
+            Icon(icon, size: 22, color: context.appPalette.ink),
             const SizedBox(width: 14),
             Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w500,
-                color: Color(0xFF0B0B0B),
+                color: context.appPalette.ink,
               ),
             ),
           ],

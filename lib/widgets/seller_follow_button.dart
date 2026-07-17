@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
 
 class SellerFollowButton extends StatefulWidget {
@@ -55,6 +56,7 @@ class _SellerFollowButtonState extends State<SellerFollowButton> {
   }
 
   Widget _buildButton() {
+    final palette = context.appPalette;
     final following = _isFollowing;
     final isOwnProfile =
         widget.sellerId.trim().isNotEmpty &&
@@ -62,13 +64,13 @@ class _SellerFollowButtonState extends State<SellerFollowButton> {
         !(widget.canFollow?.call(widget.sellerId.trim()) ?? true);
     final enabled = _canFollow && !_isBusy;
     final background = following
-        ? const Color(0xFFEDEDEF)
+        ? palette.surfaceMuted
         : enabled
-        ? Colors.black
-        : const Color(0xFFF1F1F2);
+        ? palette.ink
+        : palette.surfaceMuted;
     final foreground = following || !enabled
-        ? const Color(0xFF242429)
-        : Colors.white;
+        ? (enabled ? palette.ink : palette.muted)
+        : palette.page.withValues(alpha: 1);
 
     return Semantics(
       button: true,
@@ -84,6 +86,10 @@ class _SellerFollowButtonState extends State<SellerFollowButton> {
         child: InkWell(
           onTap: enabled ? _toggle : null,
           borderRadius: BorderRadius.circular(999),
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          hoverColor: Colors.transparent,
+          focusColor: Colors.transparent,
           child: Container(
             constraints: const BoxConstraints(minWidth: 106),
             height: 28,

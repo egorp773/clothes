@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/app_appearance.dart';
 import '../models/product.dart';
 import '../widgets/app_image.dart';
 
@@ -157,20 +158,20 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
           GestureDetector(
             onTap: widget.onClose,
             behavior: HitTestBehavior.opaque,
-            child: const SizedBox(
+            child: SizedBox(
               width: 44,
               height: 44,
-              child: Icon(Icons.close, size: 26, color: Color(0xFF0B0B0B)),
+              child: Icon(Icons.close, size: 26, color: context.appPalette.ink),
             ),
           ),
-          const Expanded(
+          Expanded(
             child: Center(
               child: Text(
                 'Вещь для образа',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF0B0B0B),
+                  color: context.appPalette.ink,
                 ),
               ),
             ),
@@ -188,13 +189,13 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
         width: double.infinity,
         height: 220,
         decoration: BoxDecoration(
-          color: const Color(0xFFF8F8F9),
-          border: Border.all(color: const Color(0xFFE7E7EA)),
+          color: context.appPalette.surfaceMuted,
+          border: Border.all(color: context.appPalette.border),
           borderRadius: BorderRadius.circular(14),
         ),
         clipBehavior: Clip.antiAlias,
         child: _photo == null
-            ? const Column(
+            ? Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
@@ -202,33 +203,36 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
                     style: TextStyle(
                       fontSize: 30,
                       fontWeight: FontWeight.w500,
-                      color: Color(0xFF0B0B0B),
+                      color: context.appPalette.ink,
                     ),
                   ),
-                  SizedBox(height: 10),
+                  const SizedBox(height: 10),
                   Text(
                     'Добавить фото',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF0B0B0B),
+                      color: context.appPalette.ink,
                     ),
                   ),
-                  SizedBox(height: 4),
+                  const SizedBox(height: 4),
                   Text(
                     'Можно добавить только 1 фото',
-                    style: TextStyle(fontSize: 10.5, color: Color(0xFF8F8F94)),
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: context.appPalette.muted,
+                    ),
                   ),
                 ],
               )
             : Container(
-                color: Colors.white,
+                color: context.appPalette.surface,
                 padding: const EdgeInsets.all(8),
                 child: AppImage(
                   imageUrl: _previewImage ?? _photo!.path,
                   fit: BoxFit.contain,
                   alignment: Alignment.center,
-                  placeholderColor: Colors.white,
+                  placeholderColor: context.appPalette.surface,
                 ),
               ),
       ),
@@ -241,43 +245,46 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
       onChanged: (_) => setState(() {}),
       maxLines: 1,
       textInputAction: TextInputAction.done,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 16,
         fontWeight: FontWeight.w600,
-        color: Color(0xFF0B0B0B),
+        color: context.appPalette.ink,
       ),
-      decoration: const InputDecoration(
+      decoration: InputDecoration(
         labelText: 'Название',
         hintText: 'Например: рубашка',
-        floatingLabelStyle: TextStyle(color: Color(0xFF0B0B0B)),
+        floatingLabelStyle: TextStyle(color: context.appPalette.ink),
         enabledBorder: UnderlineInputBorder(
-          borderSide: BorderSide(color: Color(0xFFE2E2E6)),
+          borderSide: BorderSide(color: context.appPalette.border),
         ),
         focusedBorder: UnderlineInputBorder(
-          borderSide: BorderSide(color: Color(0xFF0B0B0B)),
+          borderSide: BorderSide(color: context.appPalette.ink),
         ),
       ),
     );
   }
 
   Widget _buildAddButton() {
+    final scheme = Theme.of(context).colorScheme;
+    final palette = context.appPalette;
+
     return GestureDetector(
       onTap: _isSaving ? null : _addItem,
       child: Container(
         width: double.infinity,
         height: 50,
         decoration: BoxDecoration(
-          color: _canAdd ? Colors.black : const Color(0xFFC8C8CE),
+          color: _canAdd ? scheme.primary : palette.surfaceMuted,
           borderRadius: BorderRadius.circular(25),
         ),
         child: Center(
           child: _isSaving
-              ? const SizedBox(
+              ? SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.white,
+                    color: scheme.onPrimary,
                   ),
                 )
               : Text(
@@ -285,7 +292,7 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    color: _canAdd ? Colors.white : const Color(0xFF8E8E93),
+                    color: _canAdd ? scheme.onPrimary : palette.muted,
                   ),
                 ),
         ),

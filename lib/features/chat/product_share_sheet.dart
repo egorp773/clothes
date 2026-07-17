@@ -4,17 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/app_appearance.dart';
 import '../../core/supabase_config.dart';
 import '../../models/app_profile.dart';
 import '../../models/message_thread.dart';
 import '../../models/product.dart';
+import '../../widgets/app_glass_surface.dart';
 import '../../widgets/app_image.dart';
-
-const _shareInk = Color(0xFF0B0B0C);
-const _shareMuted = Color(0xFF74747C);
-const _shareLine = Color(0xFFE9E9EC);
-const _shareSoft = Color(0xFFF5F5F6);
-const _shareAccent = Color(0xFFFF3158);
 
 Future<void> showProductShareSheet(
   BuildContext context, {
@@ -266,153 +262,179 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
   Widget build(BuildContext context) {
     final keyboard = MediaQuery.viewInsetsOf(context).bottom;
     final height = MediaQuery.sizeOf(context).height;
+    final palette = context.appPalette;
+    final glassEnabled = context.appGlass.enabled;
     return AnimatedPadding(
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOutCubic,
       padding: EdgeInsets.only(bottom: keyboard),
       child: Align(
         alignment: Alignment.bottomCenter,
-        child: Container(
-          constraints: BoxConstraints(maxHeight: height * 0.84),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const _Handle(),
-                _Header(product: widget.product),
-                const Divider(height: 1, color: _shareLine),
-                Flexible(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (_recentThreads.isNotEmpty) ...[
-                          const Text(
-                            'Недавние',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: _shareInk,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          SizedBox(
-                            height: 104,
-                            child: ListView.separated(
-                              scrollDirection: Axis.horizontal,
-                              physics: const BouncingScrollPhysics(),
-                              itemCount: _recentThreads.length,
-                              separatorBuilder: (_, _) =>
-                                  const SizedBox(width: 14),
-                              itemBuilder: (context, index) {
-                                final thread = _recentThreads[index];
-                                return _RecentRecipient(
-                                  thread: thread,
-                                  currentUserId: widget.currentUserId,
-                                  selected: _selectedThreadIds.contains(
-                                    thread.id,
-                                  ),
-                                  onTap: () => _toggleThread(thread),
-                                );
-                              },
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                        ],
-                        _SearchField(
-                          controller: _searchController,
-                          onChanged: _search,
-                        ),
-                        if (_searching)
-                          const Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Center(
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: _shareInk,
+        child: AppGlassSurface(
+          density: 0.98,
+          enableRefraction: false,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+          child: Container(
+            constraints: BoxConstraints(maxHeight: height * 0.84),
+            decoration: BoxDecoration(
+              color: glassEnabled ? Colors.transparent : palette.surfaceRaised,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(30),
+              ),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const _Handle(),
+                  _Header(product: widget.product),
+                  Divider(height: 1, color: context.appPalette.border),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (_recentThreads.isNotEmpty) ...[
+                            Text(
+                              'Недавние',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: context.appPalette.ink,
                               ),
                             ),
-                          )
-                        else if (_searchResults.isNotEmpty)
-                          ..._searchResults.map(
-                            (user) => _UserResult(
-                              user: user,
-                              selected: _isUserSelected(user.id),
-                              onTap: () => _toggleUser(user),
+                            const SizedBox(height: 14),
+                            SizedBox(
+                              height: 104,
+                              child: ListView.separated(
+                                scrollDirection: Axis.horizontal,
+                                physics: const BouncingScrollPhysics(),
+                                itemCount: _recentThreads.length,
+                                separatorBuilder: (_, _) =>
+                                    const SizedBox(width: 14),
+                                itemBuilder: (context, index) {
+                                  final thread = _recentThreads[index];
+                                  return _RecentRecipient(
+                                    thread: thread,
+                                    currentUserId: widget.currentUserId,
+                                    selected: _selectedThreadIds.contains(
+                                      thread.id,
+                                    ),
+                                    onTap: () => _toggleThread(thread),
+                                  );
+                                },
+                              ),
                             ),
-                          ),
-                        const SizedBox(height: 18),
-                        Row(
-                          children: [
-                            _ShareAction(
-                              icon: Icons.ios_share_rounded,
-                              label: 'Поделиться',
-                              onTap: _shareExternally,
-                            ),
-                            const SizedBox(width: 18),
-                            _ShareAction(
-                              icon: Icons.link_rounded,
-                              label: 'Копировать',
-                              onTap: _copyLink,
-                            ),
+                            const SizedBox(height: 14),
                           ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  child: _selectionCount == 0
-                      ? const SizedBox.shrink()
-                      : Container(
-                          key: const ValueKey('share-send-bar'),
-                          padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
-                          decoration: const BoxDecoration(
-                            color: Colors.white,
-                            border: Border(top: BorderSide(color: _shareLine)),
+                          _SearchField(
+                            controller: _searchController,
+                            onChanged: _search,
                           ),
-                          child: SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: FilledButton(
-                              key: const Key('share-send-button'),
-                              onPressed: _sending ? null : _send,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: _shareInk,
-                                foregroundColor: Colors.white,
-                                disabledBackgroundColor: _shareInk,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(16),
+                          if (_searching)
+                            Padding(
+                              padding: const EdgeInsets.all(24),
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: context.appPalette.ink,
                                 ),
                               ),
-                              child: _sending
-                                  ? const SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
+                            )
+                          else if (_searchResults.isNotEmpty)
+                            ..._searchResults.map(
+                              (user) => _UserResult(
+                                user: user,
+                                selected: _isUserSelected(user.id),
+                                onTap: () => _toggleUser(user),
+                              ),
+                            ),
+                          const SizedBox(height: 18),
+                          Row(
+                            children: [
+                              _ShareAction(
+                                icon: Icons.ios_share_rounded,
+                                label: 'Поделиться',
+                                onTap: _shareExternally,
+                              ),
+                              const SizedBox(width: 18),
+                              _ShareAction(
+                                icon: Icons.link_rounded,
+                                label: 'Копировать',
+                                onTap: _copyLink,
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: _selectionCount == 0
+                        ? const SizedBox.shrink()
+                        : Container(
+                            key: const ValueKey('share-send-bar'),
+                            padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+                            decoration: BoxDecoration(
+                              color: glassEnabled
+                                  ? palette.ink.withValues(alpha: 0.045)
+                                  : palette.surfaceRaised,
+                              border: Border(
+                                top: BorderSide(
+                                  color: glassEnabled
+                                      ? palette.ink.withValues(alpha: 0.12)
+                                      : palette.border,
+                                ),
+                              ),
+                            ),
+                            child: SizedBox(
+                              width: double.infinity,
+                              height: 50,
+                              child: FilledButton(
+                                key: const Key('share-send-button'),
+                                onPressed: _sending ? null : _send,
+                                style: FilledButton.styleFrom(
+                                  overlayColor: Colors.transparent,
+                                  backgroundColor: Theme.of(
+                                    context,
+                                  ).colorScheme.primary,
+                                  foregroundColor: Theme.of(
+                                    context,
+                                  ).colorScheme.onPrimary,
+                                  disabledBackgroundColor: Theme.of(
+                                    context,
+                                  ).colorScheme.primary,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ),
+                                child: _sending
+                                    ? SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onPrimary,
+                                        ),
+                                      )
+                                    : Text(
+                                        'Отправить · $_selectionCount',
+                                        style: const TextStyle(
+                                          fontSize: 15.5,
+                                          fontWeight: FontWeight.w700,
+                                        ),
                                       ),
-                                    )
-                                  : Text(
-                                      'Отправить · $_selectionCount',
-                                      style: const TextStyle(
-                                        fontSize: 15.5,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
+                              ),
                             ),
                           ),
-                        ),
-                ),
-              ],
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -431,7 +453,7 @@ class _Handle extends StatelessWidget {
       height: 4,
       margin: const EdgeInsets.only(top: 10, bottom: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFD8D8DC),
+        color: context.appPalette.border,
         borderRadius: BorderRadius.circular(999),
       ),
     );
@@ -461,12 +483,12 @@ class _Header extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Поделиться объявлением',
                   style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
-                    color: _shareInk,
+                    color: context.appPalette.ink,
                   ),
                 ),
                 const SizedBox(height: 5),
@@ -474,10 +496,10 @@ class _Header extends StatelessWidget {
                   '${product.title} · ${product.price}',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13.5,
                     height: 1.2,
-                    color: _shareMuted,
+                    color: context.appPalette.muted,
                   ),
                 ),
               ],
@@ -485,7 +507,7 @@ class _Header extends StatelessWidget {
           ),
           IconButton(
             onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.close_rounded, color: _shareInk),
+            icon: Icon(Icons.close_rounded, color: context.appPalette.ink),
           ),
         ],
       ),
@@ -507,10 +529,10 @@ class _SearchField extends StatelessWidget {
       textInputAction: TextInputAction.search,
       decoration: InputDecoration(
         hintText: 'Найти по @username',
-        hintStyle: const TextStyle(color: Color(0xFF96969D)),
-        prefixIcon: const Icon(Icons.search_rounded, color: _shareMuted),
+        hintStyle: TextStyle(color: context.appPalette.muted),
+        prefixIcon: Icon(Icons.search_rounded, color: context.appPalette.muted),
         filled: true,
-        fillColor: _shareSoft,
+        fillColor: context.appPalette.surfaceMuted,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: BorderSide.none,
@@ -562,10 +584,10 @@ class _RecentRecipient extends StatelessWidget {
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 11.5,
                 height: 1.1,
-                color: _shareInk,
+                color: context.appPalette.ink,
               ),
             ),
           ],
@@ -605,7 +627,9 @@ class _RecipientAvatar extends StatelessWidget {
         shape: isProduct ? BoxShape.rectangle : BoxShape.circle,
         borderRadius: isProduct ? BorderRadius.circular(14) : null,
         border: Border.all(
-          color: selected ? _shareAccent : Colors.transparent,
+          color: selected
+              ? Theme.of(context).colorScheme.primary
+              : Colors.transparent,
           width: 2,
         ),
       ),
@@ -620,16 +644,16 @@ class _RecipientAvatar extends StatelessWidget {
                   : isGroup && members.length >= 2
                   ? _GroupInitials(members: members)
                   : ColoredBox(
-                      color: _shareSoft,
+                      color: context.appPalette.surfaceMuted,
                       child: Center(
                         child: Text(
                           name.trim().isEmpty
                               ? '?'
                               : name.trim().characters.first.toUpperCase(),
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 19,
                             fontWeight: FontWeight.w700,
-                            color: _shareInk,
+                            color: context.appPalette.ink,
                           ),
                         ),
                       ),
@@ -637,13 +661,17 @@ class _RecipientAvatar extends StatelessWidget {
             ),
           ),
           if (selected)
-            const Positioned(
+            Positioned(
               right: -2,
               top: -2,
               child: CircleAvatar(
                 radius: 10,
-                backgroundColor: _shareAccent,
-                child: Icon(Icons.check_rounded, size: 14, color: Colors.white),
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                child: Icon(
+                  Icons.check_rounded,
+                  size: 14,
+                  color: Theme.of(context).colorScheme.onPrimary,
+                ),
               ),
             ),
           if (badgeImage.isNotEmpty)
@@ -654,8 +682,8 @@ class _RecipientAvatar extends StatelessWidget {
                 width: 21,
                 height: 21,
                 padding: const EdgeInsets.all(1.5),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
+                decoration: BoxDecoration(
+                  color: context.appPalette.surface,
                   shape: BoxShape.circle,
                 ),
                 child: ClipOval(
@@ -758,22 +786,36 @@ class _UserResult extends StatelessWidget {
           user.name,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w700, color: _shareInk),
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: context.appPalette.ink,
+          ),
         ),
-        subtitle: Text(user.handle, style: const TextStyle(color: _shareMuted)),
+        subtitle: Text(
+          user.handle,
+          style: TextStyle(color: context.appPalette.muted),
+        ),
         trailing: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           width: 25,
           height: 25,
           decoration: BoxDecoration(
-            color: selected ? _shareInk : Colors.white,
+            color: selected
+                ? Theme.of(context).colorScheme.primary
+                : context.appPalette.surface,
             shape: BoxShape.circle,
             border: Border.all(
-              color: selected ? _shareInk : const Color(0xFFD4D4D8),
+              color: selected
+                  ? Theme.of(context).colorScheme.primary
+                  : context.appPalette.border,
             ),
           ),
           child: selected
-              ? const Icon(Icons.check_rounded, size: 16, color: Colors.white)
+              ? Icon(
+                  Icons.check_rounded,
+                  size: 16,
+                  color: Theme.of(context).colorScheme.onPrimary,
+                )
               : null,
         ),
       ),
@@ -802,14 +844,17 @@ class _ShareAction extends StatelessWidget {
           Container(
             width: 52,
             height: 52,
-            decoration: const BoxDecoration(
-              color: _shareSoft,
+            decoration: BoxDecoration(
+              color: context.appPalette.surfaceMuted,
               shape: BoxShape.circle,
             ),
-            child: Icon(icon, color: _shareInk, size: 23),
+            child: Icon(icon, color: context.appPalette.ink, size: 23),
           ),
           const SizedBox(height: 7),
-          Text(label, style: const TextStyle(fontSize: 12, color: _shareInk)),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: context.appPalette.ink),
+          ),
         ],
       ),
     );

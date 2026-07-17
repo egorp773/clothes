@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_appearance.dart';
+import 'app_glass_surface.dart';
+
 class CreateEntrySheet extends StatelessWidget {
   const CreateEntrySheet({
     super.key,
@@ -15,18 +18,22 @@ class CreateEntrySheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewPadding.bottom;
+    final palette = context.appPalette;
+    final glassEnabled = context.appGlass.enabled;
 
-    return Container(
+    final content = Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: glassEnabled ? Colors.transparent : palette.surfaceRaised,
         borderRadius: BorderRadius.circular(32),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.12),
-            blurRadius: 40,
-            offset: const Offset(0, -8),
-          ),
-        ],
+        boxShadow: glassEnabled
+            ? null
+            : [
+                BoxShadow(
+                  color: palette.shadow,
+                  blurRadius: 40,
+                  offset: const Offset(0, -8),
+                ),
+              ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -36,17 +43,17 @@ class CreateEntrySheet extends StatelessWidget {
             width: 36,
             height: 5,
             decoration: BoxDecoration(
-              color: const Color(0xFFE0E0E2),
+              color: palette.border,
               borderRadius: BorderRadius.circular(2.5),
             ),
           ),
           const SizedBox(height: 20),
-          const Text(
+          Text(
             'Что хотите создать?',
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w500,
-              color: Color(0xFF111111),
+              color: palette.ink,
               letterSpacing: -0.3,
             ),
           ),
@@ -82,6 +89,13 @@ class CreateEntrySheet extends StatelessWidget {
         ],
       ),
     );
+
+    if (!glassEnabled) return content;
+    return AppGlassSurface(
+      density: 0.98,
+      borderRadius: BorderRadius.circular(32),
+      child: content,
+    );
   }
 }
 
@@ -100,26 +114,35 @@ class _CreateOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final glassEnabled = context.appGlass.enabled;
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
         height: 78,
         padding: const EdgeInsets.symmetric(horizontal: 18),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: glassEnabled
+              ? palette.ink.withValues(alpha: 0.055)
+              : palette.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFE9E9EC)),
+          border: Border.all(
+            color: glassEnabled
+                ? palette.ink.withValues(alpha: 0.12)
+                : palette.border,
+          ),
         ),
         child: Row(
           children: [
             Container(
               width: 48,
               height: 48,
-              decoration: const BoxDecoration(
-                color: Color(0xFFF6F6F7),
+              decoration: BoxDecoration(
+                color: palette.surfaceMuted,
                 shape: BoxShape.circle,
               ),
-              child: Icon(icon, size: 24, color: const Color(0xFF111111)),
+              child: Icon(icon, size: 24, color: palette.ink),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -129,26 +152,26 @@ class _CreateOption extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w500,
-                      color: Color(0xFF111111),
+                      color: palette.ink,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     subtitle,
                     maxLines: 2,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
-                      color: Color(0xFF8E8E94),
+                      color: palette.muted,
                       height: 1.3,
                     ),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, size: 22, color: Color(0xFFB8B8BE)),
+            Icon(Icons.chevron_right, size: 22, color: palette.muted),
           ],
         ),
       ),
