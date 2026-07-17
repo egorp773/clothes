@@ -122,7 +122,7 @@ void main() {
     expect(find.text('137'), findsOneWidget);
   });
 
-  testWidgets('outfit detail shows author avatar, date, views and likes', (
+  testWidgets('outfit detail shows author avatar, date and views', (
     tester,
   ) async {
     final publishedAt = DateTime(2026, 7, 16, 12, 34);
@@ -153,7 +153,7 @@ void main() {
     );
     expect(find.text('Опубликовано: 16.07.2026, 12:34'), findsOneWidget);
     expect(find.bySemanticsLabel('138 просмотров'), findsOneWidget);
-    expect(find.bySemanticsLabel('9 лайков'), findsOneWidget);
+    expect(find.bySemanticsLabel('9 лайков'), findsNothing);
 
     final dateLeft = tester.getTopLeft(
       find.text('Опубликовано: 16.07.2026, 12:34'),
@@ -183,7 +183,7 @@ void main() {
     expect(find.text('Lil Yachty'), findsNothing);
     expect(find.text('Endless Denim'), findsNothing);
     expect(find.bySemanticsLabel('0 просмотров'), findsOneWidget);
-    expect(find.bySemanticsLabel('0 лайков'), findsOneWidget);
+    expect(find.bySemanticsLabel('0 лайков'), findsNothing);
   });
 }
 

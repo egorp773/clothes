@@ -1058,7 +1058,6 @@ class _OutfitDetailScreenState extends State<_OutfitDetailScreen> {
                 _OutfitPublicationMeta(
                   publishedAt: widget.publishedAt,
                   viewsCount: _viewsCount,
-                  likesCount: _likesCount,
                 ),
                 _MoreOutfitsSection(
                   authorName: _authorName,
@@ -1658,19 +1657,16 @@ class _OutfitPublicationMeta extends StatelessWidget {
   const _OutfitPublicationMeta({
     required this.publishedAt,
     required this.viewsCount,
-    required this.likesCount,
     this.horizontalPadding = 24,
   });
 
   final DateTime? publishedAt;
   final int viewsCount;
-  final int likesCount;
   final double horizontalPadding;
 
   @override
   Widget build(BuildContext context) {
     final safeViewsCount = viewsCount.clamp(0, 1 << 31).toInt();
-    final safeLikesCount = likesCount.clamp(0, 1 << 31).toInt();
     return Container(
       width: double.infinity,
       padding: EdgeInsets.fromLTRB(
@@ -1703,12 +1699,6 @@ class _OutfitPublicationMeta extends StatelessWidget {
             icon: Icons.visibility_outlined,
             count: safeViewsCount,
             semanticsLabel: '$safeViewsCount просмотров',
-          ),
-          const SizedBox(width: 10),
-          _OutfitMetric(
-            icon: Icons.favorite_border_rounded,
-            count: safeLikesCount,
-            semanticsLabel: '$safeLikesCount лайков',
           ),
         ],
       ),
@@ -1983,7 +1973,6 @@ class _PublishedOutfitCardState extends State<_PublishedOutfitCard> {
               _OutfitPublicationMeta(
                 publishedAt: widget.outfit.publishedAt,
                 viewsCount: widget.outfit.viewsCount,
-                likesCount: widget.outfit.likesCount,
                 horizontalPadding: 16 * widget.scale,
               ),
             ],

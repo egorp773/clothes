@@ -1821,8 +1821,7 @@ class _CharacteristicLine extends StatelessWidget {
               text: '$label:',
               style: const TextStyle(color: Color(0xFF77777C)),
             ),
-            if (normalized.isNotEmpty)
-              TextSpan(text: ' $normalized', style: _productInfoBodyTextStyle),
+            if (normalized.isNotEmpty) TextSpan(text: ' $normalized'),
           ],
         ),
         style: _productInfoBodyTextStyle,

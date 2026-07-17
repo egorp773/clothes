@@ -25,18 +25,25 @@ class ChatAvatar extends StatelessWidget {
     bool showOnline = false,
   }) {
     final hasProduct = thread.productImage.trim().isNotEmpty;
+    final showProductAsPrimary = thread.isProductChat && hasProduct;
     return ChatAvatar(
       key: key,
-      imageUrl: thread.displayAvatar(currentUserId),
-      name: thread.displayTitle(currentUserId),
+      imageUrl: showProductAsPrimary
+          ? thread.productImage
+          : thread.displayAvatar(currentUserId),
+      name: showProductAsPrimary
+          ? thread.productTitle
+          : thread.displayTitle(currentUserId),
       size: size,
-      isGroup: thread.isGroup,
-      members: thread.members
-          .where((member) => member.id != currentUserId)
-          .toList(growable: false),
-      productImage: hasProduct ? thread.productImage : '',
+      isGroup: !showProductAsPrimary && thread.isGroup,
+      members: showProductAsPrimary
+          ? const []
+          : thread.members
+                .where((member) => member.id != currentUserId)
+                .toList(growable: false),
+      productImage: '',
       showOnline: showOnline,
-      isProduct: false,
+      isProduct: showProductAsPrimary,
     );
   }
 

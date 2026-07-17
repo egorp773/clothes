@@ -74,12 +74,17 @@ void main() {
           .renderObject<RenderParagraph>(characteristicFinder)
           .text
           .style;
+      final characteristicSpan =
+          tester.renderObject<RenderParagraph>(characteristicFinder).text
+              as TextSpan;
+      final valueSpan = characteristicSpan.children!.last as TextSpan;
 
       expect(characteristic?.fontSize, description?.fontSize);
       expect(characteristic?.height, description?.height);
       expect(characteristic?.fontWeight, description?.fontWeight);
       expect(characteristic?.fontFamily, AppTypography.fontFamily);
       expect(description?.fontFamily, AppTypography.fontFamily);
+      expect(valueSpan.style, isNull);
     },
   );
 }

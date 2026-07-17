@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('product chat keeps the person avatar as the primary image', (
+  testWidgets('product chat uses the product photo as a square primary image', (
     tester,
   ) async {
     final thread = MessageThread(
@@ -31,12 +31,13 @@ void main() {
       ),
     );
 
-    final images = tester
-        .widgetList<AppImage>(find.byType(AppImage))
-        .map((image) => image.imageUrl)
-        .toList();
-    expect(images.first, 'https://example.com/seller.jpg');
-    expect(images.last, 'https://example.com/product.jpg');
+    final avatar = tester.widget<ChatAvatar>(find.byType(ChatAvatar));
+    expect(avatar.imageUrl, 'https://example.com/product.jpg');
+    expect(avatar.productImage, isEmpty);
+    expect(avatar.isProduct, isTrue);
+
+    final image = tester.widget<AppImage>(find.byType(AppImage));
+    expect(image.imageUrl, 'https://example.com/product.jpg');
   });
 
   testWidgets('group messages render the current sender avatar', (
