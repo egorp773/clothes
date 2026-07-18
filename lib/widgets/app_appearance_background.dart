@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -11,10 +12,17 @@ class AppAppearanceBackground extends StatelessWidget {
     super.key,
     required this.settings,
     required this.child,
+    this.wallpaperBytes,
   });
 
   final AppAppearanceSettings settings;
   final Widget child;
+
+  /// In-memory wallpaper selected by an editor before it is persisted.
+  ///
+  /// Keeping it inside the shared backdrop widget makes the draft preview use
+  /// exactly the same fit, blur and dim pipeline as a saved wallpaper.
+  final Uint8List? wallpaperBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +39,10 @@ class AppAppearanceBackground extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             if (isCustom && settings.background == AppBackgroundStyle.photo)
-              _PhotoWallpaper(settings: settings),
+              _PhotoWallpaper(
+                settings: settings,
+                wallpaperBytes: wallpaperBytes,
+              ),
             if (isCustom && settings.background == AppBackgroundStyle.pattern)
               AppAppearancePattern(
                 style: settings.pattern,
@@ -47,13 +58,20 @@ class AppAppearanceBackground extends StatelessWidget {
 }
 
 class _PhotoWallpaper extends StatelessWidget {
-  const _PhotoWallpaper({required this.settings});
+  const _PhotoWallpaper({required this.settings, this.wallpaperBytes});
 
   final AppAppearanceSettings settings;
+  final Uint8List? wallpaperBytes;
 
   @override
   Widget build(BuildContext context) {
-    final wallpaper = buildAppearanceWallpaperImage(settings.wallpaperPath);
+    final wallpaper = wallpaperBytes == null
+        ? buildAppearanceWallpaperImage(settings.wallpaperPath)
+        : Image.memory(
+            wallpaperBytes!,
+            fit: BoxFit.cover,
+            gaplessPlayback: true,
+          );
     return RepaintBoundary(
       child: Stack(
         fit: StackFit.expand,

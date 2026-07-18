@@ -5,6 +5,7 @@ import 'package:clothes/data/app_repository.dart';
 import 'package:clothes/models/message_thread.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -145,6 +146,75 @@ void main() {
       expect(remoteWins.single.messages.single.hasError, isFalse);
     },
   );
+
+  test('stale sync response cannot erase a just-delivered message', () {
+    final delivered = ChatMessage(
+      id: 'client-delivered-during-sync',
+      text: 'Уже доставлено',
+      createdAt: DateTime.utc(2026, 7, 18, 12, 1),
+      isMine: true,
+      senderId: 'guest',
+    );
+    final liveLocal = _thread(messages: [delivered]);
+
+    final merged = AppRepository.mergeChatOutgoingState(
+      [_thread()],
+      {liveLocal.id: liveLocal},
+    );
+
+    expect(merged.single.messages, hasLength(1));
+    expect(merged.single.messages.single.id, delivered.id);
+    expect(merged.single.messages.single.isPending, isFalse);
+    expect(merged.single.messages.single.hasError, isFalse);
+  });
+
+  test('a newer local delivery state replaces an earlier pending merge', () {
+    final pending = ChatMessage(
+      id: 'same-client-id',
+      text: 'Сообщение',
+      createdAt: DateTime.utc(2026, 7, 18, 12, 2),
+      isMine: true,
+      senderId: 'guest',
+      isPending: true,
+    );
+    final delivered = pending.copyWith(isPending: false);
+
+    final merged = AppRepository.mergeChatOutgoingState(
+      [
+        _thread(messages: [pending]),
+      ],
+      {
+        _thread().id: _thread(messages: [delivered]),
+      },
+    );
+
+    expect(merged.single.messages, hasLength(1));
+    expect(merged.single.messages.single.id, pending.id);
+    expect(merged.single.messages.single.isPending, isFalse);
+  });
+
+  test('only terminal auth refresh failures require local sign-out', () {
+    expect(
+      AppRepository.isTerminalAuthRefreshError(AuthSessionMissingException()),
+      isTrue,
+    );
+    expect(
+      AppRepository.isTerminalAuthRefreshError(
+        AuthApiException(
+          'refresh token rejected',
+          statusCode: '401',
+          code: 'refresh_token_not_found',
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      AppRepository.isTerminalAuthRefreshError(
+        AuthRetryableFetchException(message: 'network unavailable'),
+      ),
+      isFalse,
+    );
+  });
 }
 
 Future<AppRepository> _repositoryWithThread(MessageThread thread) async {

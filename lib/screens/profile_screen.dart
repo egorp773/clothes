@@ -1735,7 +1735,7 @@ class _ProfileCollectionTab extends StatelessWidget {
           duration: const Duration(milliseconds: 160),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: isActive ? palette.ink : Colors.transparent,
+            color: isActive ? palette.accent : Colors.transparent,
             borderRadius: BorderRadius.circular(11),
           ),
           child: Text(
@@ -1748,7 +1748,7 @@ class _ProfileCollectionTab extends StatelessWidget {
               fontWeight: FontWeight.w700,
               height: 1,
               letterSpacing: 0,
-              color: isActive ? palette.page : palette.ink,
+              color: isActive ? palette.onAccent : palette.ink,
             ),
           ),
         ),
@@ -2646,6 +2646,7 @@ class _CatalogInfo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2653,13 +2654,13 @@ class _CatalogInfo extends StatelessWidget {
           title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'Montserrat',
             fontSize: 13.5,
             fontWeight: FontWeight.w500,
             height: 1.08,
             letterSpacing: 0,
-            color: Color(0xFF070707),
+            color: palette.ink,
           ),
         ),
         const SizedBox(height: 1),
@@ -2677,7 +2678,7 @@ class _CatalogInfo extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                   height: 1,
                   letterSpacing: 0,
-                  color: Color(0xFF070707),
+                  color: palette.accentEmphasis,
                 ),
               ),
             ),
@@ -2687,7 +2688,7 @@ class _CatalogInfo extends StatelessWidget {
               child: Icon(
                 isLiked ? Icons.favorite : Icons.favorite_border,
                 size: 23,
-                color: const Color(0xFF070707),
+                color: palette.ink,
               ),
             ),
             const SizedBox(width: 4),

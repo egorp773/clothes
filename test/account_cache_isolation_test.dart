@@ -37,6 +37,7 @@ void main() {
         RegExp(
           r'if \(previousUserId != currentUserId\) \{\s*'
           r'_chatMediaUrlCache\.clear\(\);\s*'
+          r'_knownRemoteThreadIds\.clear\(\);\s*'
           r'_loadLocalUserState\(\);',
         ),
       ),

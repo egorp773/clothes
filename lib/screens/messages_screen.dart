@@ -82,9 +82,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
   Timer? _searchDebounce;
   List<AppUserProfile> _searchResults = const [];
   bool _isSearching = false;
+  String? _searchError;
   String _query = '';
   _InboxFilter _filter = _InboxFilter.all;
   final Set<String> _openingUserIds = <String>{};
+  final Set<String> _openingThreadIds = <String>{};
+  bool _isComposing = false;
 
   @override
   void dispose() {
@@ -95,61 +98,90 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   void _onSearchChanged(String value) {
     _searchDebounce?.cancel();
-    setState(() => _query = value.trim());
+    setState(() {
+      _query = value.trim();
+      _searchError = null;
+    });
     _searchDebounce = Timer(const Duration(milliseconds: 240), () async {
-      final requestedQuery = _query;
-      final clean = requestedQuery.replaceAll('@', '');
-      if (clean.length < 2) {
-        if (!mounted) return;
-        setState(() {
-          _searchResults = const [];
-          _isSearching = false;
-        });
-        return;
-      }
+      await _searchUsers(_query);
+    });
+  }
 
-      if (mounted) setState(() => _isSearching = true);
-      List<AppUserProfile> results;
-      try {
-        results = await widget.onSearchUsers(requestedQuery);
-      } catch (error, stackTrace) {
-        _logChatUiFailure('search users', error, stackTrace);
-        results = const [];
-      }
+  Future<void> _searchUsers(String requestedQuery) async {
+    final clean = requestedQuery.replaceAll('@', '');
+    if (clean.length < 2) {
+      if (!mounted || requestedQuery != _query) return;
+      setState(() {
+        _searchResults = const [];
+        _isSearching = false;
+        _searchError = null;
+      });
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _isSearching = true;
+        _searchError = null;
+      });
+    }
+    try {
+      final results = await widget.onSearchUsers(requestedQuery);
       if (!mounted || requestedQuery != _query) return;
       setState(() {
         _searchResults = results;
         _isSearching = false;
       });
-    });
+    } catch (error, stackTrace) {
+      _logChatUiFailure('search users', error, stackTrace);
+      if (!mounted || requestedQuery != _query) return;
+      setState(() {
+        _searchResults = const [];
+        _isSearching = false;
+        _searchError =
+            'Не удалось выполнить поиск. Проверьте подключение и повторите.';
+      });
+    }
   }
 
   Future<void> _openThread(MessageThread thread) async {
-    await Navigator.of(context, rootNavigator: true).push(
-      MaterialPageRoute<void>(
-        builder: (context) => ChatScreen(
-          thread: thread,
-          onSendMessage: widget.onSendMessage,
-          onOpenProduct: widget.onOpenProduct,
-          currentUserId: widget.currentUserId,
-          threadsListenable: widget.threadsListenable,
-          resolveThread: widget.resolveThread,
-          lastSeenForUser: widget.lastSeenForUser,
-          actions: widget.actions,
-          onOpenSellerProfile: widget.onOpenSellerProfile == null
-              ? null
-              : () => widget.onOpenSellerProfile!(thread),
-          onBuyProduct: widget.onBuyProduct == null
-              ? null
-              : () => widget.onBuyProduct!(thread),
+    final threadKey = thread.id.isEmpty
+        ? '${thread.buyerId}:${thread.sellerId}:${thread.productId}'
+        : thread.id;
+    if (!_openingThreadIds.add(threadKey)) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    try {
+      final latest = widget.resolveThread(thread.id) ?? thread;
+      await Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute<void>(
+          builder: (context) => ChatScreen(
+            thread: latest,
+            onSendMessage: widget.onSendMessage,
+            onOpenProduct: widget.onOpenProduct,
+            currentUserId: widget.currentUserId,
+            threadsListenable: widget.threadsListenable,
+            resolveThread: widget.resolveThread,
+            lastSeenForUser: widget.lastSeenForUser,
+            actions: widget.actions,
+            onOpenSellerProfile: widget.onOpenSellerProfile == null
+                ? null
+                : () => widget.onOpenSellerProfile!(latest),
+            onBuyProduct: widget.onBuyProduct == null
+                ? null
+                : () => widget.onBuyProduct!(latest),
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _openingThreadIds.remove(threadKey);
+    }
   }
 
   Future<void> _openUser(AppUserProfile user) async {
-    final userKey = user.id.isEmpty ? '${user.handle}:${user.name}' : user.id;
+    final userKey = _profileKey(user);
     if (!_openingUserIds.add(userKey)) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (mounted) setState(() {});
     final sourceRoute = ModalRoute.of(context);
     try {
       final thread = await widget.onStartDirectChat(user);
@@ -187,23 +219,30 @@ class _MessagesScreenState extends State<MessagesScreen> {
       }
     } finally {
       _openingUserIds.remove(userKey);
+      if (mounted) setState(() {});
     }
   }
 
   Future<void> _compose() async {
-    final thread = await showModalBottomSheet<MessageThread>(
-      context: context,
-      useRootNavigator: true,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black.withValues(alpha: 0.35),
-      builder: (context) => _NewConversationSheet(
-        onSearchUsers: widget.onSearchUsers,
-        onCreateConversation: widget.onCreateConversation,
-      ),
-    );
-    if (!mounted || thread == null) return;
-    await _openThread(thread);
+    if (_isComposing) return;
+    setState(() => _isComposing = true);
+    try {
+      final thread = await showModalBottomSheet<MessageThread>(
+        context: context,
+        useRootNavigator: true,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        barrierColor: Colors.black.withValues(alpha: 0.35),
+        builder: (context) => _NewConversationSheet(
+          onSearchUsers: widget.onSearchUsers,
+          onCreateConversation: widget.onCreateConversation,
+        ),
+      );
+      if (!mounted || thread == null) return;
+      await _openThread(thread);
+    } finally {
+      if (mounted) setState(() => _isComposing = false);
+    }
   }
 
   Future<void> _showThreadActions(MessageThread thread) async {
@@ -396,9 +435,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
     } else if (isSearchMode) {
       content = _SearchResults(
         isSearching: _isSearching,
+        errorMessage: _searchError,
+        onRetry: () => _searchUsers(_query),
         query: _query,
         results: _searchResults,
         onTapUser: _openUser,
+        openingUserIds: _openingUserIds,
         threads: localMatches,
         currentUserId: widget.currentUserId,
         onTapThread: _openThread,
@@ -417,7 +459,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
           return _ThreadTile(
             thread: thread,
             currentUserId: widget.currentUserId,
-            onTap: () => _openThread(thread),
+            onTap: _openingThreadIds.contains(_threadKey(thread))
+                ? null
+                : () => _openThread(thread),
             onLongPress: () => _showThreadActions(thread),
           );
         },
@@ -433,6 +477,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
             controller: _searchController,
             onChanged: _onSearchChanged,
             totalThreads: visibleThreads.length,
+            isComposing: _isComposing,
             onCompose: widget.isAuthenticated && !widget.isLoading
                 ? _compose
                 : (widget.onSignIn ?? () {}),
@@ -456,6 +501,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 }
 
+String _profileKey(AppUserProfile user) => user.id.trim().isNotEmpty
+    ? user.id.trim()
+    : '${user.handle.trim().toLowerCase()}:${user.name.trim().toLowerCase()}';
+
+String _threadKey(MessageThread thread) => thread.id.trim().isNotEmpty
+    ? thread.id.trim()
+    : '${thread.buyerId}:${thread.sellerId}:${thread.productId}';
+
 bool _shouldShowThread(MessageThread thread, String currentUserId) {
   if (currentUserId.isNotEmpty && !thread.containsUser(currentUserId)) {
     return false;
@@ -476,6 +529,7 @@ class _MessagesHeader extends StatelessWidget {
     required this.filter,
     required this.onFilterChanged,
     required this.archivedCount,
+    this.isComposing = false,
   });
 
   final TextEditingController controller;
@@ -485,6 +539,7 @@ class _MessagesHeader extends StatelessWidget {
   final _InboxFilter filter;
   final ValueChanged<_InboxFilter> onFilterChanged;
   final int archivedCount;
+  final bool isComposing;
 
   @override
   Widget build(BuildContext context) {
@@ -520,7 +575,8 @@ class _MessagesHeader extends StatelessWidget {
                   ),
                 ),
                 IconButton.filled(
-                  onPressed: onCompose,
+                  key: const Key('messages-compose-button'),
+                  onPressed: isComposing ? null : onCompose,
                   style: IconButton.styleFrom(
                     overlayColor: Colors.transparent,
                     backgroundColor: Theme.of(context).colorScheme.primary,
@@ -632,18 +688,24 @@ class _SearchField extends StatelessWidget {
 class _SearchResults extends StatelessWidget {
   const _SearchResults({
     required this.isSearching,
+    required this.errorMessage,
+    required this.onRetry,
     required this.query,
     required this.results,
     required this.onTapUser,
+    required this.openingUserIds,
     required this.threads,
     required this.currentUserId,
     required this.onTapThread,
   });
 
   final bool isSearching;
+  final String? errorMessage;
+  final VoidCallback onRetry;
   final String query;
   final List<AppUserProfile> results;
   final ValueChanged<AppUserProfile> onTapUser;
+  final Set<String> openingUserIds;
   final List<MessageThread> threads;
   final String currentUserId;
   final ValueChanged<MessageThread> onTapThread;
@@ -656,6 +718,16 @@ class _SearchResults extends StatelessWidget {
           strokeWidth: 2,
           color: context.appPalette.ink,
         ),
+      );
+    }
+    final error = errorMessage?.trim() ?? '';
+    if (error.isNotEmpty && threads.isEmpty) {
+      return _InboxStatus(
+        icon: Icons.cloud_off_outlined,
+        title: 'Не удалось найти пользователя',
+        subtitle: error,
+        actionLabel: 'Повторить',
+        onAction: onRetry,
       );
     }
     if (results.isEmpty && threads.isEmpty) {
@@ -671,6 +743,13 @@ class _SearchResults extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.only(bottom: 112),
       children: [
+        if (error.isNotEmpty)
+          _InlineChatError(
+            key: const Key('user-search-inline-error'),
+            message: error,
+            actionLabel: 'Повторить',
+            onAction: onRetry,
+          ),
         if (threads.isNotEmpty) ...[
           const _SearchSectionTitle('Чаты и сообщения'),
           ...threads.map(
@@ -683,9 +762,10 @@ class _SearchResults extends StatelessWidget {
         ],
         if (results.isNotEmpty) ...[
           const _SearchSectionTitle('Люди'),
-          ...results.map(
-            (profile) => ListTile(
-              onTap: () => onTapUser(profile),
+          ...results.map((profile) {
+            final isOpening = openingUserIds.contains(_profileKey(profile));
+            return ListTile(
+              onTap: isOpening ? null : () => onTapUser(profile),
               minVerticalPadding: 12,
               contentPadding: const EdgeInsets.symmetric(horizontal: 18),
               leading: _Avatar(
@@ -707,12 +787,21 @@ class _SearchResults extends StatelessWidget {
                 profile.handle,
                 style: TextStyle(fontSize: 14, color: context.appPalette.muted),
               ),
-              trailing: Icon(
-                Icons.chevron_right,
-                color: context.appPalette.muted,
-              ),
-            ),
-          ),
+              trailing: isOpening
+                  ? SizedBox(
+                      key: ValueKey(
+                        'direct-chat-opening-${_profileKey(profile)}',
+                      ),
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: context.appPalette.ink,
+                      ),
+                    )
+                  : Icon(Icons.chevron_right, color: context.appPalette.muted),
+            );
+          }),
         ],
       ],
     );
@@ -765,6 +854,8 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
   List<AppUserProfile> _results = const [];
   bool _searching = false;
   bool _creating = false;
+  String? _searchError;
+  String? _createError;
 
   @override
   void dispose() {
@@ -781,39 +872,54 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
       setState(() {
         _results = const [];
         _searching = false;
+        _searchError = null;
       });
       return;
     }
-    setState(() => _searching = true);
+    setState(() {
+      _searching = true;
+      _searchError = null;
+    });
     _debounce = Timer(const Duration(milliseconds: 220), () async {
-      List<AppUserProfile> results;
       try {
-        results = await widget.onSearchUsers(query);
+        final results = await widget.onSearchUsers(query);
+        if (!mounted || _searchController.text.trim() != query) return;
+        setState(() {
+          _results = results;
+          _searching = false;
+        });
       } catch (error, stackTrace) {
         _logChatUiFailure('search conversation members', error, stackTrace);
-        results = const [];
+        if (!mounted || _searchController.text.trim() != query) return;
+        setState(() {
+          _results = const [];
+          _searching = false;
+          _searchError =
+              'Не удалось загрузить пользователей. Проверьте подключение.';
+        });
       }
-      if (!mounted || _searchController.text.trim() != query) return;
-      setState(() {
-        _results = results;
-        _searching = false;
-      });
     });
   }
 
   void _toggle(AppUserProfile user) {
+    final userKey = _profileKey(user);
     setState(() {
-      if (_selected.containsKey(user.id)) {
-        _selected.remove(user.id);
+      _createError = null;
+      if (_selected.containsKey(userKey)) {
+        _selected.remove(userKey);
       } else {
-        _selected[user.id] = user;
+        _selected[userKey] = user;
       }
     });
   }
 
   Future<void> _create() async {
     if (_selected.isEmpty || _creating) return;
-    setState(() => _creating = true);
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _creating = true;
+      _createError = null;
+    });
     MessageThread? thread;
     try {
       thread = await widget.onCreateConversation(
@@ -828,24 +934,24 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
     if (thread != null) {
       Navigator.pop(context, thread);
     } else {
-      setState(() => _creating = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Не удалось создать беседу'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      setState(() {
+        _creating = false;
+        _createError =
+            'Не удалось создать беседу. Проверьте подключение и повторите.';
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+    final media = MediaQuery.of(context);
+    final keyboard = media.viewInsets.bottom;
+    final preferredHeight = media.size.height * 0.84;
     return AnimatedPadding(
       duration: const Duration(milliseconds: 180),
       padding: EdgeInsets.only(bottom: keyboard),
-      child: FractionallySizedBox(
-        heightFactor: 0.84,
+      child: SizedBox(
+        height: preferredHeight,
         child: Material(
           color: context.appPalette.surfaceRaised,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
@@ -891,6 +997,13 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                     onChanged: _search,
                   ),
                 ),
+                if (_searchError != null)
+                  _InlineChatError(
+                    key: const Key('new-chat-search-error'),
+                    message: _searchError!,
+                    actionLabel: 'Повторить',
+                    onAction: () => _search(_searchController.text),
+                  ),
                 if (_selected.isNotEmpty) ...[
                   SizedBox(
                     height: 88,
@@ -953,6 +1066,11 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                       ),
                     ),
                 ],
+                if (_createError != null)
+                  _InlineChatError(
+                    key: const Key('new-chat-create-error'),
+                    message: _createError!,
+                  ),
                 Divider(height: 1, color: context.appPalette.border),
                 Expanded(
                   child: _searching
@@ -977,7 +1095,9 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
                           ),
                           itemBuilder: (context, index) {
                             final user = _results[index];
-                            final selected = _selected.containsKey(user.id);
+                            final selected = _selected.containsKey(
+                              _profileKey(user),
+                            );
                             return ListTile(
                               onTap: () => _toggle(user),
                               contentPadding: const EdgeInsets.symmetric(
@@ -1108,6 +1228,9 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
   final TextEditingController _chatSearchController = TextEditingController();
+  final FocusNode _composerFocusNode = FocusNode(
+    debugLabel: 'message-composer',
+  );
   final ScrollController _scrollController = ScrollController();
   final ImagePicker _imagePicker = ImagePicker();
   Timer? _draftDebounce;
@@ -1298,8 +1421,17 @@ class _ChatScreenState extends State<ChatScreen> {
     _controller.removeListener(_saveDraftLater);
     _controller.dispose();
     _chatSearchController.dispose();
+    _composerFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _focusComposer() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _composerFocusNode.canRequestFocus) {
+        _composerFocusNode.requestFocus();
+      }
+    });
   }
 
   void _saveDraftLater() {
@@ -1330,6 +1462,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _replyTo = message;
       _editingMessage = null;
     });
+    _focusComposer();
   }
 
   void _editChatMessage(ChatMessage message) {
@@ -1341,6 +1474,7 @@ class _ChatScreenState extends State<ChatScreen> {
         offset: _controller.text.length,
       );
     });
+    _focusComposer();
   }
 
   Future<void> _deleteChatMessage(ChatMessage message) async {
@@ -1748,7 +1882,7 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       sent = await retry(_thread.id, message);
     } catch (error, stackTrace) {
-      _logChatUiFailure('retry text message', error, stackTrace);
+      _logChatUiFailure('retry message', error, stackTrace);
       sent = false;
     }
     if (!mounted) return;
@@ -1901,6 +2035,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             _MessageComposer(
               controller: _controller,
+              focusNode: _composerFocusNode,
               isSending: _isSending,
               onSend: _send,
               replyTo: _replyTo,
@@ -1963,6 +2098,59 @@ class _InboxSyncErrorBanner extends StatelessWidget {
               child: const Text('Повторить'),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _InlineChatError extends StatelessWidget {
+  const _InlineChatError({
+    super.key,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(14, 10, 14, 2),
+        padding: const EdgeInsets.fromLTRB(12, 8, 7, 8),
+        decoration: BoxDecoration(
+          color: context.appPalette.surfaceMuted,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: context.appPalette.border, width: 0.6),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.cloud_off_outlined,
+              size: 19,
+              color: context.appPalette.muted,
+            ),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Text(
+                message,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.25,
+                  color: context.appPalette.ink,
+                ),
+              ),
+            ),
+            if (actionLabel != null && onAction != null)
+              TextButton(onPressed: onAction, child: Text(actionLabel!)),
+          ],
+        ),
       ),
     );
   }
@@ -2066,44 +2254,64 @@ class _CenteredHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: context.appPalette.surfaceMuted,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, size: 32, color: context.appPalette.ink),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final boundedHeight = constraints.hasBoundedHeight
+            ? constraints.maxHeight
+            : double.infinity;
+        final compact = boundedHeight < 190;
+        final veryCompact = boundedHeight < 120;
+        return Center(
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: 32,
+              vertical: veryCompact ? 2 : 8,
             ),
-            const SizedBox(height: 16),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w500,
-                color: context.appPalette.ink,
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!compact) ...[
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: context.appPalette.surfaceMuted,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(icon, size: 32, color: context.appPalette.ink),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  maxLines: veryCompact ? 1 : 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: veryCompact ? 15 : 18,
+                    fontWeight: FontWeight.w500,
+                    color: context.appPalette.ink,
+                  ),
+                ),
+                if (!veryCompact) ...[
+                  const SizedBox(height: 7),
+                  Text(
+                    subtitle,
+                    textAlign: TextAlign.center,
+                    maxLines: compact ? 2 : 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      height: 1.35,
+                      color: context.appPalette.muted,
+                    ),
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(height: 7),
-            Text(
-              subtitle,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.35,
-                color: context.appPalette.muted,
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -2118,7 +2326,7 @@ class _ThreadTile extends StatelessWidget {
 
   final MessageThread thread;
   final String currentUserId;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
   @override
@@ -3313,6 +3521,7 @@ class _SharedProductCard extends StatelessWidget {
 class _MessageComposer extends StatelessWidget {
   const _MessageComposer({
     required this.controller,
+    required this.focusNode,
     required this.isSending,
     required this.onSend,
     required this.replyTo,
@@ -3322,6 +3531,7 @@ class _MessageComposer extends StatelessWidget {
   });
 
   final TextEditingController controller;
+  final FocusNode focusNode;
   final bool isSending;
   final VoidCallback onSend;
   final ChatMessage? replyTo;
@@ -3430,7 +3640,13 @@ class _MessageComposer extends StatelessWidget {
                       child: TextField(
                         key: const Key('message-composer-field'),
                         controller: controller,
-                        enabled: !isSending,
+                        focusNode: focusNode,
+                        enabled: true,
+                        // Keep the focus node alive while an edit or media
+                        // upload is in flight. Disabling a TextField ejects
+                        // the keyboard and makes a transient request failure
+                        // feel like the composer stopped working.
+                        readOnly: isSending,
                         keyboardType: TextInputType.multiline,
                         textCapitalization: TextCapitalization.sentences,
                         minLines: 1,

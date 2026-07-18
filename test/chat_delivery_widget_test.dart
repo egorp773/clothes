@@ -225,6 +225,40 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('composer stays above the keyboard on a small phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+    final listenable = ValueNotifier<int>(0);
+    addTearDown(listenable.dispose);
+    final thread = _threadWithMessages(const []);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          thread: thread,
+          onSendMessage: (_, _) async {},
+          currentUserId: 'me',
+          threadsListenable: listenable,
+          resolveThread: (_) => thread,
+          lastSeenForUser: (_) => null,
+        ),
+      ),
+    );
+    tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(tester.takeException(), isNull);
+    final composer = find.byKey(const Key('message-composer-field'));
+    expect(composer, findsOneWidget);
+    expect(tester.getBottomLeft(composer).dy, lessThanOrEqualTo(288));
+  });
+
   testWidgets(
     'repository listener keeps a client-id optimistic message singular',
     (tester) async {
@@ -324,10 +358,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Ответить'));
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const Key('message-composer-field')),
-      'Ответ с одним id',
-    );
+    final composer = find.byKey(const Key('message-composer-field'));
+    expect(tester.widget<TextField>(composer).focusNode?.hasFocus, isTrue);
+    expect(tester.testTextInput.isVisible, isTrue);
+    await tester.enterText(composer, 'Ответ с одним id');
     await tester.pump();
     await tester.tap(find.byKey(const Key('message-send-button')));
     await tester.pumpAndSettle();
@@ -335,6 +369,62 @@ void main() {
     expect(submitted?.id, startsWith('pending-'));
     expect(submitted?.replyToId, source.id);
     expect(submitted?.replyToText, source.previewText);
+  });
+
+  testWidgets('failed edit keeps composer focus and edited draft', (
+    tester,
+  ) async {
+    final listenable = ValueNotifier<int>(0);
+    addTearDown(listenable.dispose);
+    final delivery = Completer<bool>();
+    final source = ChatMessage(
+      id: 'mine-1',
+      text: 'Исходный текст',
+      createdAt: DateTime.utc(2026, 7, 18, 11),
+      isMine: true,
+      senderId: 'me',
+      senderName: 'Me',
+    );
+    final thread = _threadWithMessages([source]);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          thread: thread,
+          onSendMessage: (_, _) async {},
+          currentUserId: 'me',
+          threadsListenable: listenable,
+          resolveThread: (_) => thread,
+          lastSeenForUser: (_) => null,
+          actions: ChatActions(editMessage: (_, _, _) => delivery.future),
+        ),
+      ),
+    );
+
+    await tester.longPress(find.text('Исходный текст'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Редактировать'));
+    await tester.pumpAndSettle();
+    final composer = find.byKey(const Key('message-composer-field'));
+    expect(tester.widget<TextField>(composer).focusNode?.hasFocus, isTrue);
+    await tester.enterText(composer, 'Исправленный текст');
+    await tester.tap(find.byKey(const Key('message-send-button')));
+    await tester.pump();
+
+    expect(tester.widget<TextField>(composer).readOnly, isTrue);
+    expect(tester.widget<TextField>(composer).focusNode?.hasFocus, isTrue);
+    delivery.complete(false);
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<TextField>(composer).readOnly, isFalse);
+    expect(
+      tester.widget<TextField>(composer).controller?.text,
+      'Исправленный текст',
+    );
+    expect(
+      find.textContaining('Не удалось сохранить изменения'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('failed text retries with the same optimistic message id', (

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:clothes/features/chat/chat_actions.dart';
 import 'package:clothes/models/app_profile.dart';
 import 'package:clothes/models/message_thread.dart';
 import 'package:clothes/screens/messages_screen.dart';
@@ -96,13 +97,17 @@ void main() {
         },
       ),
     );
-    await tester.enterText(find.byType(TextField).first, 'target');
+    await tester.enterText(find.byType(TextField).last, 'target');
     await tester.pump(const Duration(milliseconds: 260));
     await tester.pump();
     expect(find.text('Target User'), findsOneWidget);
 
     await tester.tap(find.text('Target User'));
     await tester.pump();
+    expect(
+      find.byKey(const ValueKey('direct-chat-opening-target-user')),
+      findsOneWidget,
+    );
     await tester.tap(find.text('Target User'));
     await tester.pump();
     expect(openCalls, 1);
@@ -110,6 +115,140 @@ void main() {
     opening.complete(null);
     await tester.pumpAndSettle();
     expect(openCalls, 1);
+  });
+
+  testWidgets('search failure is visible and can be retried', (tester) async {
+    final listenable = ChangeNotifier();
+    addTearDown(listenable.dispose);
+    var calls = 0;
+    const target = AppUserProfile(
+      id: 'target-user',
+      name: 'Target User',
+      handle: '@target',
+    );
+
+    await tester.pumpWidget(
+      _messagesApp(
+        threadsListenable: listenable,
+        onSearchUsers: (_) async {
+          calls++;
+          if (calls == 1) throw StateError('network unavailable');
+          return const [target];
+        },
+      ),
+    );
+    await tester.enterText(find.byType(TextField).first, 'target');
+    await tester.pump(const Duration(milliseconds: 260));
+    await tester.pump();
+
+    expect(find.text('Не удалось найти пользователя'), findsOneWidget);
+    expect(find.textContaining('Проверьте подключение'), findsOneWidget);
+    await tester.tap(find.text('Повторить'));
+    await tester.pump(const Duration(milliseconds: 260));
+    await tester.pump();
+
+    expect(calls, 2);
+    expect(find.text('Target User'), findsOneWidget);
+  });
+
+  testWidgets('existing thread opens a tappable composer and sends text', (
+    tester,
+  ) async {
+    final listenable = ChangeNotifier();
+    addTearDown(listenable.dispose);
+    final thread = _emptyDirectThread();
+    final sent = <String>[];
+
+    await tester.pumpWidget(
+      _messagesApp(
+        threads: [thread],
+        threadsListenable: listenable,
+        onSendMessage: (_, text) async => sent.add(text),
+      ),
+    );
+    await tester.tap(find.text('User'));
+    await tester.pumpAndSettle();
+
+    final composer = find.byKey(const Key('message-composer-field'));
+    expect(composer, findsOneWidget);
+    await tester.showKeyboard(composer);
+    await tester.enterText(composer, 'Реальное сообщение');
+    await tester.pump();
+    expect(tester.testTextInput.isVisible, isTrue);
+    expect(tester.widget<TextField>(composer).focusNode?.hasFocus, isTrue);
+
+    await tester.tap(find.byKey(const Key('message-send-button')));
+    await tester.pumpAndSettle();
+    expect(sent, ['Реальное сообщение']);
+    expect(find.text('Реальное сообщение'), findsOneWidget);
+  });
+
+  testWidgets('conversation creation failure stays visible inside the sheet', (
+    tester,
+  ) async {
+    final listenable = ChangeNotifier();
+    addTearDown(listenable.dispose);
+    const target = AppUserProfile(
+      id: 'target-user',
+      name: 'Target User',
+      handle: '@target',
+    );
+
+    await tester.pumpWidget(
+      _messagesApp(
+        threadsListenable: listenable,
+        onSearchUsers: (_) async => const [target],
+        onCreateConversation: (_, {title = ''}) async => null,
+      ),
+    );
+    await tester.tap(find.byKey(const Key('messages-compose-button')));
+    await tester.pumpAndSettle();
+    // The inbox search field remains mounted below the modal route; target
+    // the sheet field, which is the last one in paint order.
+    await tester.enterText(find.byType(TextField).last, 'target');
+    await tester.pump(const Duration(milliseconds: 240));
+    await tester.pump();
+    await tester.ensureVisible(find.text('Target User'));
+    await tester.pump();
+    await tester.tap(find.text('Target User'));
+    await tester.pump();
+    await tester.tap(find.text('Начать диалог'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Не удалось создать беседу'), findsOneWidget);
+    expect(find.byKey(const Key('new-chat-create-error')), findsOneWidget);
+    expect(find.text('Новая беседа'), findsOneWidget);
+  });
+
+  testWidgets('new conversation sheet remains usable above a small keyboard', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+    final listenable = ChangeNotifier();
+    addTearDown(listenable.dispose);
+
+    await tester.pumpWidget(_messagesApp(threadsListenable: listenable));
+    await tester.tap(find.byKey(const Key('messages-compose-button')));
+    await tester.pumpAndSettle();
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.takeException(), isNull);
+    final keyboardPadding = tester.widget<AnimatedPadding>(
+      find.byType(AnimatedPadding).last,
+    );
+    expect(
+      keyboardPadding.padding.resolve(TextDirection.ltr).bottom,
+      closeTo(280, 0.01),
+    );
+    final action = find.widgetWithText(FilledButton, 'Начать диалог');
+    expect(action, findsOneWidget);
+    expect(tester.getBottomLeft(action).dy, lessThanOrEqualTo(289));
   });
 }
 
@@ -123,15 +262,20 @@ Widget _messagesApp({
   VoidCallback? onSignIn,
   Future<List<AppUserProfile>> Function(String query)? onSearchUsers,
   Future<MessageThread?> Function(AppUserProfile user)? onStartDirectChat,
+  Future<MessageThread?> Function(List<AppUserProfile> users, {String title})?
+  onCreateConversation,
+  Future<void> Function(String threadId, String text)? onSendMessage,
+  ChatActions? actions,
 }) {
   return MaterialApp(
     home: Scaffold(
       body: MessagesScreen(
         threads: threads,
-        onSendMessage: (_, _) async {},
+        onSendMessage: onSendMessage ?? (_, _) async {},
         onSearchUsers: onSearchUsers ?? (_) async => const <AppUserProfile>[],
         onStartDirectChat: onStartDirectChat ?? (_) async => null,
-        onCreateConversation: (_, {title = ''}) async => null,
+        onCreateConversation:
+            onCreateConversation ?? (_, {title = ''}) async => null,
         currentUserId: 'me',
         threadsListenable: threadsListenable,
         resolveThread: (threadId) {
@@ -141,6 +285,7 @@ Widget _messagesApp({
           return null;
         },
         lastSeenForUser: (_) => null,
+        actions: actions,
         isLoading: isLoading,
         errorMessage: errorMessage,
         isAuthenticated: isAuthenticated,

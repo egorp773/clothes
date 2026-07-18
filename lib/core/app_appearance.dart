@@ -226,6 +226,11 @@ class AppAppearanceController extends ChangeNotifier {
   }
 }
 
+// Theme colors are immutable and reused throughout a frame. Cache the only
+// derived token that performs contrast solving so a catalog grid does not run
+// the luminance search independently for every price and selected control.
+final Expando<Color> _accentInkCache = Expando<Color>('appAccentInk');
+
 @immutable
 class AppPalette extends ThemeExtension<AppPalette> {
   const AppPalette({
@@ -249,6 +254,39 @@ class AppPalette extends ThemeExtension<AppPalette> {
   final Color muted;
   final Color accent;
   final Color shadow;
+
+  /// Accent fill for compact selected controls and primary actions.
+  ///
+  /// Use [accentInk] for accent-colored text or thin strokes: a user may pick
+  /// a very light accent that is attractive as a fill but illegible on a
+  /// light surface.
+  Color get onAccent => _readableOn(accent);
+
+  Color get accentInk {
+    final cached = _accentInkCache[this];
+    if (cached != null) return cached;
+    final resolved = _ensureContrast(
+      foreground: accent,
+      background: surfaceRaised,
+      minimumRatio: 4.5,
+    );
+    _accentInkCache[this] = resolved;
+    return resolved;
+  }
+
+  Color get accentSoft {
+    final isDarkSurface = surfaceRaised.computeLuminance() < 0.24;
+    return Color.alphaBlend(
+      accent.withValues(alpha: isDarkSurface ? 0.16 : 0.11),
+      surfaceRaised,
+    );
+  }
+
+  Color get accentBorder => Color.lerp(border, accentInk, 0.52)!;
+
+  /// A restrained tint for repeated editorial emphasis such as prices.
+  /// It stays much closer to the normal ink than a selected-control accent.
+  Color get accentEmphasis => Color.lerp(ink, accentInk, 0.32)!;
 
   static const light = AppPalette(
     page: Color(0xFFFFFFFF),
@@ -849,12 +887,8 @@ ThemeData buildAppTheme(
     colorScheme: ColorScheme.fromSeed(
       seedColor: palette.accent,
       brightness: effectiveBrightness,
-      primary: settings.theme == AppThemePreference.custom || isDark
-          ? palette.accent
-          : const Color(0xFF111113),
-      onPrimary: settings.theme == AppThemePreference.custom || isDark
-          ? onAccent
-          : Colors.white,
+      primary: palette.accent,
+      onPrimary: onAccent,
       surface: palette.surface,
     ),
   );
@@ -906,10 +940,8 @@ ThemeData buildAppTheme(
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: ButtonStyle(
-        backgroundColor: WidgetStatePropertyAll<Color>(palette.ink),
-        foregroundColor: WidgetStatePropertyAll<Color>(
-          _readableOn(palette.ink),
-        ),
+        backgroundColor: WidgetStatePropertyAll<Color>(palette.accent),
+        foregroundColor: WidgetStatePropertyAll<Color>(onAccent),
         overlayColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
       ),
     ),
@@ -945,8 +977,26 @@ ThemeData buildAppTheme(
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: palette.ink, width: 1.2),
+        borderSide: BorderSide(color: palette.accentInk, width: 1.4),
       ),
+    ),
+    textSelectionTheme: TextSelectionThemeData(
+      cursorColor: palette.accentInk,
+      selectionColor: palette.accent.withValues(alpha: isDark ? 0.32 : 0.24),
+      selectionHandleColor: palette.accentInk,
+    ),
+    progressIndicatorTheme: ProgressIndicatorThemeData(
+      color: palette.accentInk,
+      linearTrackColor: palette.surfaceMuted,
+      circularTrackColor: palette.surfaceMuted,
+    ),
+    floatingActionButtonTheme: FloatingActionButtonThemeData(
+      backgroundColor: palette.accent,
+      foregroundColor: onAccent,
+      elevation: 0,
+      focusElevation: 0,
+      hoverElevation: 0,
+      highlightElevation: 0,
     ),
     checkboxTheme: CheckboxThemeData(
       fillColor: WidgetStateProperty.resolveWith(
@@ -1007,14 +1057,9 @@ AppPalette _resolvePalette(
       accent: settings.accentColor,
     );
   }
-  if (settings.liquidGlassEnabled &&
-      settings.theme != AppThemePreference.custom) {
-    resolved = resolved.copyWith(
-      accent: isDark ? const Color(0xFFD9DEE5) : const Color(0xFF333B45),
-    );
-  }
   // Liquid glass is an effect for floating controls, not a transparent skin
-  // for the whole application. Content keeps its normal readable palette.
+  // for the whole application. Content keeps its normal readable palette and
+  // the brand accent remains available to selected states and primary actions.
   return resolved;
 }
 
@@ -1025,6 +1070,43 @@ Color _readableOn(Color color) {
   return blackContrast >= whiteContrast
       ? const Color(0xFF121316)
       : Colors.white;
+}
+
+double _contrastRatio(Color first, Color second) {
+  final lighter = first.computeLuminance() > second.computeLuminance()
+      ? first.computeLuminance()
+      : second.computeLuminance();
+  final darker = first.computeLuminance() > second.computeLuminance()
+      ? second.computeLuminance()
+      : first.computeLuminance();
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+Color _ensureContrast({
+  required Color foreground,
+  required Color background,
+  required double minimumRatio,
+}) {
+  final opaqueForeground = foreground.withValues(alpha: 1);
+  final opaqueBackground = background.withValues(alpha: 1);
+  if (_contrastRatio(opaqueForeground, opaqueBackground) >= minimumRatio) {
+    return opaqueForeground;
+  }
+
+  const black = Color(0xFF121316);
+  const white = Colors.white;
+  final toward =
+      _contrastRatio(black, opaqueBackground) >=
+          _contrastRatio(white, opaqueBackground)
+      ? black
+      : white;
+  for (var step = 1; step <= 20; step++) {
+    final candidate = Color.lerp(opaqueForeground, toward, step / 20)!;
+    if (_contrastRatio(candidate, opaqueBackground) >= minimumRatio) {
+      return candidate;
+    }
+  }
+  return toward;
 }
 
 TextTheme _appTextTheme(TextTheme base) {

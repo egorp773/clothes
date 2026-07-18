@@ -18,12 +18,18 @@ const productScreenContentKey = Key('product-screen-content');
 const productScreenBackButtonKey = Key('product-screen-back-button');
 const productScreenFooterKey = Key('product-screen-footer');
 const productScreenMessageButtonKey = Key('product-screen-message-button');
+const productRouteMotionKey = Key('product-route-motion');
+
+const _productRouteEnterDuration = Duration(milliseconds: 420);
+const _productRouteExitDuration = Duration(milliseconds: 320);
+const _productRouteCurve = Cubic(0.16, 1, 0.3, 1);
 
 /// The single route contract for presenting a [ProductScreen].
 ///
 /// The route remains non-opaque so the rounded card and its top gap reveal the
-/// actual previous route. [MaterialRouteTransitionMixin] keeps the transition
-/// platform-aware and supplies the native edge-swipe gesture on iOS.
+/// actual previous route. The product card rises from the bottom on a normal
+/// push; [MaterialRouteTransitionMixin] still supplies the native edge-swipe
+/// gesture on iOS.
 class ProductPageRoute<T> extends PageRoute<T>
     with MaterialRouteTransitionMixin<T> {
   ProductPageRoute({
@@ -41,6 +47,21 @@ class ProductPageRoute<T> extends PageRoute<T>
 
   @override
   bool get opaque => false;
+
+  @override
+  Duration get transitionDuration =>
+      _animationsDisabled ? Duration.zero : _productRouteEnterDuration;
+
+  @override
+  Duration get reverseTransitionDuration =>
+      _animationsDisabled ? Duration.zero : _productRouteExitDuration;
+
+  bool get _animationsDisabled {
+    final routeNavigator = navigator;
+    if (routeNavigator == null) return false;
+    return MediaQuery.maybeOf(routeNavigator.context)?.disableAnimations ??
+        false;
+  }
 
   /// Keep the previous route painted in place behind our transparent gap.
   ///
@@ -64,7 +85,70 @@ class ProductPageRoute<T> extends PageRoute<T>
   Widget buildContent(BuildContext context) => builder(context);
 
   @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final reduceMotion =
+        MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    final platform = Theme.of(context).platform;
+    final usesCupertinoBackGesture = platform == TargetPlatform.iOS;
+    final interactivePop = usesCupertinoBackGesture && popGestureInProgress;
+
+    // A direct, user-driven edge swipe stays linear and horizontal on iOS.
+    // Programmatic pushes and pops use the same vertical card motion on every
+    // platform, while reduce-motion users get an immediate presentation.
+    final presentedChild = reduceMotion || interactivePop
+        ? child
+        : _ProductRouteEntrance(animation: animation, child: child);
+
+    if (!usesCupertinoBackGesture) return presentedChild;
+
+    // Keep Cupertino's private edge detector without adding its horizontal
+    // transition to a normal push. It only receives the live route animation
+    // while the user is actively controlling an edge swipe.
+    return CupertinoRouteTransitionMixin.buildPageTransitions<T>(
+      this,
+      context,
+      interactivePop ? animation : kAlwaysCompleteAnimation,
+      kAlwaysDismissedAnimation,
+      presentedChild,
+    );
+  }
+
+  @override
   String get debugLabel => '${super.debugLabel}(${settings.name})';
+}
+
+class _ProductRouteEntrance extends StatelessWidget {
+  const _ProductRouteEntrance({required this.animation, required this.child});
+
+  final Animation<double> animation;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final motion = animation.drive(
+      Tween<Offset>(
+        begin: const Offset(0, 1),
+        end: Offset.zero,
+      ).chain(CurveTween(curve: _productRouteCurve)),
+    );
+    final opacity = animation.drive(
+      Tween<double>(begin: 0.92, end: 1).chain(
+        CurveTween(curve: const Interval(0, 0.58, curve: Curves.easeOutCubic)),
+      ),
+    );
+
+    return SlideTransition(
+      key: productRouteMotionKey,
+      position: motion,
+      transformHitTests: true,
+      child: FadeTransition(opacity: opacity, child: child),
+    );
+  }
 }
 
 ProductPageRoute<T> buildProductRoute<T>({

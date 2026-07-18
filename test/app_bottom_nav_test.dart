@@ -83,6 +83,254 @@ void main() {
     });
   }
 
+  testWidgets('liquid selector commits only once when drag is released', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final compact = ValueNotifier<bool>(false);
+    addTearDown(compact.dispose);
+    final selected = <int>[];
+    var createTaps = 0;
+
+    await _pumpNavigation(
+      tester,
+      compact: compact,
+      appearance: const AppAppearanceSettings(liquidGlassEnabled: true),
+      onTabSelected: selected.add,
+      onCreateTap: () => createTaps++,
+    );
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-0'))),
+    );
+    await gesture.moveTo(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-1'))),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.moveTo(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-2'))),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.moveTo(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-3'))),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(selected, isEmpty);
+    expect(createTaps, 0);
+    expect(find.byKey(const Key('bottom-nav-liquid-lens')), findsOneWidget);
+
+    await gesture.up();
+    await tester.pump();
+
+    expect(selected, <int>[3]);
+    expect(createTaps, 0);
+  });
+
+  testWidgets('drag through create never invokes the central action', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final compact = ValueNotifier<bool>(false);
+    addTearDown(compact.dispose);
+    final selected = <int>[];
+    var createTaps = 0;
+
+    await _pumpNavigation(
+      tester,
+      compact: compact,
+      appearance: const AppAppearanceSettings(liquidGlassEnabled: true),
+      onTabSelected: selected.add,
+      onCreateTap: () => createTaps++,
+    );
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-0'))),
+    );
+    await gesture.moveTo(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-2'))),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(selected, isEmpty);
+    expect(createTaps, 0);
+
+    await gesture.up();
+    await tester.pump();
+
+    expect(selected, <int>[3]);
+    expect(createTaps, 0);
+
+    final reverseGesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-4'))),
+    );
+    await reverseGesture.moveTo(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-2'))),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    await reverseGesture.up();
+    await tester.pump();
+
+    expect(selected, <int>[3, 1]);
+    expect(createTaps, 0);
+
+    // Create remains a deliberate action when it is tapped normally.
+    await tester.tap(find.byKey(const Key('bottom-nav-item-2')));
+    await tester.pump();
+    expect(createTaps, 1);
+  });
+
+  testWidgets('cancelled compact drag restores selection without callbacks', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final compact = ValueNotifier<bool>(true);
+    addTearDown(compact.dispose);
+    final selected = <int>[];
+    var createTaps = 0;
+
+    await _pumpNavigation(
+      tester,
+      compact: compact,
+      appearance: const AppAppearanceSettings(liquidGlassEnabled: true),
+      onTabSelected: selected.add,
+      onCreateTap: () => createTaps++,
+    );
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-0'))),
+    );
+    await gesture.moveTo(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-4'))),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(selected, isEmpty);
+
+    await gesture.cancel();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(selected, isEmpty);
+    expect(createTaps, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('vertical movement over navigation does not change a tab', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final compact = ValueNotifier<bool>(false);
+    addTearDown(compact.dispose);
+    final selected = <int>[];
+    var createTaps = 0;
+
+    await _pumpNavigation(
+      tester,
+      compact: compact,
+      appearance: const AppAppearanceSettings(liquidGlassEnabled: true),
+      onTabSelected: selected.add,
+      onCreateTap: () => createTaps++,
+    );
+
+    final origin = tester.getCenter(find.byKey(const Key('bottom-nav-item-3')));
+    final gesture = await tester.startGesture(origin);
+    await gesture.moveTo(origin + const Offset(3, -70));
+    await tester.pump(const Duration(milliseconds: 16));
+    await gesture.up();
+    await tester.pump();
+
+    expect(selected, isEmpty);
+    expect(createTaps, 0);
+  });
+
+  testWidgets('reduce motion keeps drag selection direct and functional', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final compact = ValueNotifier<bool>(false);
+    addTearDown(compact.dispose);
+    final selected = <int>[];
+
+    await _pumpNavigation(
+      tester,
+      compact: compact,
+      appearance: const AppAppearanceSettings(liquidGlassEnabled: true),
+      onTabSelected: selected.add,
+      disableAnimations: true,
+    );
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-0'))),
+    );
+    await gesture.moveTo(
+      tester.getCenter(find.byKey(const Key('bottom-nav-item-4'))),
+    );
+    await tester.pump();
+    expect(selected, isEmpty);
+    await gesture.up();
+    await tester.pump();
+
+    expect(selected, <int>[4]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('liquid selector follows an external currentIndex update', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final compact = ValueNotifier<bool>(false);
+    final current = ValueNotifier<int>(0);
+    addTearDown(compact.dispose);
+    addTearDown(current.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(
+          Brightness.light,
+          settings: const AppAppearanceSettings(liquidGlassEnabled: true),
+        ),
+        home: BackdropGroup(
+          child: Scaffold(
+            bottomNavigationBar: ValueListenableBuilder<int>(
+              valueListenable: current,
+              builder: (context, index, _) => AppBottomNav(
+                currentIndex: index,
+                compactListenable: compact,
+                onTabSelected: (_) {},
+                onCreateTap: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<AnimatedScale>(find.byKey(const Key('bottom-nav-visual-0')))
+          .scale,
+      1.07,
+    );
+
+    current.value = 4;
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<AnimatedScale>(find.byKey(const Key('bottom-nav-visual-0')))
+          .scale,
+      1,
+    );
+    expect(
+      tester
+          .widget<AnimatedScale>(find.byKey(const Key('bottom-nav-visual-4')))
+          .scale,
+      1.07,
+    );
+    await tester.pump(const Duration(milliseconds: 380));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('catalog scroll hysteresis prevents compact-state jitter', (
     tester,
   ) async {
@@ -252,10 +500,17 @@ Future<void> _pumpNavigation(
   required AppAppearanceSettings appearance,
   ValueChanged<int>? onTabSelected,
   VoidCallback? onCreateTap,
+  bool disableAnimations = false,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(Brightness.light, settings: appearance),
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(
+          context,
+        ).copyWith(disableAnimations: disableAnimations),
+        child: child!,
+      ),
       home: BackdropGroup(
         child: Scaffold(
           bottomNavigationBar: AppBottomNav(

@@ -640,18 +640,20 @@ class _CatalogScreenState extends State<CatalogScreen>
             itemBuilder: (context, index) {
               final isActive = index == _selectedTabIndex;
               return GestureDetector(
+                key: Key('catalog-tab-$index'),
                 onTap: () => setState(() => _selectedTabIndex = index),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.start,
                   children: [
                     Text(
                       _tabs[index],
+                      key: Key('catalog-tab-label-$index'),
                       style: TextStyle(
                         fontSize: 13.5 * scale,
                         fontWeight: isActive
-                            ? FontWeight.w500
-                            : FontWeight.w500,
-                        color: isActive ? palette.ink : palette.muted,
+                            ? AppTypography.semiBold
+                            : AppTypography.medium,
+                        color: isActive ? palette.accentInk : palette.muted,
                       ),
                     ),
                     const Spacer(),
@@ -659,7 +661,9 @@ class _CatalogScreenState extends State<CatalogScreen>
                       height: 2,
                       width: isActive ? _tabs[index].length * 7.1 * scale : 0,
                       decoration: BoxDecoration(
-                        color: isActive ? palette.ink : Colors.transparent,
+                        color: isActive
+                            ? palette.accentInk
+                            : Colors.transparent,
                         borderRadius: BorderRadius.circular(999),
                       ),
                     ),
@@ -676,6 +680,8 @@ class _CatalogScreenState extends State<CatalogScreen>
 
   Widget _buildFilterRow(double scale) {
     final palette = context.appPalette;
+    final hasActiveFilters = _filters.activeCount > 0;
+    final filterAccent = hasActiveFilters ? palette.accentInk : palette.ink;
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: widget.sidePadding),
       child: SizedBox(
@@ -689,17 +695,40 @@ class _CatalogScreenState extends State<CatalogScreen>
               child: Row(
                 children: [
                   Text(
-                    _filters.activeCount == 0
-                        ? 'Фильтр'
-                        : 'Фильтр ${_filters.activeCount}',
+                    'Фильтр',
                     style: TextStyle(
                       fontSize: 14.5 * scale,
-                      fontWeight: FontWeight.w500,
-                      color: palette.ink,
+                      fontWeight: hasActiveFilters
+                          ? AppTypography.semiBold
+                          : AppTypography.medium,
+                      color: filterAccent,
                     ),
                   ),
+                  if (hasActiveFilters) ...[
+                    SizedBox(width: 6 * scale),
+                    Container(
+                      key: const Key('catalog-filter-count'),
+                      constraints: BoxConstraints(minWidth: 20 * scale),
+                      height: 20 * scale,
+                      padding: EdgeInsets.symmetric(horizontal: 5 * scale),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: palette.accent,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        '${_filters.activeCount}',
+                        style: TextStyle(
+                          fontSize: 10.5 * scale,
+                          height: 1,
+                          fontWeight: AppTypography.bold,
+                          color: palette.onAccent,
+                        ),
+                      ),
+                    ),
+                  ],
                   SizedBox(width: 10 * scale),
-                  Icon(Icons.tune, size: 21 * scale, color: palette.ink),
+                  Icon(Icons.tune, size: 21 * scale, color: filterAccent),
                 ],
               ),
             ),
@@ -1404,7 +1433,7 @@ class ProductCard extends StatelessWidget {
                   fontSize: 13.5 * scale,
                   height: 1,
                   fontWeight: FontWeight.w700,
-                  color: palette.ink,
+                  color: palette.accentEmphasis,
                 ),
               ),
             ),
@@ -1602,7 +1631,7 @@ class ProductDetailsSheet extends StatelessWidget {
         style: TextStyle(
           fontSize: 17,
           fontWeight: FontWeight.w700,
-          color: context.appPalette.ink,
+          color: context.appPalette.accentEmphasis,
         ),
       ),
     );

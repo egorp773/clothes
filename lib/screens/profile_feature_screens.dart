@@ -357,8 +357,8 @@ class _NotificationSettingsScreenState
             child: ElevatedButton(
               onPressed: _isSaving ? null : _save,
               style: ElevatedButton.styleFrom(
-                backgroundColor: palette.ink,
-                foregroundColor: palette.page,
+                backgroundColor: palette.accent,
+                foregroundColor: palette.onAccent,
                 overlayColor: Colors.transparent,
                 elevation: 0,
                 disabledBackgroundColor: palette.muted,
@@ -600,7 +600,20 @@ class _AppearanceSelectorState extends State<_AppearanceSelector> {
           ),
           child: Row(
             children: [
-              Icon(Icons.contrast_rounded, size: 21, color: palette.ink),
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: palette.accentSoft,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: palette.accentBorder),
+                ),
+                child: Icon(
+                  Icons.contrast_rounded,
+                  size: 20,
+                  color: palette.accentInk,
+                ),
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -982,8 +995,9 @@ class _StatusBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
-        color: palette.surfaceMuted,
+        color: palette.accentSoft,
         borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: palette.accentBorder),
       ),
       child: Text(
         label,
@@ -992,7 +1006,7 @@ class _StatusBadge extends StatelessWidget {
           fontSize: 9,
           height: 1,
           fontWeight: AppTypography.bold,
-          color: palette.muted,
+          color: palette.accentInk,
         ),
       ),
     );
@@ -1109,10 +1123,11 @@ class _SettingsRouteTile extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: palette.surfaceMuted,
+                  color: palette.accentSoft,
                   borderRadius: BorderRadius.circular(13),
+                  border: Border.all(color: palette.accentBorder),
                 ),
-                child: Icon(icon, size: 21, color: palette.ink),
+                child: Icon(icon, size: 21, color: palette.accentInk),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -1328,8 +1343,8 @@ class _ProfileAddressesScreenState extends State<ProfileAddressesScreen> {
               key: const Key('save-profile-address'),
               onPressed: _isSaving ? null : _save,
               style: ElevatedButton.styleFrom(
-                backgroundColor: palette.ink,
-                foregroundColor: palette.page,
+                backgroundColor: palette.accent,
+                foregroundColor: palette.onAccent,
                 overlayColor: Colors.transparent,
                 disabledBackgroundColor: palette.muted,
                 elevation: 0,
@@ -1460,7 +1475,7 @@ class _ProfileAddressField extends StatelessWidget {
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: palette.ink, width: 1.3),
+            borderSide: BorderSide(color: palette.accentInk, width: 1.3),
           ),
         ),
       ),
@@ -2172,8 +2187,8 @@ class _EmptyOrders extends StatelessWidget {
           child: ElevatedButton(
             onPressed: onOpenCatalog,
             style: ElevatedButton.styleFrom(
-              backgroundColor: palette.ink,
-              foregroundColor: palette.page,
+              backgroundColor: palette.accent,
+              foregroundColor: palette.onAccent,
               overlayColor: Colors.transparent,
               elevation: 0,
               shape: const RoundedRectangleBorder(),
@@ -2348,14 +2363,15 @@ class _FilterChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? palette.ink : palette.surfaceMuted,
+          color: selected ? palette.accent : palette.surfaceMuted,
           borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: selected ? palette.accent : palette.border),
         ),
         child: Text(
           label,
           style: _featureSmallStyle.copyWith(
             fontSize: 12,
-            color: selected ? palette.page : palette.ink,
+            color: selected ? palette.onAccent : palette.ink,
           ),
         ),
       ),
@@ -2921,8 +2937,8 @@ class _OrderStatusSheetState extends State<_OrderStatusSheet> {
                   Navigator.pop(context);
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: palette.ink,
-                  foregroundColor: palette.page,
+                  backgroundColor: palette.accent,
+                  foregroundColor: palette.onAccent,
                   overlayColor: Colors.transparent,
                   elevation: 0,
                   shape: const RoundedRectangleBorder(),

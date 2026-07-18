@@ -24,12 +24,75 @@ void main() {
     expect(route.allowSnapshotting, isFalse);
     expect(route.barrierDismissible, isFalse);
     expect(route.barrierColor, Colors.transparent);
+    expect(route.transitionDuration, const Duration(milliseconds: 420));
+    expect(route.reverseTransitionDuration, const Duration(milliseconds: 320));
     expect(
       route.canTransitionFrom(
         MaterialPageRoute<void>(builder: (_) => const SizedBox.shrink()),
       ),
       isFalse,
     );
+  });
+
+  testWidgets('product card rises smoothly while the underlay stays still', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _RouteHarness(routeBuilder: (_) => const _TransparentRoutePage()),
+    );
+
+    await tester.tap(find.byKey(_openRouteKey));
+    await tester.pump();
+    await tester.pump();
+
+    final initialMotion = tester.widget<SlideTransition>(
+      find.byKey(productRouteMotionKey),
+    );
+    expect(initialMotion.position.value.dx, 0);
+    expect(initialMotion.position.value.dy, closeTo(1, 0.000001));
+    _expectUnderlayPaintedAtRest(tester);
+
+    await tester.pump(const Duration(milliseconds: 100));
+    final movingMotion = tester.widget<SlideTransition>(
+      find.byKey(productRouteMotionKey),
+    );
+    expect(movingMotion.position.value.dx, 0);
+    expect(movingMotion.position.value.dy, inExclusiveRange(0, 1));
+    _expectUnderlayPaintedAtRest(tester);
+
+    await tester.pumpAndSettle();
+    final settledMotion = tester.widget<SlideTransition>(
+      find.byKey(productRouteMotionKey),
+    );
+    expect(settledMotion.position.value.distance, closeTo(0, 0.000001));
+    _expectUnderlayPaintedAtRest(tester);
+  });
+
+  testWidgets('product route honors the disable-animations setting', (
+    tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+
+    await tester.pumpWidget(
+      _RouteHarness(routeBuilder: (_) => const _TransparentRoutePage()),
+    );
+    await tester.tap(find.byKey(_openRouteKey));
+    await tester.pump();
+
+    expect(find.byKey(_routePageKey), findsOneWidget);
+    expect(find.byKey(productRouteMotionKey), findsNothing);
+    _expectUnderlayPaintedAtRest(tester);
+
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.byKey(_routePageKey), findsNothing);
   });
 
   testWidgets('product route keeps its underlay live and blocks tap-through', (

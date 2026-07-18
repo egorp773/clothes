@@ -1,5 +1,4 @@
 import 'dart:typed_data';
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -130,8 +129,8 @@ class _AppearanceEditorScreenState extends State<AppearanceEditorScreen> {
       child: Builder(
         builder: (context) {
           final palette = context.appPalette;
-          return Scaffold(
-            backgroundColor: palette.page.withValues(alpha: 1),
+          final scaffold = Scaffold(
+            backgroundColor: context.appBackdrop.scaffoldColor,
             appBar: AppBar(
               title: const Text(
                 'Своя тема',
@@ -359,6 +358,12 @@ class _AppearanceEditorScreenState extends State<AppearanceEditorScreen> {
               ],
             ),
           );
+          return AppAppearanceBackground(
+            key: const Key('appearance-editor-background'),
+            settings: _draft,
+            wallpaperBytes: _wallpaperBytes,
+            child: scaffold,
+          );
         },
       ),
     );
@@ -390,7 +395,8 @@ class _ThemePreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     final content = ColoredBox(
-      color: palette.page,
+      key: const Key('appearance-editor-preview-content'),
+      color: Colors.transparent,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -507,31 +513,12 @@ class _ThemePreview extends StatelessWidget {
       ),
     );
 
-    final preview =
-        wallpaperBytes != null &&
-            settings.background == AppBackgroundStyle.photo
-        ? Stack(
-            fit: StackFit.expand,
-            children: [
-              ImageFiltered(
-                imageFilter: ImageFilter.blur(
-                  sigmaX: settings.photoBlur,
-                  sigmaY: settings.photoBlur,
-                ),
-                child: Transform.scale(
-                  scale: settings.photoBlur > 0 ? 1.04 : 1,
-                  child: Image.memory(wallpaperBytes!, fit: BoxFit.cover),
-                ),
-              ),
-              ColoredBox(
-                color: settings.backgroundColor.withValues(
-                  alpha: settings.photoDim,
-                ),
-              ),
-              content,
-            ],
-          )
-        : AppAppearanceBackground(settings: settings, child: content);
+    final preview = AppAppearanceBackground(
+      key: const Key('appearance-editor-preview-background'),
+      settings: settings,
+      wallpaperBytes: wallpaperBytes,
+      child: content,
+    );
 
     return Container(
       height: 224,

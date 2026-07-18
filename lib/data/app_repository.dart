@@ -16,6 +16,7 @@ import '../core/oauth_callback.dart';
 import '../core/supabase_config.dart';
 import '../features/chat/chat_media_send_coordinator.dart';
 import '../features/chat/chat_media_url_cache.dart';
+import '../features/chat/chat_remote_write_coordinator.dart';
 import '../features/chat/chat_sync_coordinator.dart';
 import '../models/app_profile.dart';
 import '../models/created_outfit.dart';
@@ -79,6 +80,8 @@ class AppRepository extends ChangeNotifier {
   static const _maxChatImageBytes = 20 * 1024 * 1024;
   static const _maxChatVideoBytes = 100 * 1024 * 1024;
   static const _chatMediaSignedUrlSeconds = 60 * 60;
+  static const _chatHydrationBatchSize = 40;
+  static const _chatHydrationPageSize = 500;
 
   @visibleForTesting
   static List<AppOrder> mergeOrdersForParticipant({
@@ -198,6 +201,7 @@ class AppRepository extends ChangeNotifier {
   );
   Timer? _syncTimer;
   StreamSubscription<AuthState>? _authSubscription;
+  Future<User?>? _sessionRefreshInFlight;
   StreamSubscription<String>? _pushTokenSubscription;
   RealtimeChannel? _messagesChannel;
   int _messageSubscriptionGeneration = 0;
@@ -206,7 +210,10 @@ class AppRepository extends ChangeNotifier {
   );
   final ChatMediaSendCoordinator _chatMediaSendCoordinator =
       const ChatMediaSendCoordinator();
+  final ChatRemoteWriteCoordinator _chatRemoteWriteCoordinator =
+      const ChatRemoteWriteCoordinator();
   final ChatSyncCoordinator _chatThreadSync = ChatSyncCoordinator();
+  final Set<String> _knownRemoteThreadIds = <String>{};
   String? _registeredPushToken;
 
   bool get isReady => _isReady;
@@ -1176,6 +1183,7 @@ class AppRepository extends ChangeNotifier {
     _currentUser = user;
     if (previousUserId != currentUserId) {
       _chatMediaUrlCache.clear();
+      _knownRemoteThreadIds.clear();
       _loadLocalUserState();
       _isThreadSyncPending = false;
       _threadSyncError = null;
@@ -1642,7 +1650,23 @@ class AppRepository extends ChangeNotifier {
           table: 'chat_thread_member_state',
           callback: (_) => _chatThreadSync.schedule(_syncThreadsFromSupabase),
         )
-        .subscribe();
+        .subscribe((status, error) {
+          if (generation != _messageSubscriptionGeneration ||
+              currentUserId != subscriberId) {
+            return;
+          }
+          if (status == RealtimeSubscribeStatus.subscribed) {
+            _chatThreadSync.schedule(_syncThreadsFromSupabase);
+            return;
+          }
+          if (status == RealtimeSubscribeStatus.channelError ||
+              status == RealtimeSubscribeStatus.timedOut) {
+            debugPrint(
+              'Message realtime subscription error '
+              '(user=$subscriberId, status=$status): $error',
+            );
+          }
+        });
   }
 
   Future<List<MessageThread>> _hydrateThreadMemberState(
@@ -1650,16 +1674,28 @@ class AppRepository extends ChangeNotifier {
   ) async {
     if (threads.isEmpty || currentUserId.isEmpty) return threads;
     try {
-      final response = await _client
-          .from('chat_thread_member_state')
-          .select('thread_id,is_pinned,is_muted,is_archived,draft,last_read_at')
-          .eq('user_id', currentUserId)
-          .inFilter('thread_id', threads.map((thread) => thread.id).toList());
       final stateByThread = <String, Map<String, dynamic>>{};
-      for (final item in response as List<dynamic>) {
-        final row = item as Map<String, dynamic>;
-        final threadId = row['thread_id'] as String? ?? '';
-        if (threadId.isNotEmpty) stateByThread[threadId] = row;
+      final threadIds = threads.map((thread) => thread.id).toList();
+      for (
+        var start = 0;
+        start < threadIds.length;
+        start += _chatHydrationBatchSize
+      ) {
+        final end = (start + _chatHydrationBatchSize)
+            .clamp(0, threadIds.length)
+            .toInt();
+        final response = await _client
+            .from('chat_thread_member_state')
+            .select(
+              'thread_id,is_pinned,is_muted,is_archived,draft,last_read_at',
+            )
+            .eq('user_id', currentUserId)
+            .inFilter('thread_id', threadIds.sublist(start, end));
+        for (final item in response as List<dynamic>) {
+          final row = item as Map<String, dynamic>;
+          final threadId = row['thread_id'] as String? ?? '';
+          if (threadId.isNotEmpty) stateByThread[threadId] = row;
+        }
       }
 
       return threads
@@ -1690,19 +1726,40 @@ class AppRepository extends ChangeNotifier {
   ) async {
     if (threads.isEmpty) return threads;
     try {
-      final response = await _client
-          .from('chat_messages')
-          .select()
-          .inFilter('thread_id', threads.map((thread) => thread.id).toList())
-          .order('created_at', ascending: true);
       final byThread = <String, List<ChatMessage>>{};
-      for (final item in response as List<dynamic>) {
-        final row = item as Map<String, dynamic>;
-        final threadId = row['thread_id'] as String? ?? '';
-        if (threadId.isEmpty) continue;
-        final parsed = ChatMessage.fromJson(row, currentUserId: currentUserId);
-        final message = await _resolveChatMessageMedia(parsed);
-        byThread.putIfAbsent(threadId, () => []).add(message);
+      final threadIds = threads.map((thread) => thread.id).toList();
+      for (
+        var start = 0;
+        start < threadIds.length;
+        start += _chatHydrationBatchSize
+      ) {
+        final end = (start + _chatHydrationBatchSize)
+            .clamp(0, threadIds.length)
+            .toInt();
+        var offset = 0;
+        while (true) {
+          final response = await _client
+              .from('chat_messages')
+              .select()
+              .inFilter('thread_id', threadIds.sublist(start, end))
+              .order('created_at', ascending: true)
+              .order('id', ascending: true)
+              .range(offset, offset + _chatHydrationPageSize - 1);
+          final rows = response as List<dynamic>;
+          for (final item in rows) {
+            final row = item as Map<String, dynamic>;
+            final threadId = row['thread_id'] as String? ?? '';
+            if (threadId.isEmpty) continue;
+            final parsed = ChatMessage.fromJson(
+              row,
+              currentUserId: currentUserId,
+            );
+            final message = await _resolveChatMessageMedia(parsed);
+            byThread.putIfAbsent(threadId, () => []).add(message);
+          }
+          if (rows.length < _chatHydrationPageSize) break;
+          offset += rows.length;
+        }
       }
       return threads
           .map((thread) {
@@ -1741,16 +1798,26 @@ class AppRepository extends ChangeNotifier {
         .toSet();
     if (memberIds.isEmpty) return threads;
     try {
-      final response = await _client
-          .from('profiles')
-          .select('id,name,handle,avatar_url')
-          .inFilter('id', memberIds.toList());
       final profiles = <String, AppUserProfile>{};
-      for (final item in response as List<dynamic>) {
-        final profile = AppUserProfile.fromSupabase(
-          item as Map<String, dynamic>,
-        );
-        if (profile.id.isNotEmpty) profiles[profile.id] = profile;
+      final ids = memberIds.toList();
+      for (
+        var start = 0;
+        start < ids.length;
+        start += _chatHydrationBatchSize
+      ) {
+        final end = (start + _chatHydrationBatchSize)
+            .clamp(0, ids.length)
+            .toInt();
+        final response = await _client
+            .from('profiles')
+            .select('id,name,handle,avatar_url')
+            .inFilter('id', ids.sublist(start, end));
+        for (final item in response as List<dynamic>) {
+          final profile = AppUserProfile.fromSupabase(
+            item as Map<String, dynamic>,
+          );
+          if (profile.id.isNotEmpty) profiles[profile.id] = profile;
+        }
       }
       return threads
           .map((thread) {
@@ -1842,10 +1909,11 @@ class AppRepository extends ChangeNotifier {
             ),
           )
           .toList();
+      if (currentUserId != syncUserId) return;
+      _knownRemoteThreadIds.addAll(fetched.map((thread) => thread.id));
       fetched = await _hydrateThreadProfiles(fetched);
       fetched = await _hydrateThreadMemberState(fetched);
       fetched = await _hydrateThreadMessages(fetched);
-      fetched = mergeChatOutgoingState(fetched, previousById);
       if (currentUserId != syncUserId) return;
 
       await _syncThreadPresence(fetched);
@@ -1866,6 +1934,13 @@ class AppRepository extends ChangeNotifier {
       if (currentUserId != syncUserId) return;
       _hasCompletedThreadSync = true;
 
+      // A send can complete while the multi-request hydration and presence
+      // refresh are in flight. Merge only at commit time against the live
+      // local state; the older response must never erase that message.
+      final latestLocalById = {
+        for (final thread in _threads) thread.id: thread,
+      };
+      fetched = mergeChatOutgoingState(fetched, latestLocalById);
       fetched.sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
       await _writeList(
         _scopedStorageKey(_threadsKey, syncUserId),
@@ -1903,18 +1978,31 @@ class AppRepository extends ChangeNotifier {
         .map((remoteThread) {
           final localThread = previousById[remoteThread.id];
           if (localThread == null) return remoteThread;
-          final remoteIds = remoteThread.messages
+          final localById = {
+            for (final message in localThread.messages) message.id: message,
+          };
+          var reconciledLocalState = false;
+          final reconciledRemoteMessages = remoteThread.messages
+              .map((message) {
+                // A server-hydrated message is never pending/failed. These
+                // flags therefore identify a local-only row carried by an
+                // earlier merge while another local state change completed.
+                if (!message.isPending && !message.hasError) return message;
+                final localMessage = localById[message.id];
+                if (localMessage == null) return message;
+                reconciledLocalState = true;
+                return localMessage;
+              })
+              .toList(growable: false);
+          final remoteIds = reconciledRemoteMessages
               .map((message) => message.id)
               .toSet();
           final localOnly = localThread.messages.where(
-            (message) =>
-                message.isMine &&
-                (message.isPending || message.hasError) &&
-                !remoteIds.contains(message.id),
+            (message) => message.isMine && !remoteIds.contains(message.id),
           );
-          if (localOnly.isEmpty) return remoteThread;
+          if (localOnly.isEmpty && !reconciledLocalState) return remoteThread;
 
-          final messages = [...remoteThread.messages, ...localOnly]
+          final messages = [...reconciledRemoteMessages, ...localOnly]
             ..sort((left, right) {
               final byTime = left.createdAt.compareTo(right.createdAt);
               return byTime != 0 ? byTime : left.id.compareTo(right.id);
@@ -3644,7 +3732,14 @@ class AppRepository extends ChangeNotifier {
       notifyListeners();
       return updated;
     }
-    final remoteExisting = await _fetchThreadFromSupabase(threadId);
+    MessageThread? remoteExisting;
+    try {
+      remoteExisting = await _fetchThreadFromSupabase(threadId);
+    } catch (_) {
+      _authError = 'Не удалось проверить диалог. Попробуйте ещё раз.';
+      notifyListeners();
+      return null;
+    }
     if (remoteExisting != null) {
       final thread = imageOnly
           ? remoteExisting.copyWith(
@@ -3723,6 +3818,7 @@ class AppRepository extends ChangeNotifier {
     final didCreate = await _saveThreadOrShowError(
       createdThread,
       newMessages: [createdThread.messages.last],
+      ensureThreadFirst: true,
     );
     if (!didCreate) {
       await _discardFailedThreadCreation(threadId);
@@ -3784,7 +3880,14 @@ class AppRepository extends ChangeNotifier {
     final existing = threadById(threadId);
     if (existing != null) return existing;
 
-    final remoteExisting = await _fetchThreadFromSupabase(threadId);
+    MessageThread? remoteExisting;
+    try {
+      remoteExisting = await _fetchThreadFromSupabase(threadId);
+    } catch (_) {
+      _authError = 'Не удалось проверить диалог. Попробуйте ещё раз.';
+      notifyListeners();
+      return null;
+    }
     if (remoteExisting != null) {
       _upsertLocalThread(remoteExisting);
       await _saveThreadsLocal();
@@ -3822,7 +3925,10 @@ class AppRepository extends ChangeNotifier {
     _threads.insert(0, thread);
     _sortThreads();
     await _saveThreadsLocal();
-    final didCreate = await _saveThreadOrShowError(thread);
+    final didCreate = await _saveThreadOrShowError(
+      thread,
+      ensureThreadFirst: true,
+    );
     if (!didCreate) {
       await _discardFailedThreadCreation(threadId);
       return null;
@@ -3902,6 +4008,7 @@ class AppRepository extends ChangeNotifier {
     final didCreate = await _saveThreadOrShowError(
       thread,
       newMessages: [systemMessage],
+      ensureThreadFirst: true,
     );
     if (!didCreate) {
       await _discardFailedThreadCreation(thread.id);
@@ -3926,9 +4033,15 @@ class AppRepository extends ChangeNotifier {
         ? await _ensureAuthSession(message: 'Войдите, чтобы поделиться')
         : null;
     if (_hasSupabase && user == null) return false;
-    if (_hasSupabase) {
-      final remoteThread = await _fetchThreadFromSupabase(threadId);
-      if (remoteThread != null) _upsertLocalThread(remoteThread);
+    if (_hasSupabase && threadById(threadId) == null) {
+      try {
+        final remoteThread = await _fetchThreadFromSupabase(threadId);
+        if (remoteThread != null) _upsertLocalThread(remoteThread);
+      } catch (_) {
+        _authError = 'Не удалось загрузить диалог. Попробуйте ещё раз.';
+        notifyListeners();
+        return false;
+      }
     }
     final index = _threads.indexWhere((thread) => thread.id == threadId);
     if (index == -1) return false;
@@ -3968,10 +4081,16 @@ class AppRepository extends ChangeNotifier {
         : null;
     if (_hasSupabase && user == null) return false;
 
-    if (_hasSupabase) {
-      final remoteThread = await _fetchThreadFromSupabase(threadId);
-      if (remoteThread != null) {
-        _upsertLocalThread(remoteThread);
+    if (_hasSupabase && threadById(threadId) == null) {
+      try {
+        final remoteThread = await _fetchThreadFromSupabase(threadId);
+        if (remoteThread != null) {
+          _upsertLocalThread(remoteThread);
+        }
+      } catch (_) {
+        _authError = 'Не удалось загрузить диалог. Попробуйте ещё раз.';
+        notifyListeners();
+        return false;
       }
     }
 
@@ -5005,21 +5124,31 @@ class AppRepository extends ChangeNotifier {
         rows.first as Map<String, dynamic>,
         currentUserId: currentUserId,
       );
+      _knownRemoteThreadIds.add(thread.id);
       var hydrated = await _hydrateThreadProfiles([thread]);
       hydrated = await _hydrateThreadMemberState(hydrated);
       hydrated = await _hydrateThreadMessages(hydrated);
       return hydrated.first;
-    } catch (e) {
-      debugPrint('Thread fetch error: $e');
-      return null;
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Thread fetch error (thread=$threadId): '
+        '${_describeChatRemoteError(error)}',
+      );
+      debugPrintStack(stackTrace: stackTrace);
+      rethrow;
     }
   }
 
   Future<bool> _saveThreadOrShowError(
     MessageThread thread, {
     List<ChatMessage> newMessages = const [],
+    bool ensureThreadFirst = false,
   }) async {
-    final didSave = await _upsertThread(thread, newMessages: newMessages);
+    final didSave = await _upsertThread(
+      thread,
+      newMessages: newMessages,
+      ensureThreadFirst: ensureThreadFirst,
+    );
     if (!didSave) {
       _authError = 'Не удалось доставить сообщение. Проверьте интернет.';
     }
@@ -5040,22 +5169,29 @@ class AppRepository extends ChangeNotifier {
   Future<bool> _upsertThread(
     MessageThread thread, {
     List<ChatMessage> newMessages = const [],
+    bool ensureThreadFirst = false,
   }) async {
     if (!_hasSupabase) return true;
 
-    try {
-      final payload = thread.toSupabaseJson()
-        ..remove('messages')
-        ..remove('is_pinned')
-        ..remove('is_muted')
-        ..remove('is_archived')
-        ..remove('draft')
-        ..remove('last_read_at')
-        ..remove('unread_count');
-      await _client
-          .from('message_threads')
-          .upsert(payload, onConflict: 'id', ignoreDuplicates: true);
-      if (newMessages.isNotEmpty) {
+    final result = await _chatRemoteWriteCoordinator.persist(
+      hasMessages: newMessages.isNotEmpty,
+      threadKnownRemote: _knownRemoteThreadIds.contains(thread.id),
+      ensureThreadFirst: ensureThreadFirst,
+      ensureThread: () async {
+        final payload = thread.toSupabaseJson()
+          ..remove('messages')
+          ..remove('is_pinned')
+          ..remove('is_muted')
+          ..remove('is_archived')
+          ..remove('draft')
+          ..remove('last_read_at')
+          ..remove('unread_count');
+        await _client
+            .from('message_threads')
+            .upsert(payload, onConflict: 'id', ignoreDuplicates: true);
+      },
+      persistMessages: () async {
+        if (newMessages.isEmpty) return;
         await _client
             .from('chat_messages')
             .upsert(
@@ -5070,13 +5206,38 @@ class AppRepository extends ChangeNotifier {
               onConflict: 'id',
               ignoreDuplicates: true,
             );
-      }
-      return true;
-    } catch (error, stackTrace) {
-      debugPrint('Thread upsert error: $error');
-      debugPrintStack(stackTrace: stackTrace);
-      return false;
+      },
+    );
+    if (result.threadConfirmed) {
+      _knownRemoteThreadIds.add(thread.id);
     }
+    if (result.succeeded) return true;
+
+    final failure = result.failure!;
+    final stage = switch (failure.stage) {
+      ChatRemoteWriteStage.ensureThread => 'ensure thread',
+      ChatRemoteWriteStage.persistMessages => 'persist messages',
+    };
+    debugPrint(
+      'Chat remote write error ($stage, thread=${thread.id}): '
+      '${_describeChatRemoteError(failure.error)}',
+    );
+    debugPrintStack(stackTrace: failure.stackTrace);
+    return false;
+  }
+
+  String _describeChatRemoteError(Object error) {
+    if (error is PostgrestException) {
+      final details = error.details?.toString().trim() ?? '';
+      final hint = error.hint?.toString().trim() ?? '';
+      return [
+        'code=${error.code}',
+        error.message,
+        if (details.isNotEmpty) 'details=$details',
+        if (hint.isNotEmpty) 'hint=$hint',
+      ].join(', ');
+    }
+    return error.toString();
   }
 
   String _messageThreadId({
@@ -5111,7 +5272,27 @@ class AppRepository extends ChangeNotifier {
 
   Future<User?> _ensureAuthSession({String? message}) async {
     final currentUser = _client.auth.currentUser;
-    if (currentUser != null) return currentUser;
+    final session = _client.auth.currentSession;
+    if (currentUser != null &&
+        session != null &&
+        !_sessionNeedsRefresh(session)) {
+      if (_currentUser?.id != currentUser.id) _currentUser = currentUser;
+      return currentUser;
+    }
+    if (currentUser != null && session != null) {
+      final existingRefresh = _sessionRefreshInFlight;
+      if (existingRefresh != null) return existingRefresh;
+
+      final refresh = _refreshAuthSession();
+      _sessionRefreshInFlight = refresh;
+      try {
+        return await refresh;
+      } finally {
+        if (identical(_sessionRefreshInFlight, refresh)) {
+          _sessionRefreshInFlight = null;
+        }
+      }
+    }
     if (message != null) {
       _authError = message;
       notifyListeners();
@@ -5120,6 +5301,83 @@ class AppRepository extends ChangeNotifier {
     _authError = 'Войдите в профиль перед публикацией';
     notifyListeners();
     return null;
+  }
+
+  bool _sessionNeedsRefresh(Session session) {
+    final expiresAt = session.expiresAt;
+    if (expiresAt == null) return false;
+    final refreshAt = DateTime.fromMillisecondsSinceEpoch(
+      expiresAt * 1000,
+      isUtc: true,
+    ).subtract(const Duration(seconds: 30));
+    return !DateTime.now().toUtc().isBefore(refreshAt);
+  }
+
+  Future<User?> _refreshAuthSession() async {
+    try {
+      final response = await _client.auth.refreshSession();
+      final refreshedUser = response.user ?? _client.auth.currentUser;
+      if (refreshedUser == null) {
+        _authError = 'Сессия истекла. Войдите снова.';
+        notifyListeners();
+        return null;
+      }
+      _currentUser = refreshedUser;
+      _authError = null;
+      return refreshedUser;
+    } catch (error, stackTrace) {
+      debugPrint('Auth session refresh error: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      if (isTerminalAuthRefreshError(error)) {
+        await _clearExpiredLocalSession();
+        _authError = 'Сессия истекла. Войдите снова.';
+      } else {
+        _authError = 'Не удалось проверить сессию. Проверьте подключение.';
+      }
+      notifyListeners();
+      return null;
+    }
+  }
+
+  @visibleForTesting
+  static bool isTerminalAuthRefreshError(Object error) {
+    if (error is AuthSessionMissingException ||
+        error is AuthInvalidJwtException) {
+      return true;
+    }
+    if (error is AuthRetryableFetchException) return false;
+    if (error is! AuthException) return false;
+    final code = error.code?.trim().toLowerCase() ?? '';
+    if (const {
+      'bad_jwt',
+      'invalid_jwt',
+      'invalid_refresh_token',
+      'refresh_token_not_found',
+      'refresh_token_already_used',
+      'session_not_found',
+      'user_not_found',
+      'user_banned',
+    }.contains(code)) {
+      return true;
+    }
+    return error.statusCode == '401' || error.statusCode == '403';
+  }
+
+  Future<void> _clearExpiredLocalSession() async {
+    try {
+      await _client.auth.signOut(scope: SignOutScope.local);
+    } catch (error, stackTrace) {
+      // GoTrue removes the local token before attempting the optional remote
+      // invalidation. Keep the app state signed out even if that request fails.
+      debugPrint('Expired local session cleanup error: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+    _currentUser = null;
+    _knownRemoteThreadIds.clear();
+    _chatMediaUrlCache.clear();
+    _loadLocalUserState();
+    _isThreadSyncPending = false;
+    _threadSyncError = null;
   }
 
   // ─── Helpers ───

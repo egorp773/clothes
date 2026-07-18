@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:clothes/core/app_appearance.dart';
 import 'package:clothes/screens/appearance_editor_screen.dart';
 import 'package:clothes/screens/profile_feature_screens.dart';
+import 'package:clothes/widgets/app_appearance_background.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -63,7 +66,7 @@ void main() {
       lightTheme.extension<AppPalette>()!.ink.computeLuminance(),
       lessThan(.5),
     );
-    expect(lightTheme.extension<AppPalette>()!.accent, const Color(0xFF333B45));
+    expect(lightTheme.extension<AppPalette>()!.accent, AppPalette.light.accent);
     expect(lightTheme.extension<AppGlassStyle>()?.enabled, isTrue);
 
     await controller.setTheme(AppThemePreference.dark);
@@ -78,7 +81,7 @@ void main() {
       darkTheme.extension<AppPalette>()!.ink.computeLuminance(),
       greaterThan(.5),
     );
-    expect(darkTheme.extension<AppPalette>()!.accent, const Color(0xFFD9DEE5));
+    expect(darkTheme.extension<AppPalette>()!.accent, AppPalette.dark.accent);
     expect(darkTheme.extension<AppGlassStyle>()?.enabled, isTrue);
     controller.dispose();
   });
@@ -266,5 +269,112 @@ void main() {
     await tester.pumpAndSettle();
     expect(editorResult?.settings.background, AppBackgroundStyle.plain);
     expect(editorResult?.settings.wallpaperPath, isEmpty);
+  });
+
+  testWidgets(
+    'custom editor uses the live draft backdrop without a page-wide fill',
+    (tester) async {
+      const background = Color(0xFF314054);
+      const settings = AppAppearanceSettings(
+        theme: AppThemePreference.custom,
+        background: AppBackgroundStyle.plain,
+        backgroundColorValue: 0xFF314054,
+        pattern: AppPatternStyle.waves,
+        patternColorValue: 0xFFDDE7F0,
+        patternIntensity: 0.46,
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(Brightness.dark, settings: settings),
+          home: const AppearanceEditorScreen(initialSettings: settings),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      AppAppearanceBackground rootBackdrop() =>
+          tester.widget<AppAppearanceBackground>(
+            find.byKey(const Key('appearance-editor-background')),
+          );
+      AppAppearanceBackground previewBackdrop() =>
+          tester.widget<AppAppearanceBackground>(
+            find.byKey(const Key('appearance-editor-preview-background')),
+          );
+
+      expect(rootBackdrop().settings.background, AppBackgroundStyle.plain);
+      expect(previewBackdrop().settings.background, AppBackgroundStyle.plain);
+      expect(
+        tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
+        background,
+      );
+      expect(
+        tester
+            .widget<ColoredBox>(
+              find.byKey(const Key('appearance-editor-preview-content')),
+            )
+            .color,
+        Colors.transparent,
+      );
+
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('appearance-editor-pattern-mode')),
+        180,
+      );
+      await tester.tap(find.byKey(const Key('appearance-editor-pattern-mode')));
+      await tester.pumpAndSettle();
+
+      expect(rootBackdrop().settings.background, AppBackgroundStyle.pattern);
+      expect(
+        tester.widget<Scaffold>(find.byType(Scaffold)).backgroundColor,
+        Colors.transparent,
+      );
+      await tester.drag(find.byType(ListView).first, const Offset(0, 600));
+      await tester.pumpAndSettle();
+      expect(previewBackdrop().settings.background, AppBackgroundStyle.pattern);
+      final previewPattern = tester.widget<AppAppearancePattern>(
+        find.descendant(
+          of: find.byKey(const Key('appearance-editor-preview-background')),
+          matching: find.byType(AppAppearancePattern),
+        ),
+      );
+      expect(previewPattern.style, AppPatternStyle.waves);
+      expect(previewPattern.color, const Color(0xFFDDE7F0));
+      expect(previewPattern.intensity, 0.46);
+    },
+  );
+
+  testWidgets('draft photo uses the shared wallpaper fit blur and dim pipeline', (
+    tester,
+  ) async {
+    const settings = AppAppearanceSettings(
+      theme: AppThemePreference.custom,
+      background: AppBackgroundStyle.photo,
+      backgroundColorValue: 0xFF202228,
+      photoDim: 0.31,
+      photoBlur: 7,
+    );
+    final bytes = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(Brightness.dark, settings: settings),
+        home: AppAppearanceBackground(
+          settings: settings,
+          wallpaperBytes: bytes,
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final image = tester.widget<Image>(find.byType(Image));
+    expect(image.fit, BoxFit.cover);
+    expect(image.gaplessPlayback, isTrue);
+    final filtered = tester.widget<ImageFiltered>(find.byType(ImageFiltered));
+    expect(filtered.enabled, isTrue);
+    final dim = tester.widgetList<ColoredBox>(find.byType(ColoredBox)).last;
+    expect(dim.color, settings.backgroundColor.withValues(alpha: 0.31));
   });
 }
