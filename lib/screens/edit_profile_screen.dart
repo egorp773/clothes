@@ -117,9 +117,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Widget build(BuildContext context) {
     final palette = context.appPalette;
     return Scaffold(
-      backgroundColor: palette.page,
+      backgroundColor: context.appBackdrop.scaffoldColor,
       appBar: AppBar(
-        backgroundColor: palette.page,
+        backgroundColor: context.appBackdrop.scaffoldColor,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         centerTitle: false,

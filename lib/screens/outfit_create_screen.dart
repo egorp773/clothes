@@ -460,7 +460,7 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: context.appPalette.page,
+      backgroundColor: context.appBackdrop.scaffoldColor,
       body: SafeArea(
         child: Column(
           children: [

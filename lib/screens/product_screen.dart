@@ -12,6 +12,73 @@ import '../widgets/app_image.dart';
 import '../widgets/app_glass_surface.dart';
 import '../widgets/seller_follow_button.dart';
 
+/// Stable hooks used by route and interaction tests.
+const productScreenScaffoldKey = Key('product-screen-scaffold');
+const productScreenContentKey = Key('product-screen-content');
+const productScreenBackButtonKey = Key('product-screen-back-button');
+const productScreenFooterKey = Key('product-screen-footer');
+const productScreenMessageButtonKey = Key('product-screen-message-button');
+
+/// The single route contract for presenting a [ProductScreen].
+///
+/// The route remains non-opaque so the rounded card and its top gap reveal the
+/// actual previous route. [MaterialRouteTransitionMixin] keeps the transition
+/// platform-aware and supplies the native edge-swipe gesture on iOS.
+class ProductPageRoute<T> extends PageRoute<T>
+    with MaterialRouteTransitionMixin<T> {
+  ProductPageRoute({
+    required this.builder,
+    super.settings,
+    super.requestFocus,
+    this.maintainState = true,
+    super.allowSnapshotting = false,
+  }) : super(barrierDismissible: false);
+
+  final WidgetBuilder builder;
+
+  @override
+  final bool maintainState;
+
+  @override
+  bool get opaque => false;
+
+  /// Keep the previous route painted in place behind our transparent gap.
+  ///
+  /// Material/Cupertino normally drive the previous route's secondary
+  /// animation when a new page is pushed. That fade/parallax is correct for an
+  /// opaque page, but here it would move or fully hide the catalog and expose
+  /// only the root wallpaper. The product page still uses its own platform
+  /// primary transition and keeps the native iOS back gesture.
+  @override
+  bool canTransitionFrom(TransitionRoute<dynamic> previousRoute) => false;
+
+  /// A transparent modal barrier keeps the visual backdrop live without
+  /// allowing taps to leak into the previous route.
+  @override
+  Color? get barrierColor => Colors.transparent;
+
+  @override
+  String? get barrierLabel => null;
+
+  @override
+  Widget buildContent(BuildContext context) => builder(context);
+
+  @override
+  String get debugLabel => '${super.debugLabel}(${settings.name})';
+}
+
+ProductPageRoute<T> buildProductRoute<T>({
+  required WidgetBuilder builder,
+  RouteSettings? settings,
+  bool? requestFocus,
+}) {
+  return ProductPageRoute<T>(
+    builder: builder,
+    settings: settings,
+    requestFocus: requestFocus,
+  );
+}
+
 const _productInfoBodyTextStyle = TextStyle(
   fontFamily: AppTypography.fontFamily,
   fontSize: 15,
@@ -132,23 +199,12 @@ class ProductScreen extends StatefulWidget {
   State<ProductScreen> createState() => _ProductScreenState();
 }
 
-class _ProductScreenState extends State<ProductScreen>
-    with TickerProviderStateMixin {
-  static const _openDuration = Duration(milliseconds: 500);
-  static const _expandDuration = Duration(milliseconds: 280);
-  static const _scrollRange = 180.0;
-  static const _spacingMin = 16.0;
-  static const _spacingMax = 30.0;
+class _ProductScreenState extends State<ProductScreen> {
   static const _topGapCard = 16.0;
   static const _topRadiusCard = 28.0;
   static const _bottomRadiusCard = 24.0;
 
-  late final AnimationController _openController;
-  late final AnimationController _expandController;
-  late final Animation<Offset> _slide;
   final ScrollController _scrollController = ScrollController();
-  double _scrollOffset = 0;
-  bool _isClosing = false;
   bool _isLiked = false;
   int _viewsCount = 0;
   int _likesCount = 0;
@@ -169,46 +225,11 @@ class _ProductScreenState extends State<ProductScreen>
         (widget.sourceProduct?.likesCount ?? widget.product.likesCount)
             .clamp(0, 1 << 31)
             .toInt();
-    _openController = AnimationController(duration: _openDuration, vsync: this);
-    _expandController = AnimationController(
-      duration: _expandDuration,
-      vsync: this,
-    );
-    _expandController.addListener(_onExpandTick);
-    _slide = Tween<Offset>(
-      begin: const Offset(0, 1),
-      end: Offset.zero,
-    ).chain(CurveTween(curve: Curves.easeOutCubic)).animate(_openController);
-    _openController.forward();
-    _scrollController.addListener(_onScroll);
-    _openController.addStatusListener(_onProductOpenStatus);
     _loadSellerStats();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || widget.product.canPurchase) return;
       _showUnavailablePurchaseSheet();
     });
-  }
-
-  void _onExpandTick() => setState(() {});
-
-  void _onScroll() {
-    final offset = _scrollController.offset;
-    if ((offset - _scrollOffset).abs() > 1) {
-      setState(() => _scrollOffset = offset);
-    }
-  }
-
-  void _onProductOpenStatus(AnimationStatus status) {
-    if (status == AnimationStatus.dismissed && _isClosing && mounted) {
-      _isClosing = false;
-      Navigator.of(context, rootNavigator: true).maybePop();
-    }
-  }
-
-  void _closeWithAnimation() {
-    if (_isClosing) return;
-    _isClosing = true;
-    _openController.reverse();
   }
 
   Future<void> _openImageViewer(int initialPage) =>
@@ -354,19 +375,9 @@ class _ProductScreenState extends State<ProductScreen>
     ).whenComplete(() => _didShowUnavailableSheet = false);
   }
 
-  double get _spacing {
-    final t = (_scrollOffset / _scrollRange).clamp(0.0, 1.0);
-    return _spacingMin + (_spacingMax - _spacingMin) * (1 - t);
-  }
-
   @override
   void dispose() {
-    _expandController.removeListener(_onExpandTick);
-    _openController.removeStatusListener(_onProductOpenStatus);
-    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
-    _expandController.dispose();
-    _openController.dispose();
     super.dispose();
   }
 
@@ -375,18 +386,13 @@ class _ProductScreenState extends State<ProductScreen>
     final product = widget.product;
     final palette = context.appPalette;
     final hairline = 1 / MediaQuery.of(context).devicePixelRatio;
-    final tExpand = _expandController.value;
     final topGap = widget.isPreview
         ? 0.0
-        : (MediaQuery.of(context).viewPadding.top + _topGapCard) *
-              (1 - tExpand);
-    final topRadius = widget.isPreview ? 0.0 : _topRadiusCard * (1 - tExpand);
-    final bottomRadius = widget.isPreview
-        ? 0.0
-        : _bottomRadiusCard * (1 - tExpand);
-    final spacing = _spacing;
-    final t = (_scrollOffset / _scrollRange).clamp(0.0, 1.0);
-    final titlePriceSpacing = spacing + 28.0 * (1 - t);
+        : MediaQuery.of(context).viewPadding.top + _topGapCard;
+    final topRadius = widget.isPreview ? 0.0 : _topRadiusCard;
+    final bottomRadius = widget.isPreview ? 0.0 : _bottomRadiusCard;
+    const spacing = 20.0;
+    const titlePriceSpacing = 36.0;
     final canPurchase = product.canPurchase;
     final sellerRating = _reviewCount == 0 ? 0.0 : _reviewRating;
     final sellerFollowers = (_sellerProfile?.followersCount ?? 0)
@@ -407,301 +413,299 @@ class _ProductScreenState extends State<ProductScreen>
         : palette.surface.withValues(alpha: 1);
 
     return Scaffold(
-      backgroundColor: presentationBackground,
-      body: SlideTransition(
-        position: _slide,
-        child: Padding(
-          padding: EdgeInsets.only(top: topGap),
-          child: ClipRRect(
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(topRadius),
-              topRight: Radius.circular(topRadius),
-              bottomLeft: Radius.circular(bottomRadius),
-              bottomRight: Radius.circular(bottomRadius),
-            ),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Colors.transparent, productSurface],
-                        stops: [0.0, 0.12],
-                      ),
+      key: productScreenScaffoldKey,
+      backgroundColor: Colors.transparent,
+      body: Padding(
+        padding: EdgeInsets.only(top: topGap),
+        child: ClipRRect(
+          key: productScreenContentKey,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(topRadius),
+            topRight: Radius.circular(topRadius),
+            bottomLeft: Radius.circular(bottomRadius),
+            bottomRight: Radius.circular(bottomRadius),
+          ),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [Colors.transparent, productSurface],
+                      stops: [0.0, 0.12],
                     ),
-                    child: SafeArea(
-                      top: false,
-                      bottom: false,
-                      child: CustomScrollView(
-                        controller: _scrollController,
-                        physics: const BouncingScrollPhysics(
-                          parent: AlwaysScrollableScrollPhysics(),
-                        ),
-                        slivers: [
-                          SliverToBoxAdapter(
-                            child: ClipRRect(
-                              borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(28),
-                              ),
-                              child: _HeroImageGallery(
-                                gallery: product.images.isNotEmpty
-                                    ? product.images
-                                    : [product.image],
-                                onOpen: _openImageViewer,
-                              ),
+                  ),
+                  child: SafeArea(
+                    top: false,
+                    bottom: false,
+                    child: CustomScrollView(
+                      controller: _scrollController,
+                      physics: const BouncingScrollPhysics(
+                        parent: AlwaysScrollableScrollPhysics(),
+                      ),
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: ClipRRect(
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(28),
+                            ),
+                            child: _HeroImageGallery(
+                              gallery: product.images.isNotEmpty
+                                  ? product.images
+                                  : [product.image],
+                              onOpen: _openImageViewer,
                             ),
                           ),
-                          SliverToBoxAdapter(
-                            child: Container(
-                              padding: EdgeInsets.fromLTRB(
-                                18,
-                                spacing,
-                                18,
-                                spacing,
-                              ),
-                              decoration: BoxDecoration(
-                                color: productSurface,
-                                border: Border(
-                                  top: BorderSide(
-                                    color: palette.border,
-                                    width: hairline,
-                                  ),
+                        ),
+                        SliverToBoxAdapter(
+                          child: Container(
+                            padding: EdgeInsets.fromLTRB(
+                              18,
+                              spacing,
+                              18,
+                              spacing,
+                            ),
+                            decoration: BoxDecoration(
+                              color: productSurface,
+                              border: Border(
+                                top: BorderSide(
+                                  color: palette.border,
+                                  width: hairline,
                                 ),
                               ),
-                              child: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 54,
-                                    ),
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(
-                                          product.title,
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w500,
-                                            letterSpacing: 0.15,
-                                            height: 1.2,
-                                          ),
-                                        ),
-                                        SizedBox(height: titlePriceSpacing),
-                                        Text(
-                                          priceText,
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: 0.15,
-                                            height: 1.0,
-                                            fontFeatures: [
-                                              FontFeature.tabularFigures(),
-                                              FontFeature.liningFigures(),
-                                            ],
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                            ),
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 54,
                                   ),
-                                  Positioned.fill(
-                                    child: Stack(
-                                      alignment: Alignment.center,
-                                      children: [
-                                        Positioned(
-                                          left: 18,
-                                          child: _InlineIcon(
-                                            icon: _isLiked
-                                                ? CupertinoIcons.heart_fill
-                                                : CupertinoIcons.heart,
-                                            onTap: _toggleWishlist,
-                                            isWishlist: true,
-                                          ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        product.title,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w500,
+                                          letterSpacing: 0.15,
+                                          height: 1.2,
                                         ),
-                                        Positioned(
-                                          right: 18,
-                                          child: _InlineIcon(
-                                            icon: CupertinoIcons.paperplane,
-                                            onTap:
-                                                widget.onShare ??
-                                                widget.onContactSeller,
-                                          ),
+                                      ),
+                                      SizedBox(height: titlePriceSpacing),
+                                      Text(
+                                        priceText,
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.15,
+                                          height: 1.0,
+                                          fontFeatures: [
+                                            FontFeature.tabularFigures(),
+                                            FontFeature.liningFigures(),
+                                          ],
                                         ),
-                                      ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Positioned.fill(
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      Positioned(
+                                        left: 18,
+                                        child: _InlineIcon(
+                                          icon: _isLiked
+                                              ? CupertinoIcons.heart_fill
+                                              : CupertinoIcons.heart,
+                                          onTap: _toggleWishlist,
+                                          isWishlist: true,
+                                        ),
+                                      ),
+                                      Positioned(
+                                        right: 18,
+                                        child: _InlineIcon(
+                                          icon: CupertinoIcons.paperplane,
+                                          onTap:
+                                              widget.onShare ??
+                                              widget.onContactSeller,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        SliverToBoxAdapter(
+                          child: Container(
+                            color: productSurface,
+                            child: Padding(
+                              padding: EdgeInsets.fromLTRB(
+                                18,
+                                (spacing * 0.5).clamp(12.0, 28.0),
+                                18,
+                                spacing,
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  _ProductDatabaseDescription(
+                                    product: product,
+                                    sourceProduct: widget.sourceProduct,
+                                    hairline: hairline,
+                                  ),
+                                  _DeliveryAddress(
+                                    fallbackCity: product.location,
+                                  ),
+                                  if (!widget.isPreview ||
+                                      publishedAt != null) ...[
+                                    const SizedBox(height: 10),
+                                    _ProductPublicationMeta(
+                                      publishedAt: publishedAt,
+                                      viewsCount: _viewsCount,
+                                      likesCount: _likesCount,
                                     ),
+                                  ],
+                                  SizedBox(height: spacing),
+                                  if (!widget.isPreview) ...[
+                                    _BuyDeliveryBlock(
+                                      onTap: _openDeliveryCheckout,
+                                    ),
+                                    SizedBox(height: spacing),
+                                  ],
+                                  _SellerCard(
+                                    hairline: hairline,
+                                    name: product.sellerName,
+                                    handle: product.sellerHandle,
+                                    avatarUrl: _sellerProfile?.avatarUrl ?? '',
+                                    rating: sellerRating.toDouble(),
+                                    reviews: _reviewCount,
+                                    followers: sellerFollowers,
+                                    sellerId:
+                                        widget.sourceProduct?.ownerId ?? '',
+                                    followListenable:
+                                        widget.sellerFollowListenable,
+                                    canFollowSeller: widget.canFollowSeller,
+                                    isFollowingSeller: widget.isFollowingSeller,
+                                    onToggleSellerFollow:
+                                        widget.onToggleSellerFollow,
+                                    onTap: widget.onOpenSeller,
+                                    onReviewsTap: widget.onOpenReviews,
+                                  ),
+                                  const SizedBox(height: 14),
+                                  _RelatedProductsSection(
+                                    products: widget.relatedProducts,
+                                    onProductTap: widget.onRelatedProductTap,
+                                    onToggleLike: widget.onToggleRelatedLike,
+                                  ),
+                                  SizedBox(height: spacing),
+                                  const SafeArea(
+                                    top: false,
+                                    child: SizedBox(height: 2),
                                   ),
                                 ],
                               ),
                             ),
                           ),
-                          SliverToBoxAdapter(
-                            child: Container(
-                              color: productSurface,
-                              child: Padding(
-                                padding: EdgeInsets.fromLTRB(
-                                  18,
-                                  (spacing * 0.5).clamp(12.0, 28.0),
-                                  18,
-                                  spacing,
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  children: [
-                                    _ProductDatabaseDescription(
-                                      product: product,
-                                      sourceProduct: widget.sourceProduct,
-                                      hairline: hairline,
-                                    ),
-                                    _DeliveryAddress(
-                                      fallbackCity: product.location,
-                                    ),
-                                    if (!widget.isPreview ||
-                                        publishedAt != null) ...[
-                                      const SizedBox(height: 10),
-                                      _ProductPublicationMeta(
-                                        publishedAt: publishedAt,
-                                        viewsCount: _viewsCount,
-                                        likesCount: _likesCount,
-                                      ),
-                                    ],
-                                    SizedBox(height: spacing),
-                                    if (!widget.isPreview) ...[
-                                      _BuyDeliveryBlock(
-                                        onTap: _openDeliveryCheckout,
-                                      ),
-                                      SizedBox(height: spacing),
-                                    ],
-                                    _SellerCard(
-                                      hairline: hairline,
-                                      name: product.sellerName,
-                                      handle: product.sellerHandle,
-                                      avatarUrl:
-                                          _sellerProfile?.avatarUrl ?? '',
-                                      rating: sellerRating.toDouble(),
-                                      reviews: _reviewCount,
-                                      followers: sellerFollowers,
-                                      sellerId:
-                                          widget.sourceProduct?.ownerId ?? '',
-                                      followListenable:
-                                          widget.sellerFollowListenable,
-                                      canFollowSeller: widget.canFollowSeller,
-                                      isFollowingSeller:
-                                          widget.isFollowingSeller,
-                                      onToggleSellerFollow:
-                                          widget.onToggleSellerFollow,
-                                      onTap: widget.onOpenSeller,
-                                      onReviewsTap: widget.onOpenReviews,
-                                    ),
-                                    const SizedBox(height: 14),
-                                    _RelatedProductsSection(
-                                      products: widget.relatedProducts,
-                                      onProductTap: widget.onRelatedProductTap,
-                                      onToggleLike: widget.onToggleRelatedLike,
-                                    ),
-                                    SizedBox(height: spacing),
-                                    const SafeArea(
-                                      top: false,
-                                      child: SizedBox(height: 2),
-                                    ),
-                                  ],
+                        ),
+                        SliverToBoxAdapter(
+                          child: SizedBox(
+                            height: widget.isPreview
+                                ? 16
+                                : 52 +
+                                      16 +
+                                      MediaQuery.of(context).padding.bottom,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (!widget.isPreview)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: AppGlassSurface(
+                    key: productScreenFooterKey,
+                    role: AppGlassRole.toolbar,
+                    grouped: false,
+                    interactiveGlint: false,
+                    density: 0.94,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(22),
+                    ),
+                    child: SafeArea(
+                      top: false,
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
+                        color: context.appGlass.enabled
+                            ? Colors.transparent
+                            : productSurface,
+                        child: SizedBox(
+                          height: 52,
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            key: productScreenMessageButtonKey,
+                            onPressed: canPurchase
+                                ? widget.onContactSeller
+                                : _showUnavailablePurchaseSheet,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: palette.ink,
+                              foregroundColor: palette.surface,
+                              overlayColor: Colors.transparent,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(
+                                  context.appGlass.enabled ? 16 : 2,
                                 ),
                               ),
                             ),
-                          ),
-                          SliverToBoxAdapter(
-                            child: SizedBox(
-                              height: widget.isPreview
-                                  ? 16
-                                  : 52 +
-                                        16 +
-                                        MediaQuery.of(context).padding.bottom,
+                            child: Text(
+                              messageButtonText.toUpperCase(),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: AppTypography.bold,
+                                letterSpacing: 0,
+                              ),
                             ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (!widget.isPreview)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  child: SafeArea(
+                    top: false,
+                    bottom: false,
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(10, 8, 10, 8),
+                      child: Row(
+                        children: [
+                          _TopIcon(
+                            key: productScreenBackButtonKey,
+                            icon: CupertinoIcons.back,
+                            onTap: () => Navigator.of(context).maybePop(),
                           ),
                         ],
                       ),
                     ),
                   ),
                 ),
-                if (!widget.isPreview)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    child: AppGlassSurface(
-                      density: 0.94,
-                      borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(22),
-                      ),
-                      child: SafeArea(
-                        top: false,
-                        child: Container(
-                          padding: const EdgeInsets.fromLTRB(18, 8, 18, 8),
-                          color: context.appGlass.enabled
-                              ? Colors.transparent
-                              : productSurface,
-                          child: SizedBox(
-                            height: 52,
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: canPurchase
-                                  ? widget.onContactSeller
-                                  : _showUnavailablePurchaseSheet,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: palette.ink,
-                                foregroundColor: palette.surface,
-                                overlayColor: Colors.transparent,
-                                elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(
-                                    context.appGlass.enabled ? 16 : 2,
-                                  ),
-                                ),
-                              ),
-                              child: Text(
-                                messageButtonText.toUpperCase(),
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: AppTypography.bold,
-                                  letterSpacing: 0,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                if (!widget.isPreview)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    top: 0,
-                    child: SafeArea(
-                      top: false,
-                      bottom: false,
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          10,
-                          MediaQuery.of(context).viewPadding.top + 8,
-                          10,
-                          8,
-                        ),
-                        child: Row(
-                          children: [
-                            _TopIcon(
-                              icon: CupertinoIcons.back,
-                              onTap: _closeWithAnimation,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+            ],
           ),
         ),
       ),
@@ -1003,7 +1007,7 @@ class _ProductImageViewerState extends State<_ProductImageViewer> {
 }
 
 class _TopIcon extends StatelessWidget {
-  const _TopIcon({required this.icon, required this.onTap});
+  const _TopIcon({super.key, required this.icon, required this.onTap});
 
   final IconData icon;
   final VoidCallback onTap;
@@ -1029,6 +1033,8 @@ class _TopIcon extends StatelessWidget {
             ? Padding(
                 padding: const EdgeInsets.all(3),
                 child: AppGlassSurface(
+                  role: AppGlassRole.compactButton,
+                  grouped: false,
                   density: 0.86,
                   borderRadius: BorderRadius.circular(17),
                   child: content,
@@ -2157,7 +2163,7 @@ class _DeliveryCheckoutScreenState extends State<DeliveryCheckoutScreen> {
         ),
       ),
       child: Scaffold(
-        backgroundColor: palette.page,
+        backgroundColor: context.appBackdrop.scaffoldColor,
         body: SafeArea(
           child: Column(
             children: [

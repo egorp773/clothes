@@ -216,7 +216,12 @@ Future<void> _pumpOutfit(
         onToggleOutfitLike: (_) async {},
         onProductViewed: onProductViewed ?? (_) async => 0,
         onOutfitViewed: onOutfitViewed,
-        onContactSeller: (Product product, {bool imageOnly = false}) async {},
+        onContactSeller:
+            (
+              Product product, {
+              bool imageOnly = false,
+              Route<dynamic>? sourceRoute,
+            }) async {},
         onOpenSellerProfile: (_) {},
         deliveryProfile: const DeliveryProfile(),
         onSaveDeliveryProfile: (_) async {},

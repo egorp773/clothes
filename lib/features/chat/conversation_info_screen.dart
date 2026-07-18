@@ -200,7 +200,7 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
         .toList(growable: false);
 
     return Scaffold(
-      backgroundColor: context.appPalette.page,
+      backgroundColor: context.appBackdrop.scaffoldColor,
       body: SafeArea(
         top: false,
         child: CustomScrollView(

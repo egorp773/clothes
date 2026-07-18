@@ -321,34 +321,183 @@ extension AppPaletteContext on BuildContext {
       Theme.of(this).extension<AppPalette>() ?? AppPalette.light;
 }
 
+enum AppGlassRole {
+  navigation,
+  toolbar,
+  floatingControl,
+  card,
+  sheet,
+  input,
+  compactButton,
+  overlay,
+}
+
+/// Optical and motion tokens for one kind of glass surface.
+///
+/// Large reading surfaces intentionally use a denser tint and a quieter rim;
+/// compact floating controls retain more of the backdrop and slightly more
+/// edge light. This keeps glass a hierarchy rather than a global skin.
+@immutable
+class AppGlassMaterial {
+  const AppGlassMaterial({
+    required this.blurSigma,
+    required this.tintOpacity,
+    required this.rimOpacity,
+    required this.topHighlightOpacity,
+    required this.bottomDepthOpacity,
+    required this.shadowOpacity,
+    required this.shadowBlur,
+    required this.shadowSpread,
+    required this.shadowOffset,
+    required this.cornerRadius,
+    required this.padding,
+    required this.motionDuration,
+    required this.glintOpacity,
+    required this.glintRadius,
+  });
+
+  const AppGlassMaterial.disabledGeometry({
+    this.cornerRadius = 0,
+    this.padding = EdgeInsets.zero,
+    this.motionDuration = Duration.zero,
+  }) : blurSigma = 0,
+       tintOpacity = 0,
+       rimOpacity = 0,
+       topHighlightOpacity = 0,
+       bottomDepthOpacity = 0,
+       shadowOpacity = 0,
+       shadowBlur = 0,
+       shadowSpread = 0,
+       shadowOffset = Offset.zero,
+       glintOpacity = 0,
+       glintRadius = 0;
+
+  final double blurSigma;
+  final double tintOpacity;
+  final double rimOpacity;
+  final double topHighlightOpacity;
+  final double bottomDepthOpacity;
+  final double shadowOpacity;
+  final double shadowBlur;
+  final double shadowSpread;
+  final Offset shadowOffset;
+  final double cornerRadius;
+  final EdgeInsets padding;
+  final Duration motionDuration;
+  final double glintOpacity;
+  final double glintRadius;
+
+  static const disabled = AppGlassMaterial.disabledGeometry();
+
+  AppGlassMaterial lerp(AppGlassMaterial other, double t) {
+    return AppGlassMaterial(
+      blurSigma: blurSigma + (other.blurSigma - blurSigma) * t,
+      tintOpacity: tintOpacity + (other.tintOpacity - tintOpacity) * t,
+      rimOpacity: rimOpacity + (other.rimOpacity - rimOpacity) * t,
+      topHighlightOpacity:
+          topHighlightOpacity +
+          (other.topHighlightOpacity - topHighlightOpacity) * t,
+      bottomDepthOpacity:
+          bottomDepthOpacity +
+          (other.bottomDepthOpacity - bottomDepthOpacity) * t,
+      shadowOpacity: shadowOpacity + (other.shadowOpacity - shadowOpacity) * t,
+      shadowBlur: shadowBlur + (other.shadowBlur - shadowBlur) * t,
+      shadowSpread: shadowSpread + (other.shadowSpread - shadowSpread) * t,
+      shadowOffset: Offset.lerp(shadowOffset, other.shadowOffset, t)!,
+      cornerRadius: cornerRadius + (other.cornerRadius - cornerRadius) * t,
+      padding: EdgeInsets.lerp(padding, other.padding, t)!,
+      motionDuration: Duration(
+        microseconds:
+            (motionDuration.inMicroseconds +
+                    (other.motionDuration.inMicroseconds -
+                            motionDuration.inMicroseconds) *
+                        t)
+                .round(),
+      ),
+      glintOpacity: glintOpacity + (other.glintOpacity - glintOpacity) * t,
+      glintRadius: glintRadius + (other.glintRadius - glintRadius) * t,
+    );
+  }
+}
+
 @immutable
 class AppGlassStyle extends ThemeExtension<AppGlassStyle> {
   const AppGlassStyle({
     required this.enabled,
-    required this.blur,
     required this.materialTint,
     required this.rimColor,
     required this.depthColor,
     required this.shadowColor,
     required this.accentGlint,
+    required this.navigation,
+    required this.toolbar,
+    required this.floatingControl,
+    required this.card,
+    required this.sheet,
+    required this.input,
+    required this.compactButton,
+    required this.overlay,
   });
 
   final bool enabled;
-  final double blur;
   final Color materialTint;
   final Color rimColor;
   final Color depthColor;
   final Color shadowColor;
   final Color accentGlint;
+  final AppGlassMaterial navigation;
+  final AppGlassMaterial toolbar;
+  final AppGlassMaterial floatingControl;
+  final AppGlassMaterial card;
+  final AppGlassMaterial sheet;
+  final AppGlassMaterial input;
+  final AppGlassMaterial compactButton;
+  final AppGlassMaterial overlay;
+
+  /// Kept for source compatibility with callers that only need a representative
+  /// blur value. New surfaces should select an explicit [AppGlassRole].
+  double get blur => floatingControl.blurSigma;
 
   static const disabled = AppGlassStyle(
     enabled: false,
-    blur: 0,
     materialTint: Colors.transparent,
     rimColor: Colors.transparent,
     depthColor: Colors.transparent,
     shadowColor: Colors.transparent,
     accentGlint: Colors.transparent,
+    navigation: AppGlassMaterial.disabledGeometry(
+      cornerRadius: 29,
+      motionDuration: Duration(milliseconds: 280),
+    ),
+    toolbar: AppGlassMaterial.disabledGeometry(
+      cornerRadius: 22,
+      motionDuration: Duration(milliseconds: 240),
+    ),
+    floatingControl: AppGlassMaterial.disabledGeometry(
+      cornerRadius: 22,
+      motionDuration: Duration(milliseconds: 230),
+    ),
+    card: AppGlassMaterial.disabledGeometry(
+      cornerRadius: 24,
+      motionDuration: Duration(milliseconds: 220),
+    ),
+    sheet: AppGlassMaterial.disabledGeometry(
+      cornerRadius: 30,
+      motionDuration: Duration(milliseconds: 300),
+    ),
+    input: AppGlassMaterial.disabledGeometry(
+      cornerRadius: 24,
+      padding: EdgeInsets.symmetric(horizontal: 2),
+      motionDuration: Duration(milliseconds: 200),
+    ),
+    compactButton: AppGlassMaterial.disabledGeometry(
+      cornerRadius: 17,
+      motionDuration: Duration(milliseconds: 210),
+    ),
+    overlay: AppGlassMaterial.disabledGeometry(
+      cornerRadius: 22,
+      motionDuration: Duration(milliseconds: 260),
+    ),
   );
 
   factory AppGlassStyle.liquid({
@@ -357,51 +506,246 @@ class AppGlassStyle extends ThemeExtension<AppGlassStyle> {
   }) {
     final isDark = brightness == Brightness.dark;
     final neutralGlint = isDark
-        ? const Color(0xFFF3F4F6)
-        : const Color(0xFF5A5C61);
+        ? const Color(0xFFF1F2F4)
+        : const Color(0xFF747980);
+    final tint = isDark ? const Color(0xFF1B1D21) : const Color(0xFFF7F8FA);
+
+    AppGlassMaterial material({
+      required double blur,
+      required double tintOpacity,
+      required double rimOpacity,
+      required double highlightOpacity,
+      required double depthOpacity,
+      required double shadowOpacity,
+      required double shadowBlur,
+      required double shadowSpread,
+      required Offset shadowOffset,
+      required double radius,
+      required Duration duration,
+      required double glintOpacity,
+      required double glintRadius,
+      EdgeInsets padding = EdgeInsets.zero,
+    }) {
+      return AppGlassMaterial(
+        blurSigma: blur,
+        tintOpacity: tintOpacity,
+        rimOpacity: rimOpacity,
+        topHighlightOpacity: highlightOpacity,
+        bottomDepthOpacity: depthOpacity,
+        shadowOpacity: shadowOpacity,
+        shadowBlur: shadowBlur,
+        shadowSpread: shadowSpread,
+        shadowOffset: shadowOffset,
+        cornerRadius: radius,
+        padding: padding,
+        motionDuration: duration,
+        glintOpacity: glintOpacity,
+        glintRadius: glintRadius,
+      );
+    }
+
     return AppGlassStyle(
       enabled: true,
-      blur: isDark ? 22 : 20,
-      materialTint: isDark ? const Color(0xFF25262A) : const Color(0xFFFAFAFC),
-      rimColor: isDark ? const Color(0xFFF4F4F6) : const Color(0xFFFFFFFF),
-      depthColor: isDark ? const Color(0xFF08090B) : const Color(0xFF303238),
-      shadowColor: isDark ? const Color(0xFF000000) : const Color(0xFF20242A),
-      // Accent is deliberately almost neutral. It supplies a tiny optical
-      // glint without tinting the material or the content underneath it.
-      accentGlint: Color.lerp(neutralGlint, accent.withValues(alpha: 1), 0.07)!,
+      materialTint: tint,
+      rimColor: isDark ? const Color(0xFFF4F5F7) : Colors.white,
+      depthColor: isDark ? Colors.black : const Color(0xFF30343A),
+      shadowColor: isDark ? Colors.black : const Color(0xFF1B2028),
+      // The accent contributes only a small, desaturated specular cue.
+      accentGlint: Color.lerp(neutralGlint, accent.withValues(alpha: 1), 0.08)!,
+      navigation: material(
+        blur: 18,
+        tintOpacity: isDark ? 0.38 : 0.34,
+        rimOpacity: isDark ? 0.24 : 0.27,
+        highlightOpacity: isDark ? 0.24 : 0.32,
+        depthOpacity: isDark ? 0.16 : 0.09,
+        shadowOpacity: isDark ? 0.28 : 0.13,
+        shadowBlur: 26,
+        shadowSpread: -8,
+        shadowOffset: const Offset(0, 12),
+        radius: 29,
+        duration: const Duration(milliseconds: 280),
+        glintOpacity: isDark ? 0.11 : 0.13,
+        glintRadius: 0.72,
+      ),
+      toolbar: material(
+        blur: 15,
+        tintOpacity: isDark ? 0.43 : 0.4,
+        rimOpacity: isDark ? 0.2 : 0.22,
+        highlightOpacity: isDark ? 0.2 : 0.26,
+        depthOpacity: isDark ? 0.13 : 0.075,
+        shadowOpacity: isDark ? 0.2 : 0.09,
+        shadowBlur: 20,
+        shadowSpread: -7,
+        shadowOffset: const Offset(0, 8),
+        radius: 22,
+        duration: const Duration(milliseconds: 240),
+        glintOpacity: isDark ? 0.075 : 0.09,
+        glintRadius: 0.66,
+      ),
+      floatingControl: material(
+        blur: 13,
+        tintOpacity: isDark ? 0.46 : 0.42,
+        rimOpacity: isDark ? 0.22 : 0.24,
+        highlightOpacity: isDark ? 0.22 : 0.28,
+        depthOpacity: isDark ? 0.14 : 0.08,
+        shadowOpacity: isDark ? 0.23 : 0.11,
+        shadowBlur: 19,
+        shadowSpread: -6,
+        shadowOffset: const Offset(0, 8),
+        radius: 22,
+        duration: const Duration(milliseconds: 230),
+        glintOpacity: isDark ? 0.1 : 0.115,
+        glintRadius: 0.62,
+      ),
+      card: material(
+        blur: 10,
+        tintOpacity: isDark ? 0.56 : 0.53,
+        rimOpacity: isDark ? 0.14 : 0.16,
+        highlightOpacity: isDark ? 0.14 : 0.19,
+        depthOpacity: isDark ? 0.1 : 0.06,
+        shadowOpacity: isDark ? 0.16 : 0.07,
+        shadowBlur: 16,
+        shadowSpread: -6,
+        shadowOffset: const Offset(0, 7),
+        radius: 24,
+        duration: const Duration(milliseconds: 220),
+        glintOpacity: isDark ? 0.05 : 0.06,
+        glintRadius: 0.8,
+      ),
+      sheet: material(
+        blur: 20,
+        tintOpacity: isDark ? 0.68 : 0.64,
+        rimOpacity: isDark ? 0.15 : 0.17,
+        highlightOpacity: isDark ? 0.16 : 0.2,
+        depthOpacity: isDark ? 0.11 : 0.06,
+        shadowOpacity: isDark ? 0.28 : 0.14,
+        shadowBlur: 30,
+        shadowSpread: -10,
+        shadowOffset: const Offset(0, -3),
+        radius: 30,
+        duration: const Duration(milliseconds: 300),
+        glintOpacity: isDark ? 0.035 : 0.045,
+        glintRadius: 0.95,
+      ),
+      input: material(
+        blur: 11,
+        tintOpacity: isDark ? 0.64 : 0.61,
+        rimOpacity: isDark ? 0.13 : 0.15,
+        highlightOpacity: isDark ? 0.13 : 0.17,
+        depthOpacity: isDark ? 0.09 : 0.05,
+        shadowOpacity: isDark ? 0.12 : 0.055,
+        shadowBlur: 12,
+        shadowSpread: -5,
+        shadowOffset: const Offset(0, 5),
+        radius: 24,
+        duration: const Duration(milliseconds: 200),
+        glintOpacity: isDark ? 0.035 : 0.045,
+        glintRadius: 0.72,
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+      ),
+      compactButton: material(
+        blur: 10,
+        tintOpacity: isDark ? 0.48 : 0.45,
+        rimOpacity: isDark ? 0.2 : 0.22,
+        highlightOpacity: isDark ? 0.2 : 0.25,
+        depthOpacity: isDark ? 0.12 : 0.07,
+        shadowOpacity: isDark ? 0.18 : 0.08,
+        shadowBlur: 14,
+        shadowSpread: -5,
+        shadowOffset: const Offset(0, 6),
+        radius: 17,
+        duration: const Duration(milliseconds: 210),
+        glintOpacity: isDark ? 0.09 : 0.105,
+        glintRadius: 0.58,
+      ),
+      overlay: material(
+        blur: 17,
+        tintOpacity: isDark ? 0.58 : 0.55,
+        rimOpacity: isDark ? 0.17 : 0.19,
+        highlightOpacity: isDark ? 0.17 : 0.22,
+        depthOpacity: isDark ? 0.11 : 0.065,
+        shadowOpacity: isDark ? 0.26 : 0.12,
+        shadowBlur: 24,
+        shadowSpread: -8,
+        shadowOffset: const Offset(0, 10),
+        radius: 22,
+        duration: const Duration(milliseconds: 260),
+        glintOpacity: isDark ? 0.06 : 0.075,
+        glintRadius: 0.78,
+      ),
     );
   }
+
+  AppGlassMaterial materialFor(AppGlassRole role) => switch (role) {
+    AppGlassRole.navigation => navigation,
+    AppGlassRole.toolbar => toolbar,
+    AppGlassRole.floatingControl => floatingControl,
+    AppGlassRole.card => card,
+    AppGlassRole.sheet => sheet,
+    AppGlassRole.input => input,
+    AppGlassRole.compactButton => compactButton,
+    AppGlassRole.overlay => overlay,
+  };
 
   @override
   AppGlassStyle copyWith({
     bool? enabled,
-    double? blur,
     Color? materialTint,
     Color? rimColor,
     Color? depthColor,
     Color? shadowColor,
     Color? accentGlint,
+    AppGlassMaterial? navigation,
+    AppGlassMaterial? toolbar,
+    AppGlassMaterial? floatingControl,
+    AppGlassMaterial? card,
+    AppGlassMaterial? sheet,
+    AppGlassMaterial? input,
+    AppGlassMaterial? compactButton,
+    AppGlassMaterial? overlay,
   }) => AppGlassStyle(
     enabled: enabled ?? this.enabled,
-    blur: blur ?? this.blur,
     materialTint: materialTint ?? this.materialTint,
     rimColor: rimColor ?? this.rimColor,
     depthColor: depthColor ?? this.depthColor,
     shadowColor: shadowColor ?? this.shadowColor,
     accentGlint: accentGlint ?? this.accentGlint,
+    navigation: navigation ?? this.navigation,
+    toolbar: toolbar ?? this.toolbar,
+    floatingControl: floatingControl ?? this.floatingControl,
+    card: card ?? this.card,
+    sheet: sheet ?? this.sheet,
+    input: input ?? this.input,
+    compactButton: compactButton ?? this.compactButton,
+    overlay: overlay ?? this.overlay,
   );
 
   @override
   AppGlassStyle lerp(covariant AppGlassStyle? other, double t) {
     if (other == null) return this;
     return AppGlassStyle(
-      enabled: t < 0.5 ? enabled : other.enabled,
-      blur: blur + (other.blur - blur) * t,
+      // Keep the layer alive while transitioning to or from disabled so the
+      // optical tokens can fade continuously, but honor both exact endpoints.
+      // AnimatedTheme may keep ThemeData.lerp(begin, end, 1) as its final
+      // value, so `enabled || other.enabled` would make ON -> OFF stick on.
+      enabled: t <= 0
+          ? enabled
+          : t >= 1
+          ? other.enabled
+          : enabled || other.enabled,
       materialTint: Color.lerp(materialTint, other.materialTint, t)!,
       rimColor: Color.lerp(rimColor, other.rimColor, t)!,
       depthColor: Color.lerp(depthColor, other.depthColor, t)!,
       shadowColor: Color.lerp(shadowColor, other.shadowColor, t)!,
       accentGlint: Color.lerp(accentGlint, other.accentGlint, t)!,
+      navigation: navigation.lerp(other.navigation, t),
+      toolbar: toolbar.lerp(other.toolbar, t),
+      floatingControl: floatingControl.lerp(other.floatingControl, t),
+      card: card.lerp(other.card, t),
+      sheet: sheet.lerp(other.sheet, t),
+      input: input.lerp(other.input, t),
+      compactButton: compactButton.lerp(other.compactButton, t),
+      overlay: overlay.lerp(other.overlay, t),
     );
   }
 }
@@ -409,6 +753,80 @@ class AppGlassStyle extends ThemeExtension<AppGlassStyle> {
 extension AppGlassContext on BuildContext {
   AppGlassStyle get appGlass =>
       Theme.of(this).extension<AppGlassStyle>() ?? AppGlassStyle.disabled;
+}
+
+/// Separates the single app backdrop from opaque content colors.
+///
+/// Wallpaper pages use a transparent scaffold so the root image/pattern is not
+/// tinted a second time. [contentColor] remains opaque for reading surfaces.
+@immutable
+class AppBackdropStyle extends ThemeExtension<AppBackdropStyle> {
+  const AppBackdropStyle({
+    required this.hasWallpaper,
+    required this.rootColor,
+    required this.scaffoldColor,
+    required this.contentColor,
+  });
+
+  final bool hasWallpaper;
+  final Color rootColor;
+  final Color scaffoldColor;
+  final Color contentColor;
+
+  factory AppBackdropStyle.resolve({
+    required AppAppearanceSettings settings,
+    required AppPalette palette,
+  }) {
+    final hasWallpaper =
+        settings.theme == AppThemePreference.custom &&
+        settings.background != AppBackgroundStyle.plain;
+    final rootColor = settings.theme == AppThemePreference.custom
+        ? settings.backgroundColor
+        : palette.page;
+    return AppBackdropStyle(
+      hasWallpaper: hasWallpaper,
+      rootColor: rootColor.withValues(alpha: 1),
+      scaffoldColor: hasWallpaper
+          ? Colors.transparent
+          : rootColor.withValues(alpha: 1),
+      contentColor: palette.page.withValues(alpha: 1),
+    );
+  }
+
+  @override
+  AppBackdropStyle copyWith({
+    bool? hasWallpaper,
+    Color? rootColor,
+    Color? scaffoldColor,
+    Color? contentColor,
+  }) => AppBackdropStyle(
+    hasWallpaper: hasWallpaper ?? this.hasWallpaper,
+    rootColor: rootColor ?? this.rootColor,
+    scaffoldColor: scaffoldColor ?? this.scaffoldColor,
+    contentColor: contentColor ?? this.contentColor,
+  );
+
+  @override
+  AppBackdropStyle lerp(covariant AppBackdropStyle? other, double t) {
+    if (other == null) return this;
+    return AppBackdropStyle(
+      hasWallpaper: t < 0.5 ? hasWallpaper : other.hasWallpaper,
+      rootColor: Color.lerp(rootColor, other.rootColor, t)!,
+      scaffoldColor: Color.lerp(scaffoldColor, other.scaffoldColor, t)!,
+      contentColor: Color.lerp(contentColor, other.contentColor, t)!,
+    );
+  }
+}
+
+extension AppBackdropContext on BuildContext {
+  AppBackdropStyle get appBackdrop =>
+      Theme.of(this).extension<AppBackdropStyle>() ??
+      AppBackdropStyle(
+        hasWallpaper: false,
+        rootColor: appPalette.page.withValues(alpha: 1),
+        scaffoldColor: appPalette.page.withValues(alpha: 1),
+        contentColor: appPalette.page.withValues(alpha: 1),
+      );
 }
 
 ThemeData buildAppTheme(
@@ -419,6 +837,10 @@ ThemeData buildAppTheme(
   final effectiveBrightness = brightness;
   final isDark = effectiveBrightness == Brightness.dark;
   final palette = _resolvePalette(effectiveBrightness, settings);
+  final backdrop = AppBackdropStyle.resolve(
+    settings: settings,
+    palette: palette,
+  );
   final onAccent = _readableOn(palette.accent);
   final base = ThemeData(
     brightness: effectiveBrightness,
@@ -441,7 +863,7 @@ ThemeData buildAppTheme(
   ).apply(bodyColor: palette.ink, displayColor: palette.ink);
 
   return base.copyWith(
-    scaffoldBackgroundColor: palette.page,
+    scaffoldBackgroundColor: backdrop.scaffoldColor,
     canvasColor: palette.surface,
     cardColor: palette.surfaceRaised,
     dividerColor: palette.border,
@@ -492,7 +914,7 @@ ThemeData buildAppTheme(
       ),
     ),
     appBarTheme: AppBarTheme(
-      backgroundColor: palette.page,
+      backgroundColor: backdrop.scaffoldColor,
       foregroundColor: palette.ink,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
@@ -550,6 +972,7 @@ ThemeData buildAppTheme(
     ),
     extensions: <ThemeExtension<dynamic>>[
       palette,
+      backdrop,
       isGlass
           ? AppGlassStyle.liquid(
               brightness: effectiveBrightness,
@@ -574,10 +997,9 @@ AppPalette _resolvePalette(
     Color mixed(Color color, double amount) => Color.lerp(color, tint, amount)!;
     final hasWallpaper = settings.background != AppBackgroundStyle.plain;
     resolved = base.copyWith(
-      page: mixed(
-        base.page,
-        isDark ? 0.23 : 0.1,
-      ).withValues(alpha: hasWallpaper ? (isDark ? 0.74 : 0.78) : 1),
+      page: hasWallpaper
+          ? mixed(base.page, isDark ? 0.23 : 0.1).withValues(alpha: 1)
+          : settings.backgroundColor.withValues(alpha: 1),
       surface: mixed(base.surface, isDark ? 0.18 : 0.07),
       surfaceRaised: mixed(base.surfaceRaised, isDark ? 0.16 : 0.05),
       surfaceMuted: mixed(base.surfaceMuted, isDark ? 0.2 : 0.09),

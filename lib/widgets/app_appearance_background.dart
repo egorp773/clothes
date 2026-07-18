@@ -19,33 +19,30 @@ class AppAppearanceBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final hasCustomBackdrop =
-        settings.theme == AppThemePreference.custom &&
-        settings.background != AppBackgroundStyle.plain;
-    final customBackdrop = hasCustomBackdrop
-        ? ColoredBox(
-            color: settings.backgroundColor,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                if (settings.background == AppBackgroundStyle.photo)
-                  _PhotoWallpaper(settings: settings),
-                if (settings.background == AppBackgroundStyle.pattern)
-                  AppAppearancePattern(
-                    style: settings.pattern,
-                    color: settings.patternColor,
-                    intensity: settings.patternIntensity,
-                  ),
-                child,
-              ],
-            ),
-          )
-        : null;
+    final isCustom = settings.theme == AppThemePreference.custom;
+    final rootColor = isCustom
+        ? settings.backgroundColor.withValues(alpha: 1)
+        : palette.page.withValues(alpha: 1);
 
-    if (customBackdrop == null) {
-      return ColoredBox(color: palette.page, child: child);
-    }
-    return customBackdrop;
+    return BackdropGroup(
+      child: ColoredBox(
+        color: rootColor,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (isCustom && settings.background == AppBackgroundStyle.photo)
+              _PhotoWallpaper(settings: settings),
+            if (isCustom && settings.background == AppBackgroundStyle.pattern)
+              AppAppearancePattern(
+                style: settings.pattern,
+                color: settings.patternColor,
+                intensity: settings.patternIntensity,
+              ),
+            child,
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -57,24 +54,29 @@ class _PhotoWallpaper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final wallpaper = buildAppearanceWallpaperImage(settings.wallpaperPath);
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        if (wallpaper != null)
-          ImageFiltered(
-            imageFilter: ImageFilter.blur(
-              sigmaX: settings.photoBlur,
-              sigmaY: settings.photoBlur,
+    return RepaintBoundary(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (wallpaper != null)
+            ImageFiltered(
+              enabled: settings.photoBlur > 0.01,
+              imageFilter: ImageFilter.blur(
+                sigmaX: settings.photoBlur,
+                sigmaY: settings.photoBlur,
+              ),
+              child: Transform.scale(
+                scale: settings.photoBlur > 0.01 ? 1.04 : 1,
+                child: wallpaper,
+              ),
             ),
-            child: Transform.scale(
-              scale: settings.photoBlur > 0 ? 1.04 : 1,
-              child: wallpaper,
+          ColoredBox(
+            color: settings.backgroundColor.withValues(
+              alpha: settings.photoDim,
             ),
           ),
-        ColoredBox(
-          color: settings.backgroundColor.withValues(alpha: settings.photoDim),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

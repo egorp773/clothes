@@ -5,6 +5,15 @@ import '../../models/message_thread.dart';
 typedef SendChatTextCallback =
     Future<bool> Function(String threadId, String text);
 
+typedef SendPendingChatTextCallback =
+    Future<bool> Function(String threadId, ChatMessage pendingMessage);
+
+typedef RetryChatTextCallback =
+    Future<bool> Function(String threadId, ChatMessage failedMessage);
+
+typedef RetryChatMediaCallback =
+    Future<bool> Function(String threadId, ChatMessage failedMessage);
+
 typedef SendReplyCallback =
     Future<bool> Function(String threadId, String text, ChatMessage replyTo);
 
@@ -53,6 +62,9 @@ typedef MarkThreadReadCallback = Future<void> Function(String threadId);
 class ChatActions {
   const ChatActions({
     this.sendText,
+    this.sendPendingText,
+    this.retryText,
+    this.retryMedia,
     this.sendReply,
     this.sendImage,
     this.sendMedia,
@@ -64,6 +76,9 @@ class ChatActions {
   });
 
   final SendChatTextCallback? sendText;
+  final SendPendingChatTextCallback? sendPendingText;
+  final RetryChatTextCallback? retryText;
+  final RetryChatMediaCallback? retryMedia;
   final SendReplyCallback? sendReply;
   final SendChatImageCallback? sendImage;
   final SendChatMediaCallback? sendMedia;

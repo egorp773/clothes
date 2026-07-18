@@ -185,6 +185,8 @@ class AppRepository extends ChangeNotifier {
       const NotificationPreferences();
   DeliveryProfile _deliveryProfile = const DeliveryProfile();
   bool _hasCompletedThreadSync = false;
+  bool _isThreadSyncPending = false;
+  String? _threadSyncError;
   final Map<String, DateTime> _lastSeenByUserId = {};
   AppProfile _profile = const AppProfile(
     name: 'Ваш профиль',
@@ -208,6 +210,8 @@ class AppRepository extends ChangeNotifier {
   String? _registeredPushToken;
 
   bool get isReady => _isReady;
+  bool get isThreadSyncPending => _isThreadSyncPending;
+  String? get threadSyncError => _threadSyncError;
   List<Product> get products => List.unmodifiable(
     _products.where(
       (product) =>
@@ -315,15 +319,8 @@ class AppRepository extends ChangeNotifier {
   }
 
   List<MessageThread> get threads {
-    bool hasVisibleContent(MessageThread thread) {
-      return thread.lastMessage.trim().isNotEmpty ||
-          thread.messages.isNotEmpty ||
-          thread.productTitle.trim().isNotEmpty ||
-          thread.productImage.trim().isNotEmpty;
-    }
-
     if (!_hasSupabase || currentUserId.isEmpty) {
-      return List.unmodifiable(_threads.where(hasVisibleContent));
+      return List.unmodifiable(_threads);
     }
     return List.unmodifiable(
       _threads.where(
@@ -331,7 +328,6 @@ class AppRepository extends ChangeNotifier {
             thread.containsUser(currentUserId) &&
             (thread.isGroup ||
                 thread.otherPartyId(currentUserId).trim().isNotEmpty) &&
-            hasVisibleContent(thread) &&
             !_isBlockedThread(thread),
       ),
     );
@@ -1181,6 +1177,8 @@ class AppRepository extends ChangeNotifier {
     if (previousUserId != currentUserId) {
       _chatMediaUrlCache.clear();
       _loadLocalUserState();
+      _isThreadSyncPending = false;
+      _threadSyncError = null;
     }
     _activateBlockedUserIdentity(user?.id ?? '');
     _authError = null;
@@ -1724,9 +1722,13 @@ class AppRepository extends ChangeNotifier {
             );
           })
           .toList(growable: false);
-    } catch (e) {
-      debugPrint('Chat messages sync error: $e');
-      return threads;
+    } catch (error, stackTrace) {
+      debugPrint('Chat messages sync error: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      // Messages are core conversation data. Treating a failed hydration as
+      // a successful empty response makes RLS/network failures indistinguish-
+      // able from a genuinely empty chat, so let the outer sync expose retry.
+      rethrow;
     }
   }
 
@@ -1814,6 +1816,12 @@ class AppRepository extends ChangeNotifier {
   Future<void> _syncThreadsFromSupabase() async {
     if (!_hasSupabase || currentUserId.isEmpty) return;
     final syncUserId = currentUserId;
+    final shouldExposeProgress = _threads.isEmpty || _threadSyncError != null;
+    if (shouldExposeProgress) {
+      _isThreadSyncPending = true;
+      _threadSyncError = null;
+      notifyListeners();
+    }
 
     try {
       final previousById = {for (final thread in _threads) thread.id: thread};
@@ -1837,6 +1845,7 @@ class AppRepository extends ChangeNotifier {
       fetched = await _hydrateThreadProfiles(fetched);
       fetched = await _hydrateThreadMemberState(fetched);
       fetched = await _hydrateThreadMessages(fetched);
+      fetched = mergeChatOutgoingState(fetched, previousById);
       if (currentUserId != syncUserId) return;
 
       await _syncThreadPresence(fetched);
@@ -1864,12 +1873,73 @@ class AppRepository extends ChangeNotifier {
       );
       if (currentUserId != syncUserId) return;
       _threads = fetched;
+      _isThreadSyncPending = false;
+      _threadSyncError = null;
       notifyListeners();
-    } catch (e) {
-      if (currentUserId == syncUserId) _hasCompletedThreadSync = true;
-      debugPrint('Threads sync error: $e');
+    } catch (error, stackTrace) {
+      if (currentUserId == syncUserId) {
+        _hasCompletedThreadSync = true;
+        _isThreadSyncPending = false;
+        _threadSyncError = 'Проверьте подключение и повторите попытку.';
+        notifyListeners();
+      }
+      debugPrint('Threads sync error: $error');
+      debugPrintStack(stackTrace: stackTrace);
       // Optional table. Local chats remain fully usable without it.
     }
+  }
+
+  Future<void> retryThreadSync() {
+    if (!_hasSupabase || currentUserId.isEmpty) return Future<void>.value();
+    return _chatThreadSync.runNow(_syncThreadsFromSupabase);
+  }
+
+  @visibleForTesting
+  static List<MessageThread> mergeChatOutgoingState(
+    List<MessageThread> remoteThreads,
+    Map<String, MessageThread> previousById,
+  ) {
+    final merged = remoteThreads
+        .map((remoteThread) {
+          final localThread = previousById[remoteThread.id];
+          if (localThread == null) return remoteThread;
+          final remoteIds = remoteThread.messages
+              .map((message) => message.id)
+              .toSet();
+          final localOnly = localThread.messages.where(
+            (message) =>
+                message.isMine &&
+                (message.isPending || message.hasError) &&
+                !remoteIds.contains(message.id),
+          );
+          if (localOnly.isEmpty) return remoteThread;
+
+          final messages = [...remoteThread.messages, ...localOnly]
+            ..sort((left, right) {
+              final byTime = left.createdAt.compareTo(right.createdAt);
+              return byTime != 0 ? byTime : left.id.compareTo(right.id);
+            });
+          final latest = messages.last;
+          return remoteThread.copyWith(
+            messages: messages,
+            lastMessage: latest.previewText,
+            updatedAt: latest.createdAt.isAfter(remoteThread.updatedAt)
+                ? latest.createdAt
+                : remoteThread.updatedAt,
+          );
+        })
+        .toList(growable: false);
+    final remoteThreadIds = remoteThreads.map((thread) => thread.id).toSet();
+    final missingWithUnsentMessages = previousById.values.where(
+      (thread) =>
+          !remoteThreadIds.contains(thread.id) &&
+          thread.messages.any(
+            (message) =>
+                message.isMine && (message.isPending || message.hasError),
+          ),
+    );
+    return [...merged, ...missingWithUnsentMessages]
+      ..sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
   }
 
   MessageNotification? _incomingNotification(
@@ -3650,15 +3720,19 @@ class AppRepository extends ChangeNotifier {
     _sortThreads();
     await _saveThreadsLocal();
     final createdThread = threadById(threadId) ?? _threads.first;
-    await _saveThreadOrShowError(
+    final didCreate = await _saveThreadOrShowError(
       createdThread,
       newMessages: [createdThread.messages.last],
     );
+    if (!didCreate) {
+      await _discardFailedThreadCreation(threadId);
+      return null;
+    }
     unawaited(
       _notifyMessageRecipient(createdThread, createdThread.messages.last),
     );
     notifyListeners();
-    return _threads.firstWhere((thread) => thread.id == threadId);
+    return threadById(threadId) ?? createdThread;
   }
 
   Future<List<AppUserProfile>> searchUserProfiles(String query) async {
@@ -3748,7 +3822,11 @@ class AppRepository extends ChangeNotifier {
     _threads.insert(0, thread);
     _sortThreads();
     await _saveThreadsLocal();
-    await _saveThreadOrShowError(thread);
+    final didCreate = await _saveThreadOrShowError(thread);
+    if (!didCreate) {
+      await _discardFailedThreadCreation(threadId);
+      return null;
+    }
     notifyListeners();
     return thread;
   }
@@ -3821,7 +3899,14 @@ class AppRepository extends ChangeNotifier {
     );
     _upsertLocalThread(thread);
     await _saveThreadsLocal();
-    await _saveThreadOrShowError(thread, newMessages: [systemMessage]);
+    final didCreate = await _saveThreadOrShowError(
+      thread,
+      newMessages: [systemMessage],
+    );
+    if (!didCreate) {
+      await _discardFailedThreadCreation(thread.id);
+      return null;
+    }
     notifyListeners();
     return thread;
   }
@@ -3914,8 +3999,259 @@ class AppRepository extends ChangeNotifier {
     return _appendOutgoingMessage(thread, message);
   }
 
-  Future<void> sendMessage(String threadId, String text) async {
-    await sendChatText(threadId, text);
+  Future<bool> sendMessage(String threadId, String text) {
+    return sendChatText(threadId, text);
+  }
+
+  Future<bool> sendPendingChatText(
+    String threadId,
+    ChatMessage pendingMessage,
+  ) async {
+    final trimmed = pendingMessage.text.trim();
+    if (threadId.isEmpty || pendingMessage.id.isEmpty || trimmed.isEmpty) {
+      return false;
+    }
+
+    final actorId = await _resolveChatActor(
+      message: 'Войдите в профиль, чтобы отправить сообщение',
+    );
+    if (actorId == null) return false;
+
+    final thread = threadById(threadId);
+    if (thread == null || (_hasSupabase && !thread.containsUser(actorId))) {
+      return false;
+    }
+    if (thread.messages.any((message) => message.id == pendingMessage.id)) {
+      return false;
+    }
+
+    final message = pendingMessage.copyWith(
+      text: trimmed,
+      isMine: true,
+      senderId: actorId,
+      senderName: _profile.name,
+      senderAvatar: _currentAvatarUrl(),
+      type: 'text',
+      isPending: _hasSupabase,
+      hasError: false,
+    );
+    return _appendOutgoingMessage(thread, message);
+  }
+
+  Future<bool> retryChatText(String threadId, ChatMessage failedMessage) async {
+    final trimmed = failedMessage.text.trim();
+    if (threadId.isEmpty ||
+        failedMessage.id.isEmpty ||
+        trimmed.isEmpty ||
+        failedMessage.type != 'text' ||
+        !failedMessage.hasError) {
+      return false;
+    }
+
+    final actorId = await _resolveChatActor(
+      message: 'Войдите в профиль, чтобы повторить отправку',
+    );
+    if (actorId == null) return false;
+
+    var thread = threadById(threadId);
+    if (thread == null || (_hasSupabase && !thread.containsUser(actorId))) {
+      return false;
+    }
+
+    final existingIndex = thread.messages.indexWhere(
+      (message) => message.id == failedMessage.id,
+    );
+    final candidate = existingIndex == -1
+        ? failedMessage
+        : thread.messages[existingIndex];
+    final belongsToActor = _hasSupabase
+        ? candidate.senderId == actorId
+        : candidate.isMine ||
+              candidate.senderId.isEmpty ||
+              candidate.senderId == actorId;
+    if (!candidate.hasError ||
+        candidate.isDeleted ||
+        candidate.type != 'text' ||
+        !belongsToActor) {
+      return false;
+    }
+
+    final retrying = candidate.copyWith(
+      text: trimmed,
+      isPending: _hasSupabase,
+      hasError: false,
+    );
+    if (existingIndex == -1) {
+      thread = thread.copyWith(
+        lastMessage: retrying.previewText,
+        updatedAt: retrying.createdAt,
+        messages: [...thread.messages, retrying],
+      );
+      _upsertLocalThread(thread);
+      await _saveThreadsLocal();
+      notifyListeners();
+    } else {
+      await _replaceLocalMessage(threadId, retrying, updateLastPreview: true);
+      thread = threadById(threadId) ?? thread;
+    }
+
+    final saved = await _upsertThread(thread, newMessages: [retrying]);
+    if (_hasSupabase) {
+      await _replaceLocalMessage(
+        threadId,
+        retrying.copyWith(isPending: false, hasError: !saved),
+        updateLastPreview: true,
+      );
+    }
+    if (saved) {
+      final latestThread = threadById(threadId) ?? thread;
+      unawaited(_notifyMessageRecipient(latestThread, retrying));
+    } else {
+      _authError = 'Не удалось повторно отправить сообщение.';
+      notifyListeners();
+    }
+    return saved;
+  }
+
+  Future<bool> retryChatMedia(
+    String threadId,
+    ChatMessage failedMessage,
+  ) async {
+    final failedAttachment = failedMessage.attachment;
+    if (threadId.isEmpty ||
+        failedMessage.id.isEmpty ||
+        !failedMessage.hasError ||
+        !failedMessage.isMedia ||
+        failedAttachment == null ||
+        failedAttachment.url.trim().isEmpty ||
+        failedAttachment.hasRemoteObject) {
+      return false;
+    }
+
+    final actorId = await _resolveChatActor(
+      message: 'Войдите в профиль, чтобы повторить отправку вложения',
+    );
+    if (actorId == null) return false;
+
+    final thread = threadById(threadId);
+    if (thread == null || (_hasSupabase && !thread.containsUser(actorId))) {
+      return false;
+    }
+    final existingIndex = thread.messages.indexWhere(
+      (message) => message.id == failedMessage.id,
+    );
+    if (existingIndex == -1) return false;
+    final candidate = thread.messages[existingIndex];
+    final belongsToActor = _hasSupabase
+        ? candidate.senderId == actorId
+        : candidate.isMine ||
+              candidate.senderId.isEmpty ||
+              candidate.senderId == actorId;
+    final attachment = candidate.attachment;
+    if (!candidate.hasError ||
+        candidate.isDeleted ||
+        !candidate.isMedia ||
+        attachment == null ||
+        attachment.url.trim().isEmpty ||
+        attachment.hasRemoteObject ||
+        !belongsToActor) {
+      return false;
+    }
+
+    var localPath = attachment.url.trim();
+    if (localPath.startsWith('http://') ||
+        localPath.startsWith('https://') ||
+        localPath.startsWith('data:')) {
+      return false;
+    }
+    if (localPath.startsWith('file://')) {
+      try {
+        localPath = Uri.parse(
+          localPath,
+        ).toFilePath(windows: Platform.isWindows);
+      } catch (error, stackTrace) {
+        debugPrint('Retry chat media path error: $error');
+        debugPrintStack(stackTrace: stackTrace);
+        return false;
+      }
+    }
+
+    final mediaFile = XFile(localPath, name: attachment.name);
+    final kind = candidate.isVideo ? ChatMediaKind.video : ChatMediaKind.image;
+    ChatMessage? retryingMessage;
+    final sent = await _chatMediaSendCoordinator.send(
+      ensureRemoteThread: () => _upsertThread(thread),
+      upload: () => _uploadChatMedia(
+        threadId: threadId,
+        actorId: actorId,
+        mediaFile: mediaFile,
+        kind: kind,
+      ),
+      persist: (uploaded) async {
+        final latestThread = threadById(threadId);
+        if (latestThread == null ||
+            (_hasSupabase &&
+                (currentUserId != actorId ||
+                    !latestThread.containsUser(actorId)))) {
+          return false;
+        }
+        final currentIndex = latestThread.messages.indexWhere(
+          (message) => message.id == candidate.id,
+        );
+        if (currentIndex == -1) return false;
+        final current = latestThread.messages[currentIndex];
+        if (!current.hasError || !current.isMedia || current.isDeleted) {
+          return false;
+        }
+
+        final retrying = current.copyWith(
+          attachment: uploaded,
+          isPending: _hasSupabase,
+          hasError: false,
+        );
+        retryingMessage = retrying;
+        await _replaceLocalMessage(threadId, retrying, updateLastPreview: true);
+        final threadToSave = threadById(threadId);
+        if (threadToSave == null) return false;
+        final saved = await _upsertThread(
+          threadToSave,
+          newMessages: [retrying],
+        );
+        if (saved) {
+          final delivered = retrying.copyWith(
+            isPending: false,
+            hasError: false,
+          );
+          await _replaceLocalMessage(
+            threadId,
+            delivered,
+            updateLastPreview: true,
+          );
+          final deliveredThread = threadById(threadId) ?? threadToSave;
+          unawaited(_notifyMessageRecipient(deliveredThread, delivered));
+        }
+        return saved;
+      },
+      markFailed: (uploaded) async {
+        final localAttachment = _chatMediaSendCoordinator
+            .localFailureAttachment(uploaded, localUrl: localPath);
+        await _markLocalOutgoingMessageFailed(
+          threadId,
+          (retryingMessage ?? candidate).copyWith(attachment: localAttachment),
+          actorId: actorId,
+        );
+      },
+      cleanup: (uploaded) => _removeRemoteChatMedia(
+        uploaded.bucket,
+        uploaded.storagePath,
+        logContext: 'Failed retried chat media cleanup',
+      ),
+    );
+    if (!sent) {
+      _authError = 'Не удалось повторно отправить вложение.';
+      notifyListeners();
+    }
+    return sent;
   }
 
   Future<bool> sendReply(
@@ -4679,13 +5015,26 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
-  Future<void> _saveThreadOrShowError(
+  Future<bool> _saveThreadOrShowError(
     MessageThread thread, {
     List<ChatMessage> newMessages = const [],
   }) async {
     final didSave = await _upsertThread(thread, newMessages: newMessages);
-    if (didSave) return;
-    _authError = 'Не удалось доставить сообщение. Проверьте интернет.';
+    if (!didSave) {
+      _authError = 'Не удалось доставить сообщение. Проверьте интернет.';
+    }
+    return didSave;
+  }
+
+  Future<void> _discardFailedThreadCreation(String threadId) async {
+    _threads.removeWhere((thread) => thread.id == threadId);
+    try {
+      await _saveThreadsLocal();
+    } catch (error, stackTrace) {
+      debugPrint('Failed thread rollback cache error: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+    notifyListeners();
   }
 
   Future<bool> _upsertThread(
@@ -4723,8 +5072,9 @@ class AppRepository extends ChangeNotifier {
             );
       }
       return true;
-    } catch (e) {
-      debugPrint('Thread upsert error: $e');
+    } catch (error, stackTrace) {
+      debugPrint('Thread upsert error: $error');
+      debugPrintStack(stackTrace: stackTrace);
       return false;
     }
   }

@@ -135,7 +135,7 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
     final palette = context.appPalette;
     if (!_controller.isInitialized) {
       return ColoredBox(
-        color: palette.page,
+        color: context.appBackdrop.scaffoldColor,
         child: Center(child: CircularProgressIndicator(color: palette.ink)),
       );
     }
@@ -143,7 +143,7 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
     if (step == ListingPublishStep.success) return _buildSuccess();
 
     return ColoredBox(
-      color: palette.page,
+      color: context.appBackdrop.scaffoldColor,
       child: SafeArea(
         bottom: false,
         child: Column(
@@ -392,7 +392,7 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
   }
 
   Widget _buildSuccess() => ColoredBox(
-    color: context.appPalette.page,
+    color: context.appBackdrop.scaffoldColor,
     child: SafeArea(
       child: Center(
         child: SingleChildScrollView(

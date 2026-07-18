@@ -104,9 +104,10 @@ class _FashionAppState extends State<FashionApp> {
                   ? Brightness.light
                   : Brightness.dark,
               statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
-              systemNavigationBarColor: context.appGlass.enabled
+              systemNavigationBarColor:
+                  context.appGlass.enabled || context.appBackdrop.hasWallpaper
                   ? Colors.transparent
-                  : context.appPalette.surface,
+                  : context.appBackdrop.rootColor,
               systemNavigationBarIconBrightness: isDark
                   ? Brightness.light
                   : Brightness.dark,
@@ -165,6 +166,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   bool _createItemForOutfitOnly = false;
   bool _isAppActive = true;
   int _modalSurfaceDepth = 0;
+  final ValueNotifier<bool> _navigationCompact = ValueNotifier<bool>(false);
+  final Set<String> _openingProductChatRequests = <String>{};
+  final Set<String> _openingDirectChatRequests = <String>{};
   MessageNotification? _visibleMessageNotification;
   String? _handledMessageNotificationId;
   Timer? _messageNotificationTimer;
@@ -176,6 +180,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
   ChatActions get _chatActions => ChatActions(
     sendText: _repository.sendChatText,
+    sendPendingText: _repository.sendPendingChatText,
+    retryText: _repository.retryChatText,
+    retryMedia: _repository.retryChatMedia,
     sendReply: _repository.sendReply,
     sendImage: _repository.sendChatImage,
     sendMedia: _repository.sendChatMedia,
@@ -224,6 +231,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _messageNotificationRemoveTimer?.cancel();
     _pushTapSubscription?.cancel();
     _messageNotificationEntry?.remove();
+    _navigationCompact.dispose();
     _repository.dispose();
     super.dispose();
   }
@@ -405,48 +413,117 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   Future<void> _contactSellerFromProduct(
     Product product, {
     bool imageOnly = false,
+    Route<dynamic>? sourceRoute,
   }) async {
-    final navigator = Navigator.of(context, rootNavigator: true);
-    final thread = await _repository.contactSeller(
-      product,
-      imageOnly: imageOnly,
-    );
-    if (!mounted) return;
-    if (thread == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Не удалось открыть чат'),
-          behavior: SnackBarBehavior.floating,
+    final productKey = product.id.isEmpty
+        ? identityHashCode(product).toString()
+        : product.id;
+    final requestKey = '$productKey:$imageOnly';
+    if (!_openingProductChatRequests.add(requestKey)) return;
+
+    try {
+      if (SupabaseConfig.isInitialized && !_repository.isSignedIn) {
+        _openLoginScreen(
+          onSignedIn: () => unawaited(
+            _contactSellerFromProduct(
+              product,
+              imageOnly: imageOnly,
+              sourceRoute: sourceRoute,
+            ),
+          ),
+        );
+        return;
+      }
+      final navigator = Navigator.of(context, rootNavigator: true);
+      final thread = await _repository.contactSeller(
+        product,
+        imageOnly: imageOnly,
+      );
+      if (!mounted || (sourceRoute != null && !sourceRoute.isCurrent)) return;
+      if (thread == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось открыть чат'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+      // Keep the source product route in the stack. This avoids an async
+      // maybePop race and lets Back return to the exact product/catalog state.
+      navigator.push(
+        MaterialPageRoute<void>(
+          builder: (context) => ChatScreen(
+            thread: thread,
+            onSendMessage: _repository.sendMessage,
+            onOpenProduct: _openProductFromChat,
+            currentUserId: _repository.currentUserId,
+            threadsListenable: _repository,
+            resolveThread: _repository.threadById,
+            lastSeenForUser: _repository.lastSeenForUser,
+            actions: _chatActions,
+            onOpenSellerProfile: () => _openSellerFromChat(thread),
+            onBuyProduct: () => _buyFromChat(thread),
+          ),
         ),
       );
-      return;
+    } finally {
+      _openingProductChatRequests.remove(requestKey);
     }
-    await navigator.maybePop();
-    if (!mounted) return;
-    navigator.push(
-      MaterialPageRoute<void>(
-        builder: (context) => ChatScreen(
-          thread: thread,
-          onSendMessage: _repository.sendMessage,
-          onOpenProduct: _openProductFromChat,
-          currentUserId: _repository.currentUserId,
-          threadsListenable: _repository,
-          resolveThread: _repository.threadById,
-          lastSeenForUser: _repository.lastSeenForUser,
-          actions: _chatActions,
-          onOpenSellerProfile: () => _openSellerFromChat(thread),
-          onBuyProduct: () => _buyFromChat(thread),
+  }
+
+  Future<void> _openDirectChat(
+    AppUserProfile recipient, {
+    Route<dynamic>? sourceRoute,
+  }) async {
+    final recipientKey = recipient.id.isEmpty
+        ? '${recipient.handle}:${recipient.name}'
+        : recipient.id;
+    if (!_openingDirectChatRequests.add(recipientKey)) return;
+
+    try {
+      if (SupabaseConfig.isInitialized && !_repository.isSignedIn) {
+        _openLoginScreen(
+          onSignedIn: () =>
+              unawaited(_openDirectChat(recipient, sourceRoute: sourceRoute)),
+        );
+        return;
+      }
+      final thread = await _repository.startDirectChat(recipient);
+      if (!mounted || (sourceRoute != null && !sourceRoute.isCurrent)) return;
+      if (thread == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось открыть диалог. Попробуйте ещё раз.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+      Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute<void>(
+          builder: (context) => ChatScreen(
+            thread: thread,
+            onSendMessage: _repository.sendMessage,
+            onOpenProduct: _openProductFromChat,
+            currentUserId: _repository.currentUserId,
+            threadsListenable: _repository,
+            resolveThread: _repository.threadById,
+            lastSeenForUser: _repository.lastSeenForUser,
+            actions: _chatActions,
+            onOpenSellerProfile: () => _openSellerFromChat(thread),
+            onBuyProduct: () => _buyFromChat(thread),
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _openingDirectChatRequests.remove(recipientKey);
+    }
   }
 
   void _openProductDetails(Product product) {
-    final route = PageRouteBuilder<void>(
-      opaque: true,
-      transitionDuration: Duration.zero,
-      reverseTransitionDuration: Duration.zero,
-      pageBuilder: (context, animation, secondaryAnimation) {
+    final route = buildProductRoute<void>(
+      builder: (context) {
         return ProductScreen(
           sourceProduct: product,
           product: ProductDetailData(
@@ -485,7 +562,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           canFollowSeller: _repository.canFollowSeller,
           isFollowingSeller: _repository.isFollowingSeller,
           onToggleSellerFollow: _repository.toggleSellerFollow,
-          onContactSeller: () => _contactSellerFromProduct(product),
+          onContactSeller: () => _contactSellerFromProduct(
+            product,
+            sourceRoute: ModalRoute.of(context),
+          ),
           onShare: () => _shareProduct(product),
           relatedProducts: _relatedProductsFor(product),
           onRelatedProductTap: _openProductDetails,
@@ -664,39 +744,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             final blocked = await _repository.blockUser(seller.id);
             return blocked ? null : 'Не удалось заблокировать пользователя';
           },
-          onMessage: (seller) async {
-            final navigator = Navigator.of(context, rootNavigator: true);
-            final messenger = ScaffoldMessenger.of(context);
-            final thread = await _repository.startDirectChat(
-              seller.toUserProfile(),
-            );
-            if (!mounted) return;
-            if (thread == null) {
-              messenger.showSnackBar(
-                const SnackBar(
-                  content: Text('Не удалось открыть чат'),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-              return;
-            }
-            navigator.push(
-              MaterialPageRoute<void>(
-                builder: (context) => ChatScreen(
-                  thread: thread,
-                  onSendMessage: _repository.sendMessage,
-                  onOpenProduct: _openProductFromChat,
-                  currentUserId: _repository.currentUserId,
-                  threadsListenable: _repository,
-                  resolveThread: _repository.threadById,
-                  lastSeenForUser: _repository.lastSeenForUser,
-                  actions: _chatActions,
-                  onOpenSellerProfile: () => _openSellerFromChat(thread),
-                  onBuyProduct: () => _buyFromChat(thread),
-                ),
-              ),
-            );
-          },
+          onMessage: (seller) => _openDirectChat(
+            seller.toUserProfile(),
+            sourceRoute: ModalRoute.of(context),
+          ),
         ),
       ),
     );
@@ -781,6 +832,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   void _changeTab(int index) {
+    if (index != 0 || index == _currentIndex) {
+      _navigationCompact.value = false;
+    }
     if (!_repository.isSignedIn && (index == 3 || index == 4)) {
       _openLoginScreen(onSignedIn: () => _changeTab(index));
       return;
@@ -1114,7 +1168,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
         if (!_repository.isReady) {
           return Scaffold(
-            backgroundColor: context.appPalette.page,
+            backgroundColor: context.appBackdrop.scaffoldColor,
             body: Center(
               child: SizedBox(
                 width: 22,
@@ -1129,11 +1183,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         }
 
         return Scaffold(
-          backgroundColor:
-              widget.appearance.theme == AppThemePreference.custom &&
-                  widget.appearance.background != AppBackgroundStyle.plain
-              ? Colors.transparent
-              : context.appPalette.page,
+          backgroundColor: context.appBackdrop.scaffoldColor,
           extendBody: context.appGlass.enabled,
           body: SafeArea(
             top: false,
@@ -1172,6 +1222,22 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   isFollowingSeller: _repository.isFollowingSeller,
                   onToggleSellerFollow: _repository.toggleSellerFollow,
                   onOpenAppearance: _openAppearancePicker,
+                  onOpenDirectChat: _openDirectChat,
+                  navigationCompactController: _navigationCompact,
+                  onChatAuthenticationRequired:
+                      SupabaseConfig.isInitialized && !_repository.isSignedIn
+                      ? (product, {sourceRoute}) => _openLoginScreen(
+                          onSignedIn: () => unawaited(
+                            _contactSellerFromProduct(
+                              product,
+                              sourceRoute: sourceRoute,
+                            ),
+                          ),
+                        )
+                      : null,
+                  onNavigationCompactChanged: (value) {
+                    if (_currentIndex == 0) _navigationCompact.value = value;
+                  },
                 ),
                 OutfitsScreen(
                   scale: 1.0,
@@ -1209,6 +1275,12 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   actions: _chatActions,
                   onOpenSellerProfile: _openSellerFromChat,
                   onBuyProduct: _buyFromChat,
+                  isLoading: _repository.isThreadSyncPending,
+                  errorMessage: _repository.threadSyncError,
+                  isAuthenticated:
+                      !SupabaseConfig.isInitialized || _repository.isSignedIn,
+                  onRetryLoad: () => unawaited(_repository.retryThreadSync()),
+                  onSignIn: _openLoginScreen,
                 ),
                 ProfileScreen(
                   appearance: widget.appearance,
@@ -1274,6 +1346,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   currentIndex: _currentIndex,
                   onTabSelected: _changeTab,
                   onCreateTap: _showCreateSheet,
+                  compactListenable: _navigationCompact,
                 ),
         );
       },
@@ -1396,6 +1469,9 @@ class _MessageNotificationOverlay extends StatelessWidget {
                     onTap: () => onTap(current),
                     behavior: HitTestBehavior.opaque,
                     child: AppGlassSurface(
+                      role: AppGlassRole.overlay,
+                      blendMode: BlendMode.src,
+                      interactiveGlint: false,
                       density: 0.93,
                       borderRadius: BorderRadius.circular(20),
                       child: DecoratedBox(
@@ -1557,6 +1633,9 @@ class _OutfitItemChoiceSheet extends StatelessWidget {
     );
     if (!glassEnabled) return content;
     return AppGlassSurface(
+      role: AppGlassRole.sheet,
+      grouped: false,
+      interactiveGlint: false,
       density: 0.98,
       borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
       child: content,

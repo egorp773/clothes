@@ -271,6 +271,9 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
       child: Align(
         alignment: Alignment.bottomCenter,
         child: AppGlassSurface(
+          role: AppGlassRole.sheet,
+          grouped: false,
+          interactiveGlint: false,
           density: 0.98,
           enableRefraction: false,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),

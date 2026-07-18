@@ -1723,7 +1723,7 @@ class _PlainProfilePage extends StatelessWidget {
     final topInset = MediaQuery.of(context).viewPadding.top;
     const horizontalPadding = _pagePadding;
     return Scaffold(
-      backgroundColor: palette.page,
+      backgroundColor: context.appBackdrop.scaffoldColor,
       body: SafeArea(
         top: false,
         child: Column(
@@ -1782,7 +1782,7 @@ class _OrdersShell extends StatelessWidget {
     final palette = context.appPalette;
     final topInset = MediaQuery.of(context).viewPadding.top;
     return Scaffold(
-      backgroundColor: palette.page,
+      backgroundColor: context.appBackdrop.scaffoldColor,
       body: SafeArea(
         top: false,
         child: Column(

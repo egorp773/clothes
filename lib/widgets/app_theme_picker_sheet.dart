@@ -199,6 +199,9 @@ class _AppThemePickerSheetState extends State<AppThemePickerSheet> {
 
     if (context.appGlass.enabled) {
       return AppGlassSurface(
+        role: AppGlassRole.sheet,
+        grouped: false,
+        interactiveGlint: false,
         density: 0.92,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
         child: content,

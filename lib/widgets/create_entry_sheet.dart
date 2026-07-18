@@ -92,6 +92,9 @@ class CreateEntrySheet extends StatelessWidget {
 
     if (!glassEnabled) return content;
     return AppGlassSurface(
+      role: AppGlassRole.sheet,
+      grouped: false,
+      interactiveGlint: false,
       density: 0.98,
       borderRadius: BorderRadius.circular(32),
       child: content,

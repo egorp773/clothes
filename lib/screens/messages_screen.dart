@@ -15,11 +15,17 @@ import '../features/chat/chat_avatar.dart';
 import '../features/chat/conversation_info_screen.dart';
 import '../models/app_profile.dart';
 import '../models/message_thread.dart';
+import '../widgets/app_glass_surface.dart';
 import '../widgets/app_image.dart';
 
 enum _InboxFilter { all, unread, purchases, archived }
 
 enum _AttachmentChoice { imageGallery, videoGallery, imageCamera, videoCamera }
+
+void _logChatUiFailure(String operation, Object error, StackTrace stackTrace) {
+  debugPrint('Chat UI $operation error: $error');
+  debugPrintStack(stackTrace: stackTrace);
+}
 
 class MessagesScreen extends StatefulWidget {
   const MessagesScreen({
@@ -37,6 +43,11 @@ class MessagesScreen extends StatefulWidget {
     this.actions,
     this.onOpenSellerProfile,
     this.onBuyProduct,
+    this.isLoading = false,
+    this.errorMessage,
+    this.isAuthenticated = true,
+    this.onRetryLoad,
+    this.onSignIn,
   });
 
   final List<MessageThread> threads;
@@ -56,6 +67,11 @@ class MessagesScreen extends StatefulWidget {
   final ChatActions? actions;
   final ValueChanged<MessageThread>? onOpenSellerProfile;
   final ValueChanged<MessageThread>? onBuyProduct;
+  final bool isLoading;
+  final String? errorMessage;
+  final bool isAuthenticated;
+  final VoidCallback? onRetryLoad;
+  final VoidCallback? onSignIn;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -68,6 +84,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
   bool _isSearching = false;
   String _query = '';
   _InboxFilter _filter = _InboxFilter.all;
+  final Set<String> _openingUserIds = <String>{};
 
   @override
   void dispose() {
@@ -95,7 +112,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
       List<AppUserProfile> results;
       try {
         results = await widget.onSearchUsers(requestedQuery);
-      } catch (_) {
+      } catch (error, stackTrace) {
+        _logChatUiFailure('search users', error, stackTrace);
         results = const [];
       }
       if (!mounted || requestedQuery != _query) return;
@@ -130,28 +148,46 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   Future<void> _openUser(AppUserProfile user) async {
-    MessageThread? thread;
+    final userKey = user.id.isEmpty ? '${user.handle}:${user.name}' : user.id;
+    if (!_openingUserIds.add(userKey)) return;
+    final sourceRoute = ModalRoute.of(context);
     try {
-      thread = await widget.onStartDirectChat(user);
-    } catch (_) {
-      thread = null;
+      final thread = await widget.onStartDirectChat(user);
+      if (!mounted ||
+          sourceRoute?.isCurrent != true ||
+          !TickerMode.valuesOf(context).enabled) {
+        return;
+      }
+      if (thread == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось открыть диалог. Попробуйте ещё раз.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+      _searchController.clear();
+      setState(() {
+        _query = '';
+        _searchResults = const [];
+      });
+      await _openThread(thread);
+    } catch (error, stackTrace) {
+      _logChatUiFailure('open direct conversation', error, stackTrace);
+      if (mounted &&
+          sourceRoute?.isCurrent == true &&
+          TickerMode.valuesOf(context).enabled) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось открыть диалог. Попробуйте ещё раз.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      _openingUserIds.remove(userKey);
     }
-    if (!mounted) return;
-    if (thread == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Не удалось открыть диалог. Попробуйте ещё раз.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-    _searchController.clear();
-    setState(() {
-      _query = '';
-      _searchResults = const [];
-    });
-    await _openThread(thread);
   }
 
   Future<void> _compose() async {
@@ -268,7 +304,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
         isMuted: isMuted,
         isArchived: isArchived,
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logChatUiFailure('update conversation', error, stackTrace);
       saved = false;
     }
     if (!mounted || saved) return;
@@ -285,7 +322,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
     if (markRead == null) return;
     try {
       await markRead(threadId);
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logChatUiFailure('mark conversation read', error, stackTrace);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -329,54 +367,89 @@ class _MessagesScreenState extends State<MessagesScreen> {
                       message.previewText.toLowerCase().contains(query),
                 );
           }).toList();
-    return ColoredBox(
-      color: context.appPalette.page,
+    final errorText = widget.errorMessage?.trim() ?? '';
+    final hasCachedThreads = allThreads.isNotEmpty;
+    final Widget content;
+    if (!widget.isAuthenticated) {
+      content = _InboxStatus(
+        icon: Icons.lock_outline_rounded,
+        title: 'Войдите, чтобы открыть сообщения',
+        subtitle: 'Диалоги и черновики доступны только в вашем профиле.',
+        actionLabel: widget.onSignIn == null ? null : 'Войти',
+        onAction: widget.onSignIn,
+      );
+    } else if (widget.isLoading && !hasCachedThreads) {
+      content = const _InboxStatus(
+        icon: Icons.chat_bubble_outline_rounded,
+        title: 'Загружаем диалоги',
+        subtitle: 'Это займёт несколько секунд.',
+        isLoading: true,
+      );
+    } else if (errorText.isNotEmpty && !hasCachedThreads) {
+      content = _InboxStatus(
+        icon: Icons.cloud_off_outlined,
+        title: 'Не удалось загрузить сообщения',
+        subtitle: errorText,
+        actionLabel: widget.onRetryLoad == null ? null : 'Повторить',
+        onAction: widget.onRetryLoad,
+      );
+    } else if (isSearchMode) {
+      content = _SearchResults(
+        isSearching: _isSearching,
+        query: _query,
+        results: _searchResults,
+        onTapUser: _openUser,
+        threads: localMatches,
+        currentUserId: widget.currentUserId,
+        onTapThread: _openThread,
+      );
+    } else if (visibleThreads.isEmpty) {
+      content = const _EmptyMessages();
+    } else {
+      content = ListView.separated(
+        padding: const EdgeInsets.only(bottom: 112),
+        physics: const BouncingScrollPhysics(),
+        itemCount: visibleThreads.length,
+        separatorBuilder: (context, index) =>
+            Divider(height: 1, indent: 84, color: context.appPalette.border),
+        itemBuilder: (context, index) {
+          final thread = visibleThreads[index];
+          return _ThreadTile(
+            thread: thread,
+            currentUserId: widget.currentUserId,
+            onTap: () => _openThread(thread),
+            onLongPress: () => _showThreadActions(thread),
+          );
+        },
+      );
+    }
+    // ListTile ink and backgrounds need a local Material. A ColoredBox here
+    // hid those effects behind itself and triggers a framework assertion.
+    return Material(
+      color: context.appBackdrop.scaffoldColor,
       child: Column(
         children: [
           _MessagesHeader(
             controller: _searchController,
             onChanged: _onSearchChanged,
             totalThreads: visibleThreads.length,
-            onCompose: _compose,
+            onCompose: widget.isAuthenticated && !widget.isLoading
+                ? _compose
+                : (widget.onSignIn ?? () {}),
             filter: _filter,
             onFilterChanged: (filter) => setState(() => _filter = filter),
             archivedCount: allThreads
                 .where((thread) => thread.isArchived)
                 .length,
           ),
-          Expanded(
-            child: isSearchMode
-                ? _SearchResults(
-                    isSearching: _isSearching,
-                    query: _query,
-                    results: _searchResults,
-                    onTapUser: _openUser,
-                    threads: localMatches,
-                    currentUserId: widget.currentUserId,
-                    onTapThread: _openThread,
-                  )
-                : visibleThreads.isEmpty
-                ? const _EmptyMessages()
-                : ListView.separated(
-                    padding: const EdgeInsets.only(bottom: 112),
-                    physics: const BouncingScrollPhysics(),
-                    itemCount: visibleThreads.length,
-                    separatorBuilder: (context, index) => Divider(
-                      height: 1,
-                      indent: 84,
-                      color: context.appPalette.border,
-                    ),
-                    itemBuilder: (context, index) {
-                      final thread = visibleThreads[index];
-                      return _ThreadTile(
-                        thread: thread,
-                        currentUserId: widget.currentUserId,
-                        onTap: () => _openThread(thread),
-                        onLongPress: () => _showThreadActions(thread),
-                      );
-                    },
-                  ),
-          ),
+          if (widget.isAuthenticated &&
+              errorText.isNotEmpty &&
+              hasCachedThreads)
+            _InboxSyncErrorBanner(
+              message: errorText,
+              onRetry: widget.onRetryLoad,
+            ),
+          Expanded(child: content),
         ],
       ),
     );
@@ -391,12 +464,7 @@ bool _shouldShowThread(MessageThread thread, String currentUserId) {
   final hasOtherParty = currentUserId.isEmpty
       ? title.isNotEmpty
       : thread.isGroup || thread.otherPartyId(currentUserId).trim().isNotEmpty;
-  final hasContent =
-      thread.lastMessage.trim().isNotEmpty ||
-      thread.messages.isNotEmpty ||
-      thread.productTitle.trim().isNotEmpty ||
-      thread.productImage.trim().isNotEmpty;
-  return hasOtherParty && hasContent;
+  return hasOtherParty;
 }
 
 class _MessagesHeader extends StatelessWidget {
@@ -721,7 +789,8 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
       List<AppUserProfile> results;
       try {
         results = await widget.onSearchUsers(query);
-      } catch (_) {
+      } catch (error, stackTrace) {
+        _logChatUiFailure('search conversation members', error, stackTrace);
         results = const [];
       }
       if (!mounted || _searchController.text.trim() != query) return;
@@ -751,7 +820,8 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
         _selected.values.toList(growable: false),
         title: _titleController.text,
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logChatUiFailure('create conversation', error, stackTrace);
       thread = null;
     }
     if (!mounted) return;
@@ -1042,6 +1112,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final ImagePicker _imagePicker = ImagePicker();
   Timer? _draftDebounce;
   bool _isSending = false;
+  final Set<String> _retryingMessageIds = <String>{};
   bool _isMarkingRead = false;
   bool _markReadAgain = false;
   ChatMessage? _replyTo;
@@ -1183,7 +1254,8 @@ class _ChatScreenState extends State<ChatScreen> {
         _markReadAgain = false;
         try {
           await markRead(_thread.id);
-        } catch (_) {
+        } catch (error, stackTrace) {
+          _logChatUiFailure('sync read receipt', error, stackTrace);
           // Realtime or the next foreground refresh will retry the receipt.
         }
       } while (_markReadAgain && mounted);
@@ -1245,7 +1317,8 @@ class _ChatScreenState extends State<ChatScreen> {
   ) async {
     try {
       await saveDraft(_thread.id, draft);
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logChatUiFailure('save draft', error, stackTrace);
       // Drafts are also retained by the TextEditingController during the
       // current session; a later change will retry persistence.
     }
@@ -1294,7 +1367,8 @@ class _ChatScreenState extends State<ChatScreen> {
     var removed = false;
     try {
       removed = await remove(_thread.id, message.id);
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logChatUiFailure('delete message', error, stackTrace);
       removed = false;
     }
     if (!mounted || removed) return;
@@ -1484,7 +1558,8 @@ class _ChatScreenState extends State<ChatScreen> {
               imageQuality: 88,
               maxWidth: 1800,
             );
-    } on PlatformException catch (error) {
+    } on PlatformException catch (error, stackTrace) {
+      _logChatUiFailure('pick media', error, stackTrace);
       if (!mounted) return;
       final denied =
           error.code.toLowerCase().contains('denied') ||
@@ -1495,7 +1570,8 @@ class _ChatScreenState extends State<ChatScreen> {
             : 'Не удалось открыть медиатеку. Попробуйте ещё раз.',
       );
       return;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logChatUiFailure('pick media', error, stackTrace);
       if (mounted) {
         _showError('Не удалось открыть медиатеку. Попробуйте ещё раз.');
       }
@@ -1522,7 +1598,8 @@ class _ChatScreenState extends State<ChatScreen> {
           replyTo: _replyTo,
         );
       }
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logChatUiFailure('send media', error, stackTrace);
       sent = false;
     }
     if (!mounted) return;
@@ -1554,7 +1631,8 @@ class _ChatScreenState extends State<ChatScreen> {
       var saved = false;
       try {
         saved = await edit(_thread.id, editing.id, text);
-      } catch (_) {
+      } catch (error, stackTrace) {
+        _logChatUiFailure('edit message', error, stackTrace);
         saved = false;
       }
       if (!mounted) return;
@@ -1586,7 +1664,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     setState(() {
-      _isSending = true;
       _messages = [..._messages, pendingMessage];
       _replyTo = null;
       _controller.clear();
@@ -1594,7 +1671,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
     var sent = false;
     try {
-      if (reply != null && widget.actions?.sendReply != null) {
+      // The pending-aware path owns the client id for both plain messages and
+      // replies, so realtime reconciliation and retry stay idempotent.
+      if (widget.actions?.sendPendingText != null) {
+        sent = await widget.actions!.sendPendingText!(
+          _thread.id,
+          pendingMessage,
+        );
+      } else if (reply != null && widget.actions?.sendReply != null) {
         sent = await widget.actions!.sendReply!(_thread.id, text, reply);
       } else if (widget.actions?.sendText != null) {
         sent = await widget.actions!.sendText!(_thread.id, text);
@@ -1602,12 +1686,12 @@ class _ChatScreenState extends State<ChatScreen> {
         await widget.onSendMessage(_thread.id, text);
         sent = true;
       }
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logChatUiFailure('send text message', error, stackTrace);
       sent = false;
     }
     if (!mounted) return;
     setState(() {
-      _isSending = false;
       final index = _messages.indexWhere(
         (message) => message.id == temporaryId,
       );
@@ -1617,7 +1701,14 @@ class _ChatScreenState extends State<ChatScreen> {
           hasError: !sent,
         );
       }
-      if (!sent) {
+      // A slow delivery failure must not overwrite text the user has already
+      // started typing for the next message. The failed bubble remains
+      // retryable even when the composer now contains a different draft.
+      if (!sent &&
+          widget.actions?.retryText == null &&
+          _controller.text.isEmpty &&
+          _replyTo == null &&
+          _editingMessage == null) {
         _controller.text = text;
         _controller.selection = TextSelection.collapsed(offset: text.length);
         _replyTo = reply;
@@ -1628,6 +1719,53 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     await Future<void>.delayed(const Duration(milliseconds: 30));
     _scrollToBottom();
+  }
+
+  Future<void> _retryMessage(ChatMessage message) async {
+    final retry = message.type == 'text'
+        ? widget.actions?.retryText
+        : message.isMedia
+        ? widget.actions?.retryMedia
+        : null;
+    if (retry == null ||
+        !message.hasError ||
+        _retryingMessageIds.contains(message.id)) {
+      return;
+    }
+
+    setState(() {
+      _retryingMessageIds.add(message.id);
+      final index = _messages.indexWhere((item) => item.id == message.id);
+      if (index != -1) {
+        _messages[index] = _messages[index].copyWith(
+          isPending: true,
+          hasError: false,
+        );
+      }
+    });
+
+    var sent = false;
+    try {
+      sent = await retry(_thread.id, message);
+    } catch (error, stackTrace) {
+      _logChatUiFailure('retry text message', error, stackTrace);
+      sent = false;
+    }
+    if (!mounted) return;
+
+    setState(() {
+      _retryingMessageIds.remove(message.id);
+      final index = _messages.indexWhere((item) => item.id == message.id);
+      if (index != -1) {
+        _messages[index] = _messages[index].copyWith(
+          isPending: false,
+          hasError: !sent,
+        );
+      }
+    });
+    if (!sent) {
+      _showError('Повторная отправка не удалась. Проверьте подключение.');
+    }
   }
 
   void _showError(String message) {
@@ -1665,7 +1803,7 @@ class _ChatScreenState extends State<ChatScreen> {
               )
               .toList(growable: false);
     return Scaffold(
-      backgroundColor: context.appPalette.page,
+      backgroundColor: context.appBackdrop.scaffoldColor,
       body: SafeArea(
         top: false,
         child: Column(
@@ -1744,6 +1882,16 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ),
                                 onOpenProduct: widget.onOpenProduct,
                                 onLongPress: () => _showMessageActions(message),
+                                onRetry:
+                                    message.hasError &&
+                                        ((message.type == 'text' &&
+                                                widget.actions?.retryText !=
+                                                    null) ||
+                                            (message.isMedia &&
+                                                widget.actions?.retryMedia !=
+                                                    null))
+                                    ? () => _retryMessage(message)
+                                    : null,
                               ),
                             SizedBox(height: continuesWithNext ? 2 : 8),
                           ],
@@ -1764,6 +1912,127 @@ class _ChatScreenState extends State<ChatScreen> {
               }),
               onAttach: _showAttachmentSheet,
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InboxSyncErrorBanner extends StatelessWidget {
+  const _InboxSyncErrorBanner({required this.message, this.onRetry});
+
+  final String message;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('inbox-sync-error-banner'),
+      margin: const EdgeInsets.fromLTRB(14, 8, 14, 2),
+      padding: const EdgeInsets.fromLTRB(12, 7, 7, 7),
+      decoration: BoxDecoration(
+        color: context.appPalette.surfaceMuted,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: context.appPalette.border, width: 0.6),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.cloud_off_outlined,
+            size: 19,
+            color: context.appPalette.muted,
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.25,
+                color: context.appPalette.ink,
+              ),
+            ),
+          ),
+          if (onRetry != null)
+            TextButton(
+              key: const Key('inbox-sync-retry'),
+              onPressed: onRetry,
+              child: const Text('Повторить'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InboxStatus extends StatelessWidget {
+  const _InboxStatus({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.actionLabel,
+    this.onAction,
+    this.isLoading = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 52,
+              height: 52,
+              child: isLoading
+                  ? Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: context.appPalette.ink,
+                        ),
+                      ),
+                    )
+                  : Icon(icon, size: 30, color: context.appPalette.ink),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: context.appPalette.ink,
+              ),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.35,
+                color: context.appPalette.muted,
+              ),
+            ),
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: 18),
+              FilledButton(onPressed: onAction, child: Text(actionLabel!)),
+            ],
           ],
         ),
       ),
@@ -2442,6 +2711,7 @@ class _MessageBubble extends StatelessWidget {
     this.senderAvatar = '',
     this.onOpenProduct,
     this.onLongPress,
+    this.onRetry,
   });
 
   final ChatMessage message;
@@ -2449,6 +2719,7 @@ class _MessageBubble extends StatelessWidget {
   final String senderAvatar;
   final void Function(String productId)? onOpenProduct;
   final VoidCallback? onLongPress;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -2659,6 +2930,17 @@ class _MessageBubble extends StatelessWidget {
                                 context,
                               ).colorScheme.onPrimary.withValues(alpha: 0.7),
                       ),
+                      if (message.hasError && onRetry != null) ...[
+                        const SizedBox(width: 4),
+                        const Text(
+                          'Повторить',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFFFFB4B4),
+                          ),
+                        ),
+                      ],
                     ],
                   ],
                 ),
@@ -2668,25 +2950,33 @@ class _MessageBubble extends StatelessWidget {
         ),
       ),
     );
-    return GestureDetector(
-      onLongPress: onLongPress,
-      child: Align(
-        alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-        child: showSender
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  ChatAvatar(
-                    imageUrl: senderAvatar,
-                    name: message.senderName,
-                    size: 30,
-                  ),
-                  const SizedBox(width: 6),
-                  Flexible(child: bubble),
-                ],
-              )
-            : bubble,
+    return Semantics(
+      button: message.hasError && onRetry != null,
+      label: message.hasError && onRetry != null
+          ? 'Сообщение не отправлено. Повторить отправку'
+          : null,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: message.hasError ? onRetry : null,
+        onLongPress: onLongPress,
+        child: Align(
+          alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+          child: showSender
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    ChatAvatar(
+                      imageUrl: senderAvatar,
+                      name: message.senderName,
+                      size: 30,
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(child: bubble),
+                  ],
+                )
+              : bubble,
+        ),
       ),
     );
   }
@@ -2753,7 +3043,8 @@ class _ChatVideoPlayerState extends State<_ChatVideoPlayer> {
       _wasPlaying = controller.value.isPlaying;
       controller.addListener(_handlePlaybackState);
       if (mounted && identical(_controller, controller)) setState(() {});
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _logChatUiFailure('initialize chat video', error, stackTrace);
       if (mounted && identical(_controller, controller)) {
         setState(() => _failed = true);
       }
@@ -3040,26 +3331,32 @@ class _MessageComposer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: context.appPalette.surface,
-        border: Border(
-          top: BorderSide(color: context.appPalette.border, width: 0.5),
-        ),
-      ),
+    final contextMessage = editingMessage ?? replyTo;
+    final borderRadius = BorderRadius.circular(24);
+    return Material(
+      color: Colors.transparent,
       child: SafeArea(
         top: false,
+        minimum: const EdgeInsets.fromLTRB(10, 6, 10, 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (replyTo != null || editingMessage != null)
+            if (contextMessage != null)
               Container(
-                padding: const EdgeInsets.fromLTRB(16, 9, 8, 5),
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.fromLTRB(13, 7, 6, 7),
+                decoration: BoxDecoration(
+                  color: context.appPalette.surfaceRaised.withValues(
+                    alpha: context.appGlass.enabled ? 0.82 : 1,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: context.appPalette.border),
+                ),
                 child: Row(
                   children: [
                     Container(
-                      width: 3,
-                      height: 38,
+                      width: 2.5,
+                      height: 34,
                       decoration: BoxDecoration(
                         color: context.appPalette.accent,
                         borderRadius: BorderRadius.circular(999),
@@ -3073,20 +3370,22 @@ class _MessageComposer extends StatelessWidget {
                           Text(
                             editingMessage != null
                                 ? 'Редактирование'
-                                : 'Ответ ${replyTo!.senderName.isEmpty ? '' : replyTo!.senderName}',
+                                : 'Ответ${replyTo!.senderName.trim().isEmpty ? '' : ' · ${replyTo!.senderName.trim()}'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 11.5,
                               fontWeight: FontWeight.w700,
                               color: context.appPalette.ink,
                             ),
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            editingMessage?.previewText ?? replyTo!.previewText,
+                            contextMessage.previewText,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 11.5,
                               color: context.appPalette.muted,
                             ),
                           ),
@@ -3094,96 +3393,165 @@ class _MessageComposer extends StatelessWidget {
                       ),
                     ),
                     IconButton(
+                      tooltip: 'Отменить',
                       onPressed: onCancelContext,
-                      icon: Icon(Icons.close_rounded, size: 20),
+                      constraints: const BoxConstraints.tightFor(
+                        width: 40,
+                        height: 40,
+                      ),
+                      padding: EdgeInsets.zero,
+                      icon: Icon(
+                        Icons.close_rounded,
+                        size: 19,
+                        color: context.appPalette.muted,
+                      ),
                     ),
                   ],
                 ),
               ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(minHeight: 44),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: AppGlassSurface(
+                    role: AppGlassRole.input,
+                    interactiveGlint: false,
+                    borderRadius: borderRadius,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: context.appGlass.enabled
+                            ? Colors.transparent
+                            : context.appPalette.surfaceMuted,
+                        borderRadius: borderRadius,
+                        border: context.appGlass.enabled
+                            ? null
+                            : Border.all(color: context.appPalette.border),
+                      ),
                       child: TextField(
+                        key: const Key('message-composer-field'),
                         controller: controller,
+                        enabled: !isSending,
+                        keyboardType: TextInputType.multiline,
+                        textCapitalization: TextCapitalization.sentences,
                         minLines: 1,
                         maxLines: 5,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => onSend(),
+                        textInputAction: TextInputAction.newline,
+                        inputFormatters: [
+                          LengthLimitingTextInputFormatter(8000),
+                        ],
                         decoration: InputDecoration(
-                          hintText: 'Сообщение',
-                          hintStyle: TextStyle(color: context.appPalette.muted),
+                          // The role-based material owns both Glass-on and
+                          // Glass-off fills. Inheriting the global filled
+                          // decoration would paint a gray rectangle over it.
+                          filled: false,
+                          hintText: 'Написать сообщение',
+                          hintStyle: TextStyle(
+                            fontSize: 14.5,
+                            color: context.appPalette.muted,
+                          ),
                           prefixIcon: IconButton(
-                            onPressed: onAttach,
+                            tooltip: 'Прикрепить',
+                            onPressed: isSending ? null : onAttach,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 44,
+                              height: 44,
+                            ),
+                            padding: EdgeInsets.zero,
                             icon: Icon(
                               Icons.add_rounded,
-                              size: 23,
+                              size: 22,
                               color: context.appPalette.muted,
                             ),
                           ),
                           border: InputBorder.none,
-                          filled: true,
-                          fillColor: context.appPalette.surfaceMuted,
+                          isDense: true,
                           contentPadding: const EdgeInsets.fromLTRB(
                             0,
                             12,
-                            14,
+                            15,
                             12,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(22),
-                            borderSide: BorderSide.none,
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(22),
-                            borderSide: BorderSide.none,
                           ),
                         ),
                         style: TextStyle(
                           fontSize: 15,
+                          height: 1.25,
                           color: context.appPalette.ink,
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  GestureDetector(
-                    onTap: isSending ? null : onSend,
-                    child: Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: isSending
-                            ? context.appPalette.muted
-                            : Theme.of(context).colorScheme.primary,
-                        shape: BoxShape.circle,
-                      ),
-                      child: isSending
-                          ? Center(
-                              child: SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onPrimary,
+                ),
+                const SizedBox(width: 8),
+                ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: controller,
+                  builder: (context, value, child) {
+                    final length = value.text.characters.length;
+                    final enabled =
+                        !isSending &&
+                        value.text.trim().isNotEmpty &&
+                        length <= 8000;
+                    return Semantics(
+                      button: true,
+                      enabled: enabled,
+                      label: editingMessage == null
+                          ? 'Отправить сообщение'
+                          : 'Сохранить изменения',
+                      child: GestureDetector(
+                        key: const Key('message-send-button'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: enabled ? onSend : null,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOutCubic,
+                          width: 46,
+                          height: 46,
+                          decoration: BoxDecoration(
+                            color: enabled
+                                ? Theme.of(context).colorScheme.primary
+                                : context.appPalette.surfaceMuted,
+                            shape: BoxShape.circle,
+                            border: enabled
+                                ? null
+                                : Border.all(color: context.appPalette.border),
+                            boxShadow: enabled
+                                ? [
+                                    BoxShadow(
+                                      color: context.appPalette.shadow,
+                                      blurRadius: 12,
+                                      spreadRadius: -5,
+                                      offset: const Offset(0, 5),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: isSending
+                              ? Center(
+                                  child: SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onPrimary,
+                                    ),
+                                  ),
+                                )
+                              : Icon(
+                                  editingMessage == null
+                                      ? Icons.arrow_upward
+                                      : Icons.check_rounded,
+                                  size: 21,
+                                  color: enabled
+                                      ? Theme.of(context).colorScheme.onPrimary
+                                      : context.appPalette.muted,
                                 ),
-                              ),
-                            )
-                          : Icon(
-                              Icons.arrow_upward,
-                              size: 21,
-                              color: Theme.of(context).colorScheme.onPrimary,
-                            ),
-                    ),
-                  ),
-                ],
-              ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
           ],
         ),

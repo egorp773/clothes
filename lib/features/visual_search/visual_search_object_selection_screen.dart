@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as image_lib;
@@ -120,7 +118,11 @@ class _VisualSearchObjectSelectionScreenState
   Widget _buildBottomPanel() => ClipRRect(
     borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
     child: BackdropFilter(
-      filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+      filterConfig: ImageFilterConfig.blur(
+        sigmaX: 22,
+        sigmaY: 22,
+        bounded: true,
+      ),
       child: Container(
         width: double.infinity,
         padding: EdgeInsets.fromLTRB(

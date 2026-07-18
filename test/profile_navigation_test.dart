@@ -93,7 +93,8 @@ void main() {
           onToggleOutfitLike: (_) async {},
           onProductViewed: (_) async => 0,
           onOutfitViewed: (_) async => 0,
-          onContactSeller: (_, {imageOnly = false}) async {},
+          onContactSeller:
+              (_, {imageOnly = false, Route<dynamic>? sourceRoute}) async {},
           onOpenSellerProfile: (_) {},
           deliveryProfile: const DeliveryProfile(),
           onSaveDeliveryProfile: (_) async {},

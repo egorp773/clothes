@@ -1,7 +1,5 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'dart:ui';
-
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -840,7 +838,11 @@ class _VisualSearchCameraScreenState extends State<VisualSearchCameraScreen>
       ),
       clipBehavior: Clip.antiAlias,
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        filterConfig: ImageFilterConfig.blur(
+          sigmaX: 20,
+          sigmaY: 20,
+          bounded: true,
+        ),
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: const Color(0xE6171719),

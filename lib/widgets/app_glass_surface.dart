@@ -1,184 +1,242 @@
-import 'dart:ui';
-
-import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../core/app_appearance.dart';
 
-class AppLiquidGlassBackdrop extends StatelessWidget {
-  const AppLiquidGlassBackdrop({
-    super.key,
-    required this.child,
-    required this.brightness,
-    required this.accent,
-    this.baseColor,
-  });
-
-  final Widget child;
-  final Brightness brightness;
-  final Color accent;
-  final Color? baseColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          CustomPaint(
-            painter: _LiquidBackdropPainter(
-              brightness: brightness,
-              accent: accent,
-              baseColor: baseColor,
-            ),
-          ),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-/// A single-pass liquid-glass material for floating controls.
+/// A bounded, role-based glass surface.
 ///
-/// The content palette stays opaque; this widget owns the blur, tint, depth
-/// and edge refraction used by navigation and compact control surfaces.
+/// The nearest [BackdropGroup] shares backdrop capture between non-overlapping
+/// surfaces. Set [grouped] to false for surfaces that genuinely overlap another
+/// glass element. Pointer tracking only repaints the local specular painter; it
+/// does not claim the gesture arena or distort the content/backdrop.
 class AppGlassSurface extends StatefulWidget {
   const AppGlassSurface({
     super.key,
     required this.child,
-    this.borderRadius = const BorderRadius.all(Radius.circular(24)),
-    this.padding = EdgeInsets.zero,
+    this.role = AppGlassRole.floatingControl,
+    this.borderRadius,
+    this.padding,
     this.density = 0.78,
+    this.grouped = true,
+    this.interactive,
+    this.interactiveGlint = true,
     this.enableRefraction = true,
+    this.blendMode = BlendMode.srcOver,
   });
 
   final Widget child;
-  final BorderRadius borderRadius;
-  final EdgeInsetsGeometry padding;
+  final AppGlassRole role;
+  final BorderRadius? borderRadius;
+  final EdgeInsetsGeometry? padding;
+
+  /// A compatibility trim for existing call sites. It now adjusts the role
+  /// tokens within a narrow range instead of driving opacity directly.
   final double density;
+
+  /// Uses [BackdropFilter.grouped] and the nearest [BackdropGroup]. Disable for
+  /// a surface that overlaps another grouped glass surface.
+  final bool grouped;
+
+  /// Short alias used by highly interactive surfaces such as navigation.
+  /// When provided, it takes precedence over [interactiveGlint].
+  final bool? interactive;
+  final bool interactiveGlint;
+
+  /// Kept for source compatibility. Refraction is now a non-distorting local
+  /// glint, so false simply disables the interactive optical cue.
   final bool enableRefraction;
+  final BlendMode blendMode;
 
   @override
   State<AppGlassSurface> createState() => _AppGlassSurfaceState();
 }
 
-class _AppGlassSurfaceState extends State<AppGlassSurface> {
-  static Future<FragmentProgram>? _lensProgram;
-  FragmentShader? _lensShader;
-  bool _lensRequested = false;
-
-  bool get _supportsLensShader =>
-      !kIsWeb &&
-      defaultTargetPlatform == TargetPlatform.iOS &&
-      ImageFilter.isShaderFilterSupported;
+class _AppGlassSurfaceState extends State<AppGlassSurface>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _glintController;
+  final ValueNotifier<Offset?> _glintPosition = ValueNotifier<Offset?>(null);
+  int? _activePointer;
+  bool _hovering = false;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (!_lensRequested &&
-        widget.enableRefraction &&
-        context.appGlass.enabled &&
-        _supportsLensShader) {
-      _lensRequested = true;
-      _loadLensShader();
+  void initState() {
+    super.initState();
+    _glintController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+  }
+
+  void _setGlintPosition(Offset position) {
+    if (_glintPosition.value == position) return;
+    _glintPosition.value = position;
+  }
+
+  void _showGlint() {
+    if (_glintController.duration == Duration.zero) {
+      _glintController.value = 1;
+    } else {
+      _glintController.forward();
     }
   }
 
-  Future<void> _loadLensShader() async {
-    try {
-      final program = await (_lensProgram ??= FragmentProgram.fromAsset(
-        'shaders/liquid_glass_lens.frag',
-      ));
-      if (!mounted) return;
-      setState(() => _lensShader = program.fragmentShader());
-    } catch (_) {
-      // The layered blur material remains the cross-platform fallback.
+  void _hideGlint() {
+    if (_glintController.duration == Duration.zero) {
+      _glintController.value = 0;
+    } else {
+      _glintController.reverse();
     }
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    _activePointer = event.pointer;
+    _setGlintPosition(event.localPosition);
+    _showGlint();
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (_activePointer != event.pointer) return;
+    _setGlintPosition(event.localPosition);
+  }
+
+  void _handlePointerEnd(PointerEvent event) {
+    if (_activePointer != event.pointer) return;
+    _activePointer = null;
+    if (!_hovering) _hideGlint();
+  }
+
+  void _handlePointerHover(PointerHoverEvent event) {
+    _hovering = true;
+    _setGlintPosition(event.localPosition);
+    _showGlint();
+  }
+
+  void _handlePointerExit(PointerExitEvent event) {
+    _hovering = false;
+    if (_activePointer == null) _hideGlint();
   }
 
   @override
   void dispose() {
-    _lensShader?.dispose();
+    _glintController.dispose();
+    _glintPosition.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final glass = context.appGlass;
-    if (!glass.enabled) return widget.child;
+    final material = glass.materialFor(widget.role);
+    final resolvedPadding = widget.padding ?? material.padding;
+    final content = Padding(padding: resolvedPadding, child: widget.child);
+    if (!glass.enabled) return content;
 
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final media = MediaQuery.maybeOf(context);
-    final strength = (media?.highContrast ?? false)
-        ? 1.0
-        : widget.density.clamp(0.0, 1.0).toDouble();
-    final blur = ImageFilter.blur(
-      sigmaX: glass.blur,
-      sigmaY: glass.blur,
-      tileMode: TileMode.mirror,
-    );
-    ImageFilter filter = blur;
-    final lensShader = _lensShader;
-    if (widget.enableRefraction &&
-        lensShader != null &&
-        ImageFilter.isShaderFilterSupported) {
-      lensShader
-        ..setFloat(2, 0.72 + strength * 0.28)
-        ..setFloat(3, isDark ? 0.7 : 0.52);
-      filter = ImageFilter.compose(
-        outer: ImageFilter.shader(lensShader),
-        inner: blur,
-      );
+    final reduceMotion = media?.disableAnimations ?? false;
+    final highContrast = media?.highContrast ?? false;
+    final duration = reduceMotion ? Duration.zero : material.motionDuration;
+    if (_glintController.duration != duration) {
+      _glintController.duration = duration;
+      _glintController.reverseDuration = duration;
     }
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: widget.borderRadius,
-        boxShadow: [
-          BoxShadow(
-            color: glass.shadowColor.withValues(alpha: isDark ? 0.42 : 0.16),
-            blurRadius: 32,
-            spreadRadius: -8,
-            offset: const Offset(0, 15),
-          ),
-          BoxShadow(
-            color: glass.shadowColor.withValues(alpha: isDark ? 0.24 : 0.09),
-            blurRadius: 9,
-            spreadRadius: -3,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: ClipRRect(
-        borderRadius: widget.borderRadius,
-        child: BackdropFilter(
-          filter: filter,
-          child: CustomPaint(
-            painter: _GlassMaterialPainter(
-              borderRadius: widget.borderRadius,
-              style: glass,
-              isDark: isDark,
-              density: strength,
-            ),
-            foregroundPainter: _GlassRimPainter(
-              borderRadius: widget.borderRadius,
-              style: glass,
-              isDark: isDark,
-              density: strength,
-            ),
-            child: Padding(padding: widget.padding, child: widget.child),
-          ),
+    final density = widget.density.clamp(0.0, 1.0).toDouble();
+    final opticalScale = (0.9 + density * 0.15) * (highContrast ? 1.08 : 1);
+    final radius =
+        widget.borderRadius ?? BorderRadius.circular(material.cornerRadius);
+    final filterConfig = ImageFilterConfig.blur(
+      sigmaX: material.blurSigma,
+      sigmaY: material.blurSigma,
+      tileMode: TileMode.clamp,
+      bounded: true,
+    );
+
+    final materialLayer = RepaintBoundary(
+      child: CustomPaint(
+        painter: _GlassMaterialPainter(
+          borderRadius: radius,
+          style: glass,
+          material: material,
+          opticalScale: opticalScale,
+          glintPosition: _glintPosition,
+          glintAnimation: _glintController,
         ),
       ),
     );
+    final glassContent = Stack(
+      fit: StackFit.passthrough,
+      children: [
+        Positioned.fill(child: IgnorePointer(child: materialLayer)),
+        content,
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              painter: _GlassRimPainter(
+                borderRadius: radius,
+                style: glass,
+                material: material,
+                opticalScale: opticalScale,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    final backdrop = widget.grouped
+        ? BackdropFilter.grouped(
+            filterConfig: filterConfig,
+            blendMode: widget.blendMode,
+            child: glassContent,
+          )
+        : BackdropFilter(
+            filterConfig: filterConfig,
+            blendMode: widget.blendMode,
+            child: glassContent,
+          );
+
+    Widget surface = DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: radius,
+        boxShadow: [
+          BoxShadow(
+            color: glass.shadowColor.withValues(
+              alpha: (material.shadowOpacity * opticalScale).clamp(0, 1),
+            ),
+            blurRadius: material.shadowBlur,
+            spreadRadius: material.shadowSpread,
+            offset: material.shadowOffset,
+          ),
+        ],
+      ),
+      child: ClipRRect(borderRadius: radius, child: backdrop),
+    );
+
+    final tracksPointer =
+        (widget.interactive ?? widget.interactiveGlint) &&
+        widget.enableRefraction &&
+        material.glintOpacity > 0 &&
+        !reduceMotion;
+    if (tracksPointer) {
+      surface = MouseRegion(
+        opaque: false,
+        onHover: _handlePointerHover,
+        onExit: _handlePointerExit,
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: _handlePointerDown,
+          onPointerMove: _handlePointerMove,
+          onPointerUp: _handlePointerEnd,
+          onPointerCancel: _handlePointerEnd,
+          child: surface,
+        ),
+      );
+    }
+    return surface;
   }
 }
 
 /// A quiet gel-like press response for controls living on glass.
-///
-/// It deliberately has no splash, focus ring, or color flash: the control
-/// compresses and returns with a soft spring while its glass remains intact.
 class AppGlassPressable extends StatefulWidget {
   const AppGlassPressable({
     super.key,
@@ -219,7 +277,7 @@ class _AppGlassPressableState extends State<AppGlassPressable> {
         scale: _pressed ? widget.pressedScale : 1,
         duration: reduceMotion
             ? Duration.zero
-            : Duration(milliseconds: _pressed ? 90 : 260),
+            : Duration(milliseconds: _pressed ? 90 : 240),
         curve: _pressed ? Curves.easeOut : Curves.easeOutBack,
         child: widget.child,
       ),
@@ -228,303 +286,193 @@ class _AppGlassPressableState extends State<AppGlassPressable> {
 }
 
 class _GlassMaterialPainter extends CustomPainter {
-  const _GlassMaterialPainter({
+  _GlassMaterialPainter({
     required this.borderRadius,
     required this.style,
-    required this.isDark,
-    required this.density,
-  });
+    required this.material,
+    required this.opticalScale,
+    required this.glintPosition,
+    required this.glintAnimation,
+  }) : super(repaint: Listenable.merge([glintPosition, glintAnimation]));
 
   final BorderRadius borderRadius;
   final AppGlassStyle style;
-  final bool isDark;
-  final double density;
+  final AppGlassMaterial material;
+  final double opticalScale;
+  final ValueNotifier<Offset?> glintPosition;
+  final Animation<double> glintAnimation;
+
+  double _alpha(double value) => (value * opticalScale).clamp(0.0, 1.0);
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
     final rect = Offset.zero & size;
     final shape = borderRadius.toRRect(rect);
-    final materialAlpha = isDark ? 0.68 + density * 0.22 : 0.72 + density * 0.2;
 
-    canvas.save();
-    canvas.clipRRect(shape);
     canvas.drawRRect(
       shape,
-      Paint()..color = style.materialTint.withValues(alpha: materialAlpha),
+      Paint()
+        ..isAntiAlias = true
+        ..color = style.materialTint.withValues(
+          alpha: _alpha(material.tintOpacity),
+        ),
     );
 
-    // Directional illumination gives the material volume while preserving a
-    // neutral base and dependable contrast for the content above it.
-    canvas.drawRect(
-      rect,
+    canvas.drawRRect(
+      shape,
       Paint()
+        ..isAntiAlias = true
         ..shader = LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            style.rimColor.withValues(alpha: isDark ? 0.18 : 0.34),
-            style.rimColor.withValues(alpha: isDark ? 0.045 : 0.08),
+            style.rimColor.withValues(
+              alpha: _alpha(material.topHighlightOpacity),
+            ),
+            style.rimColor.withValues(
+              alpha: _alpha(material.topHighlightOpacity * 0.18),
+            ),
             Colors.transparent,
-            style.depthColor.withValues(alpha: isDark ? 0.2 : 0.08),
           ],
-          stops: const [0, 0.24, 0.58, 1],
+          stops: const [0, 0.3, 0.7],
         ).createShader(rect),
     );
 
-    canvas.drawRect(
-      rect,
+    canvas.drawRRect(
+      shape,
       Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(-0.82, -1.08),
-          radius: 1.18,
-          colors: [
-            style.rimColor.withValues(alpha: isDark ? 0.17 : 0.3),
-            style.rimColor.withValues(alpha: isDark ? 0.035 : 0.055),
-            Colors.transparent,
-          ],
-          stops: const [0, 0.38, 1],
-        ).createShader(rect),
-    );
-
-    // A tiny desaturated glint hints at the selected accent. It never colors
-    // the whole material and remains subordinate to the neutral highlights.
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(1.05, -1.12),
-          radius: 0.58,
-          colors: [
-            style.accentGlint.withValues(alpha: isDark ? 0.045 : 0.032),
-            Colors.transparent,
-          ],
-        ).createShader(rect),
-    );
-
-    // Opposing luminance close to the lower edge simulates displacement of
-    // the blurred backdrop without a second BackdropFilter.
-    canvas.drawRect(
-      rect,
-      Paint()
+        ..isAntiAlias = true
         ..shader = LinearGradient(
-          begin: const Alignment(-0.7, 0.55),
-          end: Alignment.bottomRight,
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
           colors: [
             Colors.transparent,
-            style.depthColor.withValues(alpha: isDark ? 0.055 : 0.035),
-            style.rimColor.withValues(alpha: isDark ? 0.035 : 0.08),
+            Colors.transparent,
+            style.depthColor.withValues(
+              alpha: _alpha(material.bottomDepthOpacity),
+            ),
           ],
-          stops: const [0, 0.76, 1],
+          stops: const [0, 0.7, 1],
         ).createShader(rect),
     );
-    canvas.restore();
+
+    final pointer = glintPosition.value;
+    final glintValue = Curves.easeOutCubic.transform(glintAnimation.value);
+    if (pointer == null || glintValue <= 0.001) return;
+    final center = Alignment(
+      (pointer.dx / size.width).clamp(0.0, 1.0) * 2 - 1,
+      (pointer.dy / size.height).clamp(0.0, 1.0) * 2 - 1,
+    );
+    canvas.drawRRect(
+      shape,
+      Paint()
+        ..isAntiAlias = true
+        ..shader = RadialGradient(
+          center: center,
+          radius: material.glintRadius,
+          colors: [
+            style.accentGlint.withValues(
+              alpha: _alpha(material.glintOpacity) * glintValue,
+            ),
+            style.rimColor.withValues(
+              alpha: _alpha(material.glintOpacity * 0.22) * glintValue,
+            ),
+            Colors.transparent,
+          ],
+          stops: const [0, 0.36, 1],
+        ).createShader(rect),
+    );
   }
 
   @override
-  bool shouldRepaint(covariant _GlassMaterialPainter oldDelegate) =>
-      borderRadius != oldDelegate.borderRadius ||
-      style != oldDelegate.style ||
-      isDark != oldDelegate.isDark ||
-      density != oldDelegate.density;
+  bool shouldRepaint(covariant _GlassMaterialPainter oldDelegate) {
+    return borderRadius != oldDelegate.borderRadius ||
+        style != oldDelegate.style ||
+        material != oldDelegate.material ||
+        opticalScale != oldDelegate.opticalScale ||
+        glintPosition != oldDelegate.glintPosition ||
+        glintAnimation != oldDelegate.glintAnimation;
+  }
 }
 
 class _GlassRimPainter extends CustomPainter {
   const _GlassRimPainter({
     required this.borderRadius,
     required this.style,
-    required this.isDark,
-    required this.density,
+    required this.material,
+    required this.opticalScale,
   });
 
   final BorderRadius borderRadius;
   final AppGlassStyle style;
-  final bool isDark;
-  final double density;
+  final AppGlassMaterial material;
+  final double opticalScale;
+
+  double _alpha(double value) => (value * opticalScale).clamp(0.0, 1.0);
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
     final rect = Offset.zero & size;
-    final outerRect = rect.deflate(0.55);
-    final innerRect = rect.deflate(1.75);
-    final rimStrength = 0.78 + density * 0.22;
+    final rimRect = rect.deflate(0.55);
+    final rim = borderRadius.toRRect(rimRect);
 
     canvas.drawRRect(
-      borderRadius.toRRect(outerRect),
+      rim,
       Paint()
+        ..isAntiAlias = true
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.05
+        ..strokeWidth = 0.85
         ..shader = LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
+            style.rimColor.withValues(alpha: _alpha(material.rimOpacity)),
             style.rimColor.withValues(
-              alpha: (isDark ? 0.62 : 0.92) * rimStrength,
+              alpha: _alpha(material.rimOpacity * 0.38),
             ),
-            style.rimColor.withValues(alpha: isDark ? 0.2 : 0.42),
-            style.depthColor.withValues(alpha: isDark ? 0.42 : 0.16),
-            style.rimColor.withValues(alpha: isDark ? 0.24 : 0.64),
+            style.depthColor.withValues(
+              alpha: _alpha(material.bottomDepthOpacity * 0.8),
+            ),
+            style.rimColor.withValues(
+              alpha: _alpha(material.rimOpacity * 0.48),
+            ),
           ],
-          stops: const [0, 0.32, 0.72, 1],
+          stops: const [0, 0.36, 0.76, 1],
         ).createShader(rect),
     );
 
-    // The opposing inner rim is the inexpensive refraction cue: a bright
-    // leading edge followed by a darker displaced edge.
-    canvas.drawRRect(
-      borderRadius.toRRect(innerRect),
+    final horizontalInset = (size.shortestSide * 0.2).clamp(10.0, 30.0);
+    if (size.width <= horizontalInset * 2) return;
+    final highlightRect = Rect.fromLTWH(
+      horizontalInset,
+      0.8,
+      size.width - horizontalInset * 2,
+      0.7,
+    );
+    canvas.drawLine(
+      highlightRect.centerLeft,
+      highlightRect.centerRight,
       Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.15
+        ..strokeWidth = 0.7
         ..shader = LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
           colors: [
-            style.rimColor.withValues(alpha: isDark ? 0.2 : 0.42),
             Colors.transparent,
-            style.depthColor.withValues(alpha: isDark ? 0.28 : 0.11),
+            style.rimColor.withValues(
+              alpha: _alpha(material.topHighlightOpacity * 0.72),
+            ),
+            Colors.transparent,
           ],
-          stops: const [0, 0.48, 1],
-        ).createShader(rect),
+        ).createShader(highlightRect),
     );
-
-    final highlightInset = (size.shortestSide * 0.13)
-        .clamp(9.0, 24.0)
-        .toDouble();
-    if (size.width > highlightInset * 2) {
-      final highlightRect = Rect.fromLTWH(
-        highlightInset,
-        0.9,
-        size.width - highlightInset * 2,
-        1,
-      );
-      canvas.drawLine(
-        highlightRect.centerLeft,
-        highlightRect.centerRight,
-        Paint()
-          ..strokeWidth = 1
-          ..shader = LinearGradient(
-            colors: [
-              Colors.transparent,
-              style.rimColor.withValues(alpha: isDark ? 0.72 : 0.96),
-              Colors.transparent,
-            ],
-          ).createShader(highlightRect),
-      );
-    }
   }
 
   @override
-  bool shouldRepaint(covariant _GlassRimPainter oldDelegate) =>
-      borderRadius != oldDelegate.borderRadius ||
-      style != oldDelegate.style ||
-      isDark != oldDelegate.isDark ||
-      density != oldDelegate.density;
-}
-
-class _LiquidBackdropPainter extends CustomPainter {
-  const _LiquidBackdropPainter({
-    required this.brightness,
-    required this.accent,
-    this.baseColor,
-  });
-
-  final Brightness brightness;
-  final Color accent;
-  final Color? baseColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (size.isEmpty) return;
-    final rect = Offset.zero & size;
-    final isDark = brightness == Brightness.dark;
-    final neutral = isDark ? const Color(0xFF151619) : const Color(0xFFF2F3F5);
-    final foundation = baseColor == null
-        ? neutral
-        : Color.lerp(baseColor!.withValues(alpha: 1), neutral, 0.2)!;
-    final lifted = Color.lerp(
-      foundation,
-      isDark ? const Color(0xFF303136) : Colors.white,
-      isDark ? 0.2 : 0.34,
-    )!;
-    final grounded = Color.lerp(
-      foundation,
-      isDark ? const Color(0xFF08090B) : const Color(0xFFD8DADF),
-      isDark ? 0.28 : 0.16,
-    )!;
-
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [lifted, foundation, grounded],
-          stops: const [0, 0.54, 1],
-        ).createShader(rect),
-    );
-
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(-0.62, -0.95),
-          radius: 1.04,
-          colors: [
-            Colors.white.withValues(alpha: isDark ? 0.065 : 0.36),
-            Colors.transparent,
-          ],
-          stops: const [0, 1],
-        ).createShader(rect),
-    );
-
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(0.72, 1.08),
-          radius: 0.94,
-          colors: [
-            Colors.black.withValues(alpha: isDark ? 0.16 : 0.045),
-            Colors.transparent,
-          ],
-        ).createShader(rect),
-    );
-
-    final neutralAccent = Color.lerp(
-      isDark ? const Color(0xFFF0F1F3) : const Color(0xFF74767B),
-      accent.withValues(alpha: 1),
-      0.05,
-    )!;
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..shader = RadialGradient(
-          center: const Alignment(1.12, -1.12),
-          radius: 0.42,
-          colors: [
-            neutralAccent.withValues(alpha: isDark ? 0.025 : 0.018),
-            Colors.transparent,
-          ],
-        ).createShader(rect),
-    );
-
-    final grain = Paint()
-      ..color = (isDark ? Colors.white : Colors.black).withValues(
-        alpha: isDark ? 0.012 : 0.008,
-      );
-    for (double y = 11; y < size.height; y += 23) {
-      final shift = ((y / 23).round().isEven) ? 0.0 : 9.0;
-      for (double x = 7 + shift; x < size.width; x += 23) {
-        canvas.drawCircle(Offset(x, y), 0.45, grain);
-      }
-    }
+  bool shouldRepaint(covariant _GlassRimPainter oldDelegate) {
+    return borderRadius != oldDelegate.borderRadius ||
+        style != oldDelegate.style ||
+        material != oldDelegate.material ||
+        opticalScale != oldDelegate.opticalScale;
   }
-
-  @override
-  bool shouldRepaint(covariant _LiquidBackdropPainter oldDelegate) =>
-      brightness != oldDelegate.brightness ||
-      accent != oldDelegate.accent ||
-      baseColor != oldDelegate.baseColor;
 }

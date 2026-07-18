@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/app_appearance.dart';
@@ -18,6 +20,15 @@ import 'messages_screen.dart';
 import 'product_screen.dart';
 import 'reviews_screen.dart';
 import 'seller_profile_screen.dart';
+
+bool _sameProductInstances(List<Product> left, List<Product> right) {
+  if (identical(left, right)) return true;
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (!identical(left[index], right[index])) return false;
+  }
+  return true;
+}
 
 class CatalogScreen extends StatefulWidget {
   final double scale;
@@ -70,6 +81,15 @@ class CatalogScreen extends StatefulWidget {
   final bool Function(String sellerId)? isFollowingSeller;
   final Future<bool> Function(String sellerId)? onToggleSellerFollow;
   final VoidCallback? onOpenAppearance;
+  final ValueChanged<bool>? onNavigationCompactChanged;
+  final ValueNotifier<bool>? navigationCompactController;
+  final void Function(Product product, {Route<dynamic>? sourceRoute})?
+  onChatAuthenticationRequired;
+  final Future<void> Function(
+    AppUserProfile user, {
+    Route<dynamic>? sourceRoute,
+  })?
+  onOpenDirectChat;
 
   const CatalogScreen({
     super.key,
@@ -102,6 +122,10 @@ class CatalogScreen extends StatefulWidget {
     this.isFollowingSeller,
     this.onToggleSellerFollow,
     this.onOpenAppearance,
+    this.onNavigationCompactChanged,
+    this.navigationCompactController,
+    this.onChatAuthenticationRequired,
+    this.onOpenDirectChat,
   });
 
   @override
@@ -115,10 +139,14 @@ class _CatalogScreenState extends State<CatalogScreen>
   final ScrollController _scrollController = ScrollController();
   bool _showFloatingSearch = false;
   double _lastScrollOffset = 0;
+  double _downwardTravel = 0;
+  double _upwardTravel = 0;
+  bool _navigationCompactFallback = false;
+  Timer? _navigationIdleTimer;
+  final Set<String> _openingProductChatRequests = <String>{};
   final _filters = _CatalogFilters();
   final _searchHistory = CatalogSearchHistory();
   late CatalogSearchIndex _searchIndex;
-  late int _indexedProductCount;
 
   final List<String> _tabs = [
     'Новинки',
@@ -333,22 +361,23 @@ class _CatalogScreenState extends State<CatalogScreen>
   void initState() {
     super.initState();
     _searchIndex = CatalogSearchIndex(widget.products);
-    _indexedProductCount = widget.products.length;
     _scrollController.addListener(_handleScroll);
   }
 
   @override
   void didUpdateWidget(covariant CatalogScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.products, widget.products) ||
-        _indexedProductCount != widget.products.length) {
+    // AppRepository exposes an immutable wrapper on every notification. Chat,
+    // presence and view-count updates must not rebuild the full search index
+    // when the underlying catalog objects and order did not change.
+    if (!_sameProductInstances(oldWidget.products, widget.products)) {
       _searchIndex = CatalogSearchIndex(widget.products);
-      _indexedProductCount = widget.products.length;
     }
   }
 
   @override
   void dispose() {
+    _navigationIdleTimer?.cancel();
     _scrollController
       ..removeListener(_handleScroll)
       ..dispose();
@@ -356,10 +385,14 @@ class _CatalogScreenState extends State<CatalogScreen>
   }
 
   void _handleScroll() {
-    final offset = _scrollController.offset;
+    final offset = _scrollController.offset
+        .clamp(0.0, double.infinity)
+        .toDouble();
     final searchHiddenOffset = _promoBannerHeight(context) + 16 + 42;
     final delta = offset - _lastScrollOffset;
     final isSearchHidden = offset > searchHiddenOffset;
+
+    _updateNavigationForScroll(offset: offset, delta: delta);
 
     if (!isSearchHidden) {
       if (_showFloatingSearch) {
@@ -378,6 +411,73 @@ class _CatalogScreenState extends State<CatalogScreen>
     _lastScrollOffset = offset;
   }
 
+  void _updateNavigationForScroll({
+    required double offset,
+    required double delta,
+  }) {
+    // A top lock and asymmetric travel thresholds provide hysteresis. Tiny
+    // ballistic/overscroll movements cannot make the capsule chatter.
+    if (offset < 28) {
+      _downwardTravel = 0;
+      _upwardTravel = 0;
+      _setNavigationCompact(false);
+      return;
+    }
+    if (delta > 1.2) {
+      _upwardTravel = 0;
+      _downwardTravel += delta;
+      if (offset > 72 && _downwardTravel >= 42) {
+        _downwardTravel = 0;
+        _setNavigationCompact(true);
+      }
+      return;
+    }
+    if (delta < -1.2) {
+      _downwardTravel = 0;
+      _upwardTravel += -delta;
+      if (_upwardTravel >= 24) {
+        _upwardTravel = 0;
+        _setNavigationCompact(false);
+      }
+    }
+  }
+
+  void _setNavigationCompact(bool value) {
+    final controller = widget.navigationCompactController;
+    final current = controller?.value ?? _navigationCompactFallback;
+    if (current == value) return;
+    _navigationCompactFallback = value;
+    if (controller != null && controller.value != value) {
+      controller.value = value;
+    }
+    widget.onNavigationCompactChanged?.call(value);
+  }
+
+  bool get _isNavigationCompact =>
+      widget.navigationCompactController?.value ?? _navigationCompactFallback;
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification) {
+      _navigationIdleTimer?.cancel();
+    } else if (notification is ScrollEndNotification) {
+      _scheduleNavigationIdleExpand();
+    }
+    return false;
+  }
+
+  void _scheduleNavigationIdleExpand() {
+    _navigationIdleTimer?.cancel();
+    if (!_isNavigationCompact || !_scrollController.hasClients) return;
+    _navigationIdleTimer = Timer(const Duration(milliseconds: 720), () {
+      if (!mounted || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      if (position.isScrollingNotifier.value) return;
+      _downwardTravel = 0;
+      _upwardTravel = 0;
+      _setNavigationCompact(false);
+    });
+  }
+
   double _promoBannerHeight(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
     return (screenWidth * 1.40).clamp(525.0, 570.0).toDouble();
@@ -387,20 +487,22 @@ class _CatalogScreenState extends State<CatalogScreen>
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        SingleChildScrollView(
-          controller: _scrollController,
-          padding: const EdgeInsets.only(bottom: 138),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              PromoBannerCarousel(
-                banners: _promoBanners,
-                height: _promoBannerHeight(context),
+        NotificationListener<ScrollNotification>(
+          onNotification: _handleScrollNotification,
+          child: CustomScrollView(
+            controller: _scrollController,
+            physics: const BouncingScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(
+                child: PromoBannerCarousel(
+                  banners: _promoBanners,
+                  height: _promoBannerHeight(context),
+                ),
               ),
-              const SizedBox(height: 16),
-              _buildHeader(widget.scale),
-              _buildTabs(widget.scale),
-              _buildFilterRow(widget.scale),
+              const SliverToBoxAdapter(child: SizedBox(height: 16)),
+              SliverToBoxAdapter(child: _buildHeader(widget.scale)),
+              SliverToBoxAdapter(child: _buildTabs(widget.scale)),
+              SliverToBoxAdapter(child: _buildFilterRow(widget.scale)),
               _buildProductGrid(widget.scale),
             ],
           ),
@@ -631,12 +733,14 @@ class _CatalogScreenState extends State<CatalogScreen>
 
   Widget _buildProductGrid(double scale) {
     final products = _visibleProducts;
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 8 * scale),
-      child: GridView.builder(
-        padding: EdgeInsets.only(top: 7 * scale, bottom: 132 * scale),
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
+    return SliverPadding(
+      padding: EdgeInsets.fromLTRB(
+        8 * scale,
+        7 * scale,
+        8 * scale,
+        138 * scale,
+      ),
+      sliver: SliverGrid.builder(
         itemCount: products.length,
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
@@ -715,6 +819,19 @@ class _CatalogScreenState extends State<CatalogScreen>
             return blocked ? null : 'Не удалось заблокировать пользователя';
           },
           onMessage: (seller) async {
+            final openDirectChat = widget.onOpenDirectChat;
+            if (openDirectChat != null) {
+              await openDirectChat(
+                seller.toUserProfile(),
+                sourceRoute: ModalRoute.of(context),
+              );
+              return;
+            }
+            final requireAuthentication = widget.onChatAuthenticationRequired;
+            if (requireAuthentication != null) {
+              requireAuthentication(product);
+              return;
+            }
             final navigator = Navigator.of(context, rootNavigator: true);
             final thread = await widget.onStartDirectChat(
               seller.toUserProfile(),
@@ -747,11 +864,8 @@ class _CatalogScreenState extends State<CatalogScreen>
   }
 
   void _showProductDetails(Product product) {
-    final route = PageRouteBuilder<void>(
-      opaque: true,
-      transitionDuration: Duration.zero,
-      reverseTransitionDuration: Duration.zero,
-      pageBuilder: (context, animation, secondaryAnimation) {
+    final route = buildProductRoute<void>(
+      builder: (context) {
         return ProductScreen(
           sourceProduct: product,
           product: ProductDetailData(
@@ -802,31 +916,54 @@ class _CatalogScreenState extends State<CatalogScreen>
                     deliveryPrice: deliveryPrice,
                   ),
           onContactSeller: () async {
-            final navigator = Navigator.of(context, rootNavigator: true);
-            final thread = await widget.onContactSeller(product);
-            if (!mounted) return;
-            if (thread == null) {
-              _showSnackBar('Не удалось открыть чат');
+            final requireAuthentication = widget.onChatAuthenticationRequired;
+            if (requireAuthentication != null) {
+              requireAuthentication(
+                product,
+                sourceRoute: ModalRoute.of(context),
+              );
               return;
             }
-            await navigator.maybePop();
-            if (!mounted) return;
-            navigator.push(
-              MaterialPageRoute<void>(
-                builder: (context) => ChatScreen(
-                  thread: thread,
-                  onSendMessage: widget.onSendMessage,
-                  onOpenProduct: _openProductFromChat,
-                  currentUserId: widget.currentUserId,
-                  threadsListenable: widget.threadsListenable,
-                  resolveThread: widget.resolveThread,
-                  lastSeenForUser: widget.lastSeenForUser,
-                  actions: widget.chatActions,
-                  onOpenSellerProfile: () => _openSellerFromChat(thread),
-                  onBuyProduct: () => _buyFromChat(thread),
+            final productRoute = ModalRoute.of(context);
+            final productKey = product.id.isEmpty
+                ? identityHashCode(product).toString()
+                : product.id;
+            if (!_openingProductChatRequests.add(productKey)) return;
+            try {
+              final navigator = Navigator.of(context, rootNavigator: true);
+              final thread = await widget.onContactSeller(product);
+              if (!mounted || productRoute?.isCurrent != true) return;
+              if (thread == null) {
+                _showSnackBar('Не удалось открыть чат');
+                return;
+              }
+              navigator.push(
+                MaterialPageRoute<void>(
+                  builder: (context) => ChatScreen(
+                    thread: thread,
+                    onSendMessage: widget.onSendMessage,
+                    onOpenProduct: _openProductFromChat,
+                    currentUserId: widget.currentUserId,
+                    threadsListenable: widget.threadsListenable,
+                    resolveThread: widget.resolveThread,
+                    lastSeenForUser: widget.lastSeenForUser,
+                    actions: widget.chatActions,
+                    onOpenSellerProfile: () => _openSellerFromChat(thread),
+                    onBuyProduct: () => _buyFromChat(thread),
+                  ),
                 ),
-              ),
-            );
+              );
+            } catch (error, stackTrace) {
+              debugPrint(
+                'Open product conversation error for ${product.id}: $error',
+              );
+              debugPrintStack(stackTrace: stackTrace);
+              if (mounted && productRoute?.isCurrent == true) {
+                _showSnackBar('Не удалось открыть чат');
+              }
+            } finally {
+              _openingProductChatRequests.remove(productKey);
+            }
           },
           onShare: () => widget.onShareProduct(product),
         );

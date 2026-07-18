@@ -27,7 +27,11 @@ class OutfitsScreen extends StatefulWidget {
   final Future<void> Function(String outfitId) onToggleOutfitLike;
   final Future<int> Function(String productId) onProductViewed;
   final Future<int> Function(String outfitId) onOutfitViewed;
-  final Future<void> Function(Product product, {bool imageOnly})
+  final Future<void> Function(
+    Product product, {
+    bool imageOnly,
+    Route<dynamic>? sourceRoute,
+  })
   onContactSeller;
   final ValueChanged<Product> onOpenSellerProfile;
   final Future<bool> Function({
@@ -374,11 +378,8 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
       _showUnavailableProductSheet(product);
       return;
     }
-    final route = PageRouteBuilder<void>(
-      opaque: true,
-      transitionDuration: Duration.zero,
-      reverseTransitionDuration: Duration.zero,
-      pageBuilder: (context, animation, secondaryAnimation) {
+    final route = buildProductRoute<void>(
+      builder: (context) {
         return ProductScreen(
           sourceProduct: source,
           product: ProductDetailData(
@@ -445,7 +446,10 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
                     ),
           onContactSeller: source == null
               ? () {}
-              : () => widget.onContactSeller(source),
+              : () => widget.onContactSeller(
+                  source,
+                  sourceRoute: ModalRoute.of(context),
+                ),
           onShare: () => _shareOutfitProduct(product),
         );
       },
@@ -667,7 +671,7 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
     final topInset = MediaQuery.of(context).viewPadding.top;
 
     return Container(
-      color: context.appPalette.page,
+      color: context.appBackdrop.scaffoldColor,
       child: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
         padding: EdgeInsets.fromLTRB(

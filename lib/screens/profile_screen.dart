@@ -125,7 +125,7 @@ class ProfileScreen extends StatelessWidget {
     final topInset = MediaQuery.of(context).viewPadding.top;
 
     return Scaffold(
-      backgroundColor: context.appPalette.page,
+      backgroundColor: context.appBackdrop.scaffoldColor,
       body: SafeArea(
         top: false,
         child: ListView(
@@ -2443,11 +2443,12 @@ class _ProfileGridScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     final topInset = MediaQuery.of(context).viewPadding.top;
     final palette = context.appPalette;
-    final resolvedBackground = Theme.of(context).brightness == Brightness.dark
-        ? (backgroundColor == _outfitMediaBackground
-              ? palette.surfaceMuted
-              : palette.page)
-        : (backgroundColor ?? palette.page);
+    final resolvedBackground = backgroundColor == null
+        ? context.appBackdrop.scaffoldColor
+        : Theme.of(context).brightness == Brightness.dark &&
+              backgroundColor == _outfitMediaBackground
+        ? palette.surfaceMuted
+        : backgroundColor!;
 
     return Scaffold(
       backgroundColor: resolvedBackground,
