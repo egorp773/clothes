@@ -545,105 +545,119 @@ class _MessagesHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final topInset = MediaQuery.of(context).viewPadding.top;
 
-    return Container(
-      padding: EdgeInsets.fromLTRB(18, topInset + 12, 18, 14),
-      decoration: BoxDecoration(
-        color: context.appPalette.surface,
-        border: Border(
-          bottom: BorderSide(color: context.appPalette.border, width: 0.5),
+    return AppGlassSurface(
+      key: const Key('messages-glass-header'),
+      role: AppGlassRole.toolbar,
+      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(22)),
+      padding: EdgeInsets.zero,
+      interactiveGlint: false,
+      child: Container(
+        padding: EdgeInsets.fromLTRB(18, topInset + 12, 18, 14),
+        decoration: BoxDecoration(
+          color: context.appGlass.enabled
+              ? Colors.transparent
+              : context.appPalette.surface,
+          border: context.appGlass.enabled
+              ? null
+              : Border(
+                  bottom: BorderSide(
+                    color: context.appPalette.border,
+                    width: 0.5,
+                  ),
+                ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            key: const Key('messages-header-row'),
-            height: 44,
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'сообщения',
-                    style: TextStyle(
-                      fontFamily: AppTypography.fontFamily,
-                      fontSize: 22,
-                      height: 1,
-                      fontWeight: AppTypography.bold,
-                      letterSpacing: -0.4,
-                      color: context.appPalette.ink,
-                    ),
-                  ),
-                ),
-                IconButton.filled(
-                  key: const Key('messages-compose-button'),
-                  onPressed: isComposing ? null : onCompose,
-                  style: IconButton.styleFrom(
-                    overlayColor: Colors.transparent,
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                    minimumSize: Size.zero,
-                    fixedSize: const Size(36, 36),
-                    padding: EdgeInsets.zero,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                  icon: Icon(Icons.edit_square, size: 18),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  height: 32,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  decoration: BoxDecoration(
-                    color: context.appPalette.surfaceMuted,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Center(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              key: const Key('messages-header-row'),
+              height: 44,
+              child: Row(
+                children: [
+                  Expanded(
                     child: Text(
-                      totalThreads.toString(),
+                      'сообщения',
                       style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
+                        fontFamily: AppTypography.fontFamily,
+                        fontSize: 22,
+                        height: 1,
+                        fontWeight: AppTypography.bold,
+                        letterSpacing: -0.4,
                         color: context.appPalette.ink,
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-          _SearchField(controller: controller, onChanged: onChanged),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 34,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              physics: const BouncingScrollPhysics(),
-              children: [
-                _FilterChip(
-                  label: 'Все',
-                  selected: filter == _InboxFilter.all,
-                  onTap: () => onFilterChanged(_InboxFilter.all),
-                ),
-                _FilterChip(
-                  label: 'Непрочитанные',
-                  selected: filter == _InboxFilter.unread,
-                  onTap: () => onFilterChanged(_InboxFilter.unread),
-                ),
-                _FilterChip(
-                  label: 'Покупки',
-                  selected: filter == _InboxFilter.purchases,
-                  onTap: () => onFilterChanged(_InboxFilter.purchases),
-                ),
-                if (archivedCount > 0)
-                  _FilterChip(
-                    label: 'Архив · $archivedCount',
-                    selected: filter == _InboxFilter.archived,
-                    onTap: () => onFilterChanged(_InboxFilter.archived),
+                  IconButton.filled(
+                    key: const Key('messages-compose-button'),
+                    onPressed: isComposing ? null : onCompose,
+                    style: IconButton.styleFrom(
+                      overlayColor: Colors.transparent,
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                      minimumSize: Size.zero,
+                      fixedSize: const Size(36, 36),
+                      padding: EdgeInsets.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    icon: Icon(Icons.edit_square, size: 18),
                   ),
-              ],
+                  const SizedBox(width: 8),
+                  Container(
+                    height: 32,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: context.appPalette.surfaceMuted,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Center(
+                      child: Text(
+                        totalThreads.toString(),
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: context.appPalette.ink,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 14),
+            _SearchField(controller: controller, onChanged: onChanged),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 34,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                children: [
+                  _FilterChip(
+                    label: 'Все',
+                    selected: filter == _InboxFilter.all,
+                    onTap: () => onFilterChanged(_InboxFilter.all),
+                  ),
+                  _FilterChip(
+                    label: 'Непрочитанные',
+                    selected: filter == _InboxFilter.unread,
+                    onTap: () => onFilterChanged(_InboxFilter.unread),
+                  ),
+                  _FilterChip(
+                    label: 'Покупки',
+                    selected: filter == _InboxFilter.purchases,
+                    onTap: () => onFilterChanged(_InboxFilter.purchases),
+                  ),
+                  if (archivedCount > 0)
+                    _FilterChip(
+                      label: 'Архив · $archivedCount',
+                      selected: filter == _InboxFilter.archived,
+                      onTap: () => onFilterChanged(_InboxFilter.archived),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1257,6 +1271,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _controller.text = _thread.draft;
     _controller.addListener(_saveDraftLater);
     widget.threadsListenable.addListener(_refreshThread);
+    widget.actions?.setVisibility?.call(_thread.id, true);
     unawaited(_markCurrentThreadRead());
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
   }
@@ -1412,6 +1427,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    widget.actions?.setVisibility?.call(_thread.id, false);
     widget.threadsListenable.removeListener(_refreshThread);
     _draftDebounce?.cancel();
     final saveDraft = widget.actions?.saveDraft;

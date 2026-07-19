@@ -190,12 +190,13 @@ class AppRepository extends ChangeNotifier {
   bool _hasCompletedThreadSync = false;
   bool _isThreadSyncPending = false;
   String? _threadSyncError;
+  String? _activeThreadId;
   final Map<String, DateTime> _lastSeenByUserId = {};
   AppProfile _profile = const AppProfile(
     name: 'Ваш профиль',
     handle: '@seller',
     city: 'Москва',
-    rating: 4.8,
+    rating: 0,
     salesCount: 0,
     followersCount: 0,
   );
@@ -340,6 +341,11 @@ class AppRepository extends ChangeNotifier {
     );
   }
 
+  int get unreadMessageCount => threads.fold<int>(
+    0,
+    (total, thread) => total + thread.unreadCount.clamp(0, 9999),
+  );
+
   AppProfile get profile => _profile;
   bool canFollowSeller(String sellerId) {
     final normalized = sellerId.trim();
@@ -367,8 +373,22 @@ class AppRepository extends ChangeNotifier {
   String? get authError => _authError;
   MessageNotification? get latestMessageNotification =>
       _latestMessageNotification;
+  bool isChatThreadVisible(String threadId) => _activeThreadId == threadId;
   String get currentUserId => _currentUser?.id ?? '';
   DateTime? lastSeenForUser(String userId) => _lastSeenByUserId[userId];
+
+  void setChatThreadVisibility(String threadId, bool isVisible) {
+    if (isVisible) {
+      _activeThreadId = threadId;
+    } else if (_activeThreadId == threadId) {
+      _activeThreadId = null;
+    }
+  }
+
+  Future<void> refreshCurrentProfile() async {
+    final user = _currentUser;
+    if (user != null) await _applyUserProfile(user);
+  }
 
   DeliveryProfile _deliveryProfileWithFallbacks() {
     final metadata = _currentUser?.userMetadata ?? const {};
@@ -599,9 +619,7 @@ class AppRepository extends ChangeNotifier {
     );
     _sellerReviews.insert(0, review);
     await _saveSellerReviewsLocal();
-    await _recalculateSellerRating(normalizedSellerId);
     notifyListeners();
-    await _pushSellerRatingToSupabase(normalizedSellerId);
   }
 
   Future<bool> _hasRemoteCompletedOrderForReview({
@@ -680,7 +698,7 @@ class AppRepository extends ChangeNotifier {
     final returnsPercent = sellerOrders.isEmpty
         ? 0.0
         : returns * 100 / sellerOrders.length;
-    final rating = _profile.rating <= 0 ? 5.0 : _profile.rating;
+    final rating = _profile.rating.clamp(0, 5).toDouble();
     final commission = rating >= 4.8
         ? 7
         : rating >= 4.4
@@ -1184,6 +1202,10 @@ class AppRepository extends ChangeNotifier {
     if (previousUserId != currentUserId) {
       _chatMediaUrlCache.clear();
       _knownRemoteThreadIds.clear();
+      _latestMessageNotification = null;
+      _activeThreadId = null;
+      _hasCompletedThreadSync = false;
+      _lastSeenByUserId.clear();
       _loadLocalUserState();
       _isThreadSyncPending = false;
       _threadSyncError = null;
@@ -1361,9 +1383,6 @@ class AppRepository extends ChangeNotifier {
       'handle': profile.handle,
       'avatar_url': _currentAvatarUrl(),
       'city': profile.city,
-      'rating': profile.rating,
-      'sales_count': profile.salesCount,
-      'followers_count': profile.followersCount,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     }, onConflict: 'id');
   }
@@ -1636,7 +1655,14 @@ class AppRepository extends ChangeNotifier {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'chat_messages',
-          callback: (_) => _chatThreadSync.schedule(_syncThreadsFromSupabase),
+          callback: (payload) {
+            if (payload.eventType == PostgresChangeEvent.insert ||
+                payload.eventType == PostgresChangeEvent.update) {
+              unawaited(_applyRealtimeChatMessage(payload.newRecord));
+            } else {
+              _chatThreadSync.schedule(_syncThreadsFromSupabase);
+            }
+          },
         )
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
@@ -1667,6 +1693,81 @@ class AppRepository extends ChangeNotifier {
             );
           }
         });
+  }
+
+  Future<void> _applyRealtimeChatMessage(Map<String, dynamic> row) async {
+    final syncUserId = currentUserId;
+    if (syncUserId.isEmpty) return;
+    final threadId = row['thread_id'] as String? ?? '';
+    if (threadId.isEmpty) return;
+    final threadIndex = _threads.indexWhere((thread) => thread.id == threadId);
+    if (threadIndex == -1) {
+      _chatThreadSync.schedule(_syncThreadsFromSupabase);
+      return;
+    }
+
+    final currentThread = _threads[threadIndex];
+    if (!currentThread.containsUser(syncUserId) ||
+        _isBlockedThread(currentThread)) {
+      return;
+    }
+    var message = ChatMessage.fromJson(row, currentUserId: syncUserId);
+    message = await _resolveChatMessageMedia(message);
+    if (currentUserId != syncUserId) return;
+
+    final messages = List<ChatMessage>.from(currentThread.messages);
+    final existingIndex = messages.indexWhere((item) => item.id == message.id);
+    final isNew = existingIndex == -1;
+    if (isNew) {
+      messages.add(message);
+    } else {
+      messages[existingIndex] = message;
+    }
+    messages.sort((left, right) {
+      final byTime = left.createdAt.compareTo(right.createdAt);
+      return byTime != 0 ? byTime : left.id.compareTo(right.id);
+    });
+
+    final isIncoming = !message.isMine && !message.isDeleted;
+    final isVisible = _activeThreadId == threadId;
+    final alreadyRead =
+        message.readBy.contains(syncUserId) ||
+        (currentThread.lastReadAt?.isAfter(message.createdAt) ?? false);
+    final updated = currentThread.copyWith(
+      messages: messages,
+      lastMessage: messages.isEmpty
+          ? currentThread.lastMessage
+          : messages.last.previewText,
+      updatedAt: message.createdAt.isAfter(currentThread.updatedAt)
+          ? message.createdAt
+          : currentThread.updatedAt,
+      unreadCount: isVisible
+          ? 0
+          : isNew && isIncoming && !alreadyRead
+          ? currentThread.unreadCount + 1
+          : currentThread.unreadCount,
+    );
+    _upsertLocalThread(updated);
+    if (isNew && isIncoming && !isVisible && !currentThread.isMuted) {
+      final senderName = message.senderName.trim().isNotEmpty
+          ? message.senderName.trim()
+          : currentThread.otherPartyName(syncUserId);
+      _latestMessageNotification = MessageNotification(
+        id: '$threadId:${message.id}',
+        threadId: threadId,
+        senderName: senderName,
+        text: message.previewText,
+      );
+    }
+    notifyListeners();
+    if (isNew && isIncoming && isVisible) {
+      unawaited(markThreadRead(threadId));
+    }
+    unawaited(
+      _saveThreadsLocal().catchError((Object error) {
+        debugPrint('Realtime chat cache write error: $error');
+      }),
+    );
   }
 
   Future<List<MessageThread>> _hydrateThreadMemberState(
@@ -1916,19 +2017,10 @@ class AppRepository extends ChangeNotifier {
       fetched = await _hydrateThreadMessages(fetched);
       if (currentUserId != syncUserId) return;
 
-      await _syncThreadPresence(fetched);
-      if (currentUserId != syncUserId) return;
-
       if (_hasCompletedThreadSync) {
         final notification = _incomingNotification(fetched, previousById);
         if (notification != null) {
           _latestMessageNotification = notification;
-          await _addProfileNotification(
-            title: notification.senderName,
-            body: notification.text,
-            kind: 'message',
-            targetId: notification.threadId,
-          );
         }
       }
       if (currentUserId != syncUserId) return;
@@ -1942,18 +2034,24 @@ class AppRepository extends ChangeNotifier {
       };
       fetched = mergeChatOutgoingState(fetched, latestLocalById);
       fetched.sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
-      await _writeList(
-        _scopedStorageKey(_threadsKey, syncUserId),
-        fetched.map((item) => item.toJson()),
-      );
       if (currentUserId != syncUserId) return;
       _threads = fetched;
       _isThreadSyncPending = false;
       _threadSyncError = null;
       notifyListeners();
+      // Presence and disk cache are recovery aids. Keep them off the critical
+      // path so incoming messages and their unread badge appear immediately.
+      unawaited(_syncThreadPresence(fetched));
+      unawaited(
+        _writeList(
+          _scopedStorageKey(_threadsKey, syncUserId),
+          fetched.map((item) => item.toJson()),
+        ).catchError((Object error) {
+          debugPrint('Chat cache write error: $error');
+        }),
+      );
     } catch (error, stackTrace) {
       if (currentUserId == syncUserId) {
-        _hasCompletedThreadSync = true;
         _isThreadSyncPending = false;
         _threadSyncError = 'Проверьте подключение и повторите попытку.';
         notifyListeners();
@@ -2038,6 +2136,7 @@ class AppRepository extends ChangeNotifier {
     MessageThread? newestThread;
 
     for (final thread in fetched) {
+      if (_activeThreadId == thread.id || _isBlockedThread(thread)) continue;
       final previous = previousById[thread.id];
       final previousMessageIds = previous == null
           ? const <String>{}
@@ -4900,8 +4999,12 @@ class AppRepository extends ChangeNotifier {
       title: cleanTitle,
     );
     _upsertLocalThread(updated);
-    await _saveThreadsLocal();
     notifyListeners();
+    unawaited(
+      _saveThreadsLocal().catchError((Object error) {
+        debugPrint('Outgoing chat cache write error: $error');
+      }),
+    );
 
     if (_hasSupabase) {
       final params = <String, dynamic>{
@@ -5486,7 +5589,7 @@ class AppRepository extends ChangeNotifier {
       name: 'Ваш профиль',
       handle: '@seller',
       city: 'Москва',
-      rating: 4.8,
+      rating: 0,
       salesCount: 0,
       followersCount: 0,
     );
@@ -5592,46 +5695,6 @@ class AppRepository extends ChangeNotifier {
       _scopedStorageKey(_notificationPreferencesKey),
       jsonEncode(_notificationPreferences.toJson()),
     );
-  }
-
-  Future<void> _recalculateSellerRating(String sellerId) async {
-    final reviews = _sellerReviews
-        .where((review) => review.sellerId == sellerId)
-        .toList();
-    if (reviews.isEmpty) return;
-    final rating =
-        reviews.fold<int>(0, (sum, review) => sum + review.rating) /
-        reviews.length;
-    if (sellerId == currentUserId) {
-      _profile = _profile.copyWith(rating: rating, salesCount: reviews.length);
-      await _prefs.setString(
-        _scopedStorageKey(_profileKey),
-        jsonEncode(_profile.toJson()),
-      );
-    }
-  }
-
-  Future<void> _pushSellerRatingToSupabase(String sellerId) async {
-    if (!_hasSupabase || sellerId.isEmpty) return;
-    final reviews = _sellerReviews
-        .where((review) => review.sellerId == sellerId)
-        .toList();
-    if (reviews.isEmpty) return;
-    final rating =
-        reviews.fold<int>(0, (sum, review) => sum + review.rating) /
-        reviews.length;
-    try {
-      await _client
-          .from('profiles')
-          .update({
-            'rating': rating,
-            'sales_count': reviews.length,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', sellerId);
-    } catch (e) {
-      debugPrint('Seller rating update error: $e');
-    }
   }
 
   Future<void> _saveDeliveryProfileLocal() {

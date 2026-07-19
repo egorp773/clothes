@@ -174,6 +174,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   Timer? _messageNotificationTimer;
   Timer? _messageNotificationRemoveTimer;
   StreamSubscription<PushNotificationTap>? _pushTapSubscription;
+  StreamSubscription<PushNotificationTap>? _foregroundPushSubscription;
   OverlayEntry? _messageNotificationEntry;
   final List<Product> _draftOutfitProducts = [];
   final AppRepository _repository = AppRepository();
@@ -191,6 +192,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     updateThread: _repository.updateThreadPreferences,
     saveDraft: _repository.saveThreadDraft,
     markRead: _repository.markThreadRead,
+    setVisibility: _repository.setChatThreadVisibility,
   );
 
   Future<T?> _trackModalSurface<T>(Future<T?> Function() show) async {
@@ -215,6 +217,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _pushTapSubscription = PushNotificationService.onNotificationTap.listen(
       (tap) => unawaited(_handlePushNotificationTap(tap)),
     );
+    _foregroundPushSubscription = PushNotificationService.onForegroundMessage
+        .listen(_handleForegroundPushMessage);
     _repository.load();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final initialTap = PushNotificationService.takeInitialTap();
@@ -230,6 +234,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _messageNotificationTimer?.cancel();
     _messageNotificationRemoveTimer?.cancel();
     _pushTapSubscription?.cancel();
+    _foregroundPushSubscription?.cancel();
     _messageNotificationEntry?.remove();
     _navigationCompact.dispose();
     _repository.dispose();
@@ -243,12 +248,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     _isAppActive = isActive;
     if (!isActive) {
       _hideMessageNotification();
+    } else {
+      unawaited(_repository.retryThreadSync());
+      unawaited(_repository.refreshCurrentProfile());
     }
   }
 
   void _handleMessageNotification(MessageNotification? notification) {
     if (notification == null ||
-        notification.id == _handledMessageNotificationId) {
+        notification.id == _handledMessageNotificationId ||
+        _repository.isChatThreadVisible(notification.threadId)) {
       return;
     }
     _handledMessageNotificationId = notification.id;
@@ -268,6 +277,26 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         _hideMessageNotification();
       });
     });
+  }
+
+  void _handleForegroundPushMessage(PushNotificationTap push) {
+    if (push.type != 'message') return;
+    final threadId = push.data['thread_id']?.toString().trim() ?? '';
+    final messageId = push.data['message_id']?.toString().trim() ?? '';
+    if (threadId.isEmpty || messageId.isEmpty) return;
+    unawaited(_repository.retryThreadSync());
+    _handleMessageNotification(
+      MessageNotification(
+        id: '$threadId:$messageId',
+        threadId: threadId,
+        senderName: push.title?.trim().isNotEmpty == true
+            ? push.title!.trim()
+            : 'Сообщение',
+        text: push.body?.trim().isNotEmpty == true
+            ? push.body!.trim()
+            : 'Новое сообщение',
+      ),
+    );
   }
 
   void _ensureMessageNotificationOverlay() {
@@ -832,13 +861,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   void _changeTab(int index) {
-    if (index != 0 || index == _currentIndex) {
-      _navigationCompact.value = false;
-    }
+    // Compact state belongs to the scroll session of the visible tab and must
+    // never leak into the destination during an instant tab switch.
+    _navigationCompact.value = false;
     if (!_repository.isSignedIn && (index == 3 || index == 4)) {
       _openLoginScreen(onSignedIn: () => _changeTab(index));
       return;
     }
+    if (index == 4) unawaited(_repository.refreshCurrentProfile());
     setState(() {
       _currentIndex = index;
       _createMode = _CreateMode.none;
@@ -1239,101 +1269,111 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     if (_currentIndex == 0) _navigationCompact.value = value;
                   },
                 ),
-                OutfitsScreen(
-                  scale: 1.0,
-                  sidePadding: _sidePadding,
-                  createdOutfits: _repository.outfits,
-                  products: _repository.products,
-                  onCreateTap: _openPublishOutfit,
-                  onToggleProductLike: _repository.toggleProductLike,
-                  onToggleOutfitLike: _repository.toggleOutfitLike,
-                  onProductViewed: _repository.recordProductView,
-                  onOutfitViewed: _repository.recordOutfitView,
-                  onContactSeller: _contactSellerFromProduct,
-                  onOpenSellerProfile: _openSellerProfile,
-                  onSubmitContentReport: _repository.submitContentReport,
-                  deliveryProfile: _repository.deliveryProfile,
-                  onSaveDeliveryProfile: _repository.updateDeliveryProfile,
-                  onCreateDeliveryOrder: _repository.createDeliveryOrder,
-                  sellerFollowListenable: _repository,
-                  canFollowSeller: _repository.canFollowSeller,
-                  isFollowingSeller: _repository.isFollowingSeller,
-                  onToggleSellerFollow: _repository.toggleSellerFollow,
+                NavigationCompactOnScroll(
+                  controller: _navigationCompact,
+                  child: OutfitsScreen(
+                    scale: 1.0,
+                    sidePadding: _sidePadding,
+                    createdOutfits: _repository.outfits,
+                    products: _repository.products,
+                    onCreateTap: _openPublishOutfit,
+                    onToggleProductLike: _repository.toggleProductLike,
+                    onToggleOutfitLike: _repository.toggleOutfitLike,
+                    onProductViewed: _repository.recordProductView,
+                    onOutfitViewed: _repository.recordOutfitView,
+                    onContactSeller: _contactSellerFromProduct,
+                    onOpenSellerProfile: _openSellerProfile,
+                    onSubmitContentReport: _repository.submitContentReport,
+                    deliveryProfile: _repository.deliveryProfile,
+                    onSaveDeliveryProfile: _repository.updateDeliveryProfile,
+                    onCreateDeliveryOrder: _repository.createDeliveryOrder,
+                    sellerFollowListenable: _repository,
+                    canFollowSeller: _repository.canFollowSeller,
+                    isFollowingSeller: _repository.isFollowingSeller,
+                    onToggleSellerFollow: _repository.toggleSellerFollow,
+                  ),
                 ),
                 _buildCreateScreen(),
-                MessagesScreen(
-                  threads: _repository.threads,
-                  onSendMessage: _repository.sendMessage,
-                  onSearchUsers: _repository.searchUserProfiles,
-                  onStartDirectChat: _repository.startDirectChat,
-                  onCreateConversation: _repository.createConversation,
-                  onOpenProduct: _openProductFromChat,
-                  currentUserId: _repository.currentUserId,
-                  threadsListenable: _repository,
-                  resolveThread: _repository.threadById,
-                  lastSeenForUser: _repository.lastSeenForUser,
-                  actions: _chatActions,
-                  onOpenSellerProfile: _openSellerFromChat,
-                  onBuyProduct: _buyFromChat,
-                  isLoading: _repository.isThreadSyncPending,
-                  errorMessage: _repository.threadSyncError,
-                  isAuthenticated:
-                      !SupabaseConfig.isInitialized || _repository.isSignedIn,
-                  onRetryLoad: () => unawaited(_repository.retryThreadSync()),
-                  onSignIn: _openLoginScreen,
+                NavigationCompactOnScroll(
+                  controller: _navigationCompact,
+                  child: MessagesScreen(
+                    threads: _repository.threads,
+                    onSendMessage: _repository.sendMessage,
+                    onSearchUsers: _repository.searchUserProfiles,
+                    onStartDirectChat: _repository.startDirectChat,
+                    onCreateConversation: _repository.createConversation,
+                    onOpenProduct: _openProductFromChat,
+                    currentUserId: _repository.currentUserId,
+                    threadsListenable: _repository,
+                    resolveThread: _repository.threadById,
+                    lastSeenForUser: _repository.lastSeenForUser,
+                    actions: _chatActions,
+                    onOpenSellerProfile: _openSellerFromChat,
+                    onBuyProduct: _buyFromChat,
+                    isLoading: _repository.isThreadSyncPending,
+                    errorMessage: _repository.threadSyncError,
+                    isAuthenticated:
+                        !SupabaseConfig.isInitialized || _repository.isSignedIn,
+                    onRetryLoad: () => unawaited(_repository.retryThreadSync()),
+                    onSignIn: _openLoginScreen,
+                  ),
                 ),
-                ProfileScreen(
-                  appearance: widget.appearance,
-                  onThemePreferenceChanged: widget.onThemePreferenceChanged,
-                  onLiquidGlassChanged: widget.onLiquidGlassChanged,
-                  onCustomAppearanceSaved: widget.onCustomAppearanceSaved,
-                  profile: _repository.profile,
-                  products: _repository.myProducts,
-                  likedProducts: _repository.likedProducts,
-                  likedOutfits: _repository.likedOutfits,
-                  recentlyViewedProducts: _repository.recentlyViewedProducts,
-                  recentlyViewedOutfits: _repository.recentlyViewedOutfits,
-                  outfits: _repository.myOutfits,
-                  allProducts: _repository.products,
-                  isSignedIn: _repository.isSignedIn,
-                  isSigningIn: _repository.isSigningIn,
-                  currentUserId: _repository.currentUserId,
-                  accountLabel:
-                      (_repository.currentUser?.email?.endsWith(
-                            '@telegram.local',
-                          ) ??
-                          false)
-                      ? _repository.profile.handle
-                      : _repository.currentUser?.email,
-                  authError: _repository.authError,
-                  notifications: _repository.notifications,
-                  notificationPreferences: _repository.notificationPreferences,
-                  orders: _repository.orders,
-                  sellerDashboardStats: _repository.sellerDashboardStats(),
-                  deliveryProfile: _repository.deliveryProfile,
-                  onSaveDeliveryProfile: _repository.updateDeliveryProfile,
-                  onSignInWithYandex: _repository.signInWithYandex,
-                  onSignInWithTelegram: _repository.signInWithTelegram,
-                  onSignOut: _repository.signOut,
-                  onUpdateProfile: _repository.updateProfile,
-                  onSavePersonalProfile: _repository.savePersonalProfile,
-                  onConfirmEmail: _repository.requestEmailConfirmation,
-                  onDeleteAccount: _repository.deleteAccount,
-                  onToggleProductLike: _repository.toggleProductLike,
-                  onToggleOutfitLike: _repository.toggleOutfitLike,
-                  onClearRecentlyViewed: _repository.clearRecentlyViewed,
-                  onDeleteProduct: _repository.deleteProduct,
-                  onProductTap: _openProductDetails,
-                  onShareProduct: _shareProduct,
-                  onOutfitAuthorTap: _openOutfitAuthorProfile,
-                  onMarkNotificationRead: _repository.markNotificationRead,
-                  onMarkAllNotificationsRead:
-                      _repository.markAllNotificationsRead,
-                  onNotificationTap: _openProfileNotification,
-                  onUpdateNotificationPreferences:
-                      _repository.updateNotificationPreferences,
-                  onLoadReviews: _repository.fetchSellerReviews,
-                  onOpenCatalog: () => _changeTab(0),
+                NavigationCompactOnScroll(
+                  controller: _navigationCompact,
+                  child: ProfileScreen(
+                    appearance: widget.appearance,
+                    onThemePreferenceChanged: widget.onThemePreferenceChanged,
+                    onLiquidGlassChanged: widget.onLiquidGlassChanged,
+                    onCustomAppearanceSaved: widget.onCustomAppearanceSaved,
+                    profile: _repository.profile,
+                    products: _repository.myProducts,
+                    likedProducts: _repository.likedProducts,
+                    likedOutfits: _repository.likedOutfits,
+                    recentlyViewedProducts: _repository.recentlyViewedProducts,
+                    recentlyViewedOutfits: _repository.recentlyViewedOutfits,
+                    outfits: _repository.myOutfits,
+                    allProducts: _repository.products,
+                    isSignedIn: _repository.isSignedIn,
+                    isSigningIn: _repository.isSigningIn,
+                    currentUserId: _repository.currentUserId,
+                    accountLabel:
+                        (_repository.currentUser?.email?.endsWith(
+                              '@telegram.local',
+                            ) ??
+                            false)
+                        ? _repository.profile.handle
+                        : _repository.currentUser?.email,
+                    authError: _repository.authError,
+                    notifications: _repository.notifications,
+                    notificationPreferences:
+                        _repository.notificationPreferences,
+                    orders: _repository.orders,
+                    sellerDashboardStats: _repository.sellerDashboardStats(),
+                    deliveryProfile: _repository.deliveryProfile,
+                    onSaveDeliveryProfile: _repository.updateDeliveryProfile,
+                    onSignInWithYandex: _repository.signInWithYandex,
+                    onSignInWithTelegram: _repository.signInWithTelegram,
+                    onSignOut: _repository.signOut,
+                    onUpdateProfile: _repository.updateProfile,
+                    onSavePersonalProfile: _repository.savePersonalProfile,
+                    onConfirmEmail: _repository.requestEmailConfirmation,
+                    onDeleteAccount: _repository.deleteAccount,
+                    onToggleProductLike: _repository.toggleProductLike,
+                    onToggleOutfitLike: _repository.toggleOutfitLike,
+                    onClearRecentlyViewed: _repository.clearRecentlyViewed,
+                    onDeleteProduct: _repository.deleteProduct,
+                    onProductTap: _openProductDetails,
+                    onShareProduct: _shareProduct,
+                    onOutfitAuthorTap: _openOutfitAuthorProfile,
+                    onMarkNotificationRead: _repository.markNotificationRead,
+                    onMarkAllNotificationsRead:
+                        _repository.markAllNotificationsRead,
+                    onNotificationTap: _openProfileNotification,
+                    onUpdateNotificationPreferences:
+                        _repository.updateNotificationPreferences,
+                    onLoadReviews: _repository.fetchSellerReviews,
+                    onOpenCatalog: () => _changeTab(0),
+                  ),
                 ),
               ],
             ),
@@ -1344,6 +1384,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
               ? null
               : AppBottomNav(
                   currentIndex: _currentIndex,
+                  unreadCount: _repository.unreadMessageCount,
                   onTabSelected: _changeTab,
                   onCreateTap: _showCreateSheet,
                   compactListenable: _navigationCompact,

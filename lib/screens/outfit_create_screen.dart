@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../core/app_appearance.dart';
@@ -63,7 +64,12 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
   final List<OutfitAccessory> _localDefaultAccessories = [];
   final List<OutfitAccessory> _localMyAccessories = [];
   final Map<String, _CanvasItemTransform> _itemTransforms = {};
+  final GlobalKey _trashTargetKey = GlobalKey(
+    debugLabel: 'outfit-editor-trash-target',
+  );
   Color _canvasColor = Colors.white;
+  String? _draggedProductId;
+  bool _isOverTrash = false;
 
   List<Product> get _myItems => [..._privateProducts, ...widget.myProducts];
   List<OutfitAccessory> get _defaultAccessories => [
@@ -416,6 +422,53 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
     _itemTransforms[productId] = transform;
   }
 
+  Rect? _trashTargetGlobalRect() {
+    final renderObject = _trashTargetKey.currentContext?.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+    return renderObject.localToGlobal(Offset.zero) & renderObject.size;
+  }
+
+  bool _isGlobalPointOverTrash(Offset globalFocalPoint) {
+    return _trashTargetGlobalRect()?.contains(globalFocalPoint) ?? false;
+  }
+
+  void _startItemGesture(String productId, Offset globalFocalPoint) {
+    final isOverTrash = _isGlobalPointOverTrash(globalFocalPoint);
+    setState(() {
+      _draggedProductId = productId;
+      _isOverTrash = isOverTrash;
+    });
+    if (isOverTrash) {
+      unawaited(HapticFeedback.selectionClick());
+    }
+  }
+
+  void _updateItemGesture(String productId, Offset globalFocalPoint) {
+    if (_draggedProductId != productId) return;
+    final isOverTrash = _isGlobalPointOverTrash(globalFocalPoint);
+    if (isOverTrash == _isOverTrash) return;
+    setState(() => _isOverTrash = isOverTrash);
+    if (isOverTrash) {
+      unawaited(HapticFeedback.selectionClick());
+    }
+  }
+
+  void _endItemGesture(String productId) {
+    if (_draggedProductId != productId) return;
+    final shouldDelete = _isOverTrash;
+    setState(() {
+      _draggedProductId = null;
+      _isOverTrash = false;
+      if (shouldDelete) {
+        _selectedProducts.removeWhere((product) => product.id == productId);
+        _itemTransforms.remove(productId);
+      }
+    });
+    if (shouldDelete) {
+      unawaited(HapticFeedback.mediumImpact());
+    }
+  }
+
   void _openNewOutfitPreview() {
     final previewItems = List.generate(_selectedProducts.length, (index) {
       final product = _selectedProducts[index];
@@ -459,154 +512,207 @@ class _OutfitCreateScreenState extends State<OutfitCreateScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
+    final backdrop = context.appBackdrop;
+    final usesWhiteWorkspace =
+        Theme.of(context).brightness == Brightness.light &&
+        !backdrop.hasWallpaper &&
+        backdrop.scaffoldColor.computeLuminance() > 0.92;
+    final workspaceColor = usesWhiteWorkspace
+        ? palette.surfaceMuted
+        : backdrop.scaffoldColor;
+    final isDraggingItem = _draggedProductId != null;
+
     return Scaffold(
-      backgroundColor: context.appBackdrop.scaffoldColor,
+      backgroundColor: backdrop.scaffoldColor,
       body: SafeArea(
         child: Column(
           children: [
             Expanded(
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  const horizontalPadding = 6.0;
-                  const topPadding = 8.0;
-                  const controlsHeight = 32.0;
-                  const gapBelowControls = 26.0;
-                  const bottomPadding = 4.0;
-                  final maxWidth = math.max(
-                    0.0,
-                    constraints.maxWidth - horizontalPadding * 2,
-                  );
-                  final maxHeight = math.max(
-                    0.0,
-                    constraints.maxHeight -
-                        topPadding -
-                        controlsHeight -
-                        gapBelowControls -
-                        bottomPadding,
-                  );
-                  final naturalHeight = maxWidth / _outfitMediaAspectRatio;
-                  final mediaHeight = math.min(naturalHeight, maxHeight);
-                  final fittedWidth = mediaHeight * _outfitMediaAspectRatio;
+              child: ColoredBox(
+                key: const Key('outfit-editor-workspace'),
+                color: workspaceColor,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    const horizontalPadding = 6.0;
+                    const topPadding = 8.0;
+                    const controlsHeight = 32.0;
+                    const gapBelowControls = 26.0;
+                    const bottomPadding = 4.0;
+                    final maxWidth = math.max(
+                      0.0,
+                      constraints.maxWidth - horizontalPadding * 2,
+                    );
+                    final maxHeight = math.max(
+                      0.0,
+                      constraints.maxHeight -
+                          topPadding -
+                          controlsHeight -
+                          gapBelowControls -
+                          bottomPadding,
+                    );
+                    final naturalHeight = maxWidth / _outfitMediaAspectRatio;
+                    final mediaHeight = math.min(naturalHeight, maxHeight);
+                    final fittedWidth = mediaHeight * _outfitMediaAspectRatio;
 
-                  return Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                      horizontalPadding,
-                      topPadding,
-                      horizontalPadding,
-                      0,
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: _close,
-                              child: Container(
-                                width: 32,
-                                height: 32,
-                                decoration: BoxDecoration(
-                                  color: context.appPalette.surfaceMuted,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  Icons.chevron_left,
-                                  size: 23,
-                                  color: context.appPalette.ink,
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        horizontalPadding,
+                        topPadding,
+                        horizontalPadding,
+                        0,
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: _close,
+                                child: Container(
+                                  width: 32,
+                                  height: 32,
+                                  decoration: BoxDecoration(
+                                    color: palette.surfaceRaised,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(color: palette.border),
+                                  ),
+                                  child: Icon(
+                                    Icons.chevron_left,
+                                    size: 23,
+                                    color: palette.ink,
+                                  ),
                                 ),
                               ),
-                            ),
-                            const Spacer(),
-                            GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: _openNewOutfitPreview,
-                              child: Container(
-                                constraints: const BoxConstraints(minWidth: 86),
-                                height: 32,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    'Далее',
-                                    style: TextStyle(
-                                      fontFamily: 'Montserrat',
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      height: 1,
-                                      letterSpacing: 0,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onPrimary,
+                              const Spacer(),
+                              GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onTap: _openNewOutfitPreview,
+                                child: Container(
+                                  constraints: const BoxConstraints(
+                                    minWidth: 86,
+                                  ),
+                                  height: 32,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary,
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      'Далее',
+                                      style: TextStyle(
+                                        fontFamily: 'Montserrat',
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        height: 1,
+                                        letterSpacing: 0,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onPrimary,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: gapBelowControls),
-                        Align(
-                          alignment: Alignment.topCenter,
-                          child: SizedBox(
-                            width: fittedWidth,
-                            height: mediaHeight,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: _canvasColor,
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(14),
+                            ],
+                          ),
+                          const SizedBox(height: gapBelowControls),
+                          Align(
+                            alignment: Alignment.topCenter,
+                            child: SizedBox(
+                              width: fittedWidth,
+                              height: mediaHeight,
+                              child: Container(
+                                key: const Key('outfit-editor-canvas'),
+                                clipBehavior: Clip.antiAlias,
+                                decoration: BoxDecoration(
+                                  color: _canvasColor,
+                                  borderRadius: BorderRadius.circular(14),
+                                  boxShadow: usesWhiteWorkspace
+                                      ? [
+                                          BoxShadow(
+                                            color: palette.shadow.withValues(
+                                              alpha: 0.12,
+                                            ),
+                                            blurRadius: 18,
+                                            offset: const Offset(0, 7),
+                                          ),
+                                        ]
+                                      : null,
+                                ),
+                                foregroundDecoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: palette.border),
+                                ),
                                 child: _EditorCanvasItems(
                                   products: _selectedProducts,
                                   transforms: _itemTransforms,
                                   defaultTransform: _defaultItemTransform,
                                   onTransformChanged: _rememberItemTransform,
+                                  onGestureStart: _startItemGesture,
+                                  onGestureUpdate: _updateItemGesture,
+                                  onGestureEnd: _endItemGesture,
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 21),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _EditorActionButton(
-                      icon: Icons.checkroom_outlined,
-                      label: 'Добавить одежду',
-                      onTap: _showClothesSheet,
+              child: AnimatedCrossFade(
+                duration: const Duration(milliseconds: 150),
+                reverseDuration: const Duration(milliseconds: 120),
+                firstCurve: Curves.easeOutCubic,
+                secondCurve: Curves.easeOutCubic,
+                sizeCurve: Curves.easeOutCubic,
+                crossFadeState: isDraggingItem
+                    ? CrossFadeState.showSecond
+                    : CrossFadeState.showFirst,
+                firstChild: Row(
+                  key: const Key('outfit-editor-actions'),
+                  children: [
+                    Expanded(
+                      child: _EditorActionButton(
+                        icon: Icons.checkroom_outlined,
+                        label: 'Добавить одежду',
+                        onTap: _showClothesSheet,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: _EditorActionButton(
-                      icon: Icons.diamond_outlined,
-                      label: 'Аксессуары',
-                      onTap: _showAccessoriesSheet,
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: _EditorActionButton(
+                        icon: Icons.diamond_outlined,
+                        label: 'Аксессуары',
+                        onTap: _showAccessoriesSheet,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: _EditorActionButton(
-                      icon: Icons.color_lens_outlined,
-                      label: 'Сменить фон',
-                      onTap: _showBackgroundSheet,
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: _EditorActionButton(
+                        icon: Icons.color_lens_outlined,
+                        label: 'Сменить фон',
+                        onTap: _showBackgroundSheet,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
+                secondChild: _EditorTrashTarget(
+                  targetKey: _trashTargetKey,
+                  isVisible: isDraggingItem,
+                  isActive: _isOverTrash,
+                ),
               ),
             ),
             const SizedBox(height: 14),
@@ -637,6 +743,9 @@ class _EditorCanvasItems extends StatelessWidget {
     required this.transforms,
     required this.defaultTransform,
     required this.onTransformChanged,
+    required this.onGestureStart,
+    required this.onGestureUpdate,
+    required this.onGestureEnd,
   });
 
   final List<Product> products;
@@ -644,6 +753,10 @@ class _EditorCanvasItems extends StatelessWidget {
   final _CanvasItemTransform Function(int index) defaultTransform;
   final void Function(String productId, _CanvasItemTransform transform)
   onTransformChanged;
+  final void Function(String productId, Offset globalFocalPoint) onGestureStart;
+  final void Function(String productId, Offset globalFocalPoint)
+  onGestureUpdate;
+  final ValueChanged<String> onGestureEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -672,6 +785,11 @@ class _EditorCanvasItems extends StatelessWidget {
                 initialTransform: transform,
                 onTransformChanged: (nextTransform) =>
                     onTransformChanged(product.id, nextTransform),
+                onGestureStart: (globalFocalPoint) =>
+                    onGestureStart(product.id, globalFocalPoint),
+                onGestureUpdate: (globalFocalPoint) =>
+                    onGestureUpdate(product.id, globalFocalPoint),
+                onGestureEnd: () => onGestureEnd(product.id),
               ),
             );
           }),
@@ -690,6 +808,9 @@ class _TransformableCanvasItem extends StatefulWidget {
     required this.canvasSize,
     required this.initialTransform,
     required this.onTransformChanged,
+    required this.onGestureStart,
+    required this.onGestureUpdate,
+    required this.onGestureEnd,
   });
 
   final Product product;
@@ -698,6 +819,9 @@ class _TransformableCanvasItem extends StatefulWidget {
   final Size canvasSize;
   final _CanvasItemTransform initialTransform;
   final ValueChanged<_CanvasItemTransform> onTransformChanged;
+  final ValueChanged<Offset> onGestureStart;
+  final ValueChanged<Offset> onGestureUpdate;
+  final VoidCallback onGestureEnd;
 
   @override
   State<_TransformableCanvasItem> createState() =>
@@ -744,6 +868,7 @@ class _TransformableCanvasItemState extends State<_TransformableCanvasItem> {
   void _onScaleStart(ScaleStartDetails details) {
     _startScale = _scale;
     _startRotation = _rotation;
+    widget.onGestureStart(details.focalPoint);
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
@@ -764,6 +889,11 @@ class _TransformableCanvasItemState extends State<_TransformableCanvasItem> {
         rotation: _rotation,
       ),
     );
+    widget.onGestureUpdate(details.focalPoint);
+  }
+
+  void _onScaleEnd(ScaleEndDetails details) {
+    widget.onGestureEnd();
   }
 
   @override
@@ -775,18 +905,26 @@ class _TransformableCanvasItemState extends State<_TransformableCanvasItem> {
           angle: _rotation,
           child: Transform.scale(
             scale: _scale,
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onScaleStart: _onScaleStart,
-              onScaleUpdate: _onScaleUpdate,
-              child: SizedBox(
-                width: widget.width,
-                height: widget.height,
-                child: AppImage(
-                  imageUrl: widget.product.outfitDisplayImage,
-                  fit: BoxFit.contain,
-                  alignment: Alignment.center,
-                  placeholderColor: Colors.transparent,
+            child: Semantics(
+              key: Key('outfit-canvas-item-${widget.product.id}'),
+              container: true,
+              label: '${widget.product.title}, вещь на холсте',
+              hint: 'Перетащите, чтобы переместить или удалить',
+              excludeSemantics: true,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onScaleStart: _onScaleStart,
+                onScaleUpdate: _onScaleUpdate,
+                onScaleEnd: _onScaleEnd,
+                child: SizedBox(
+                  width: widget.width,
+                  height: widget.height,
+                  child: AppImage(
+                    imageUrl: widget.product.outfitDisplayImage,
+                    fit: BoxFit.contain,
+                    alignment: Alignment.center,
+                    placeholderColor: Colors.transparent,
+                  ),
                 ),
               ),
             ),
@@ -1935,6 +2073,98 @@ class _SheetTab extends StatelessWidget {
                 letterSpacing: 0,
                 color: isActive ? scheme.onPrimary : context.appPalette.ink,
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EditorTrashTarget extends StatelessWidget {
+  const _EditorTrashTarget({
+    required this.targetKey,
+    required this.isVisible,
+    required this.isActive,
+  });
+
+  final Key targetKey;
+  final bool isVisible;
+  final bool isActive;
+
+  @override
+  Widget build(BuildContext context) {
+    const danger = Color(0xFFFF453A);
+    final palette = context.appPalette;
+    final label = isActive
+        ? 'Отпустите, чтобы удалить вещь'
+        : 'Перетащите сюда, чтобы удалить вещь';
+    final foreground = isActive ? Colors.white : danger;
+    final background = isActive
+        ? danger
+        : Color.alphaBlend(
+            danger.withValues(alpha: 0.11),
+            palette.surfaceRaised,
+          );
+
+    return ExcludeSemantics(
+      excluding: !isVisible,
+      child: Semantics(
+        key: targetKey,
+        container: true,
+        liveRegion: true,
+        label: isVisible ? label : null,
+        excludeSemantics: true,
+        child: IgnorePointer(
+          child: AnimatedContainer(
+            key: const Key('outfit-editor-trash'),
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOutCubic,
+            height: 52,
+            decoration: BoxDecoration(
+              color: background,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: isActive ? Colors.white.withValues(alpha: 0.52) : danger,
+                width: isActive ? 1.5 : 1,
+              ),
+              boxShadow: isActive
+                  ? [
+                      BoxShadow(
+                        color: danger.withValues(alpha: 0.3),
+                        blurRadius: 18,
+                        offset: const Offset(0, 7),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  isActive
+                      ? Icons.delete_forever_rounded
+                      : Icons.delete_outline_rounded,
+                  size: 22,
+                  color: foreground,
+                ),
+                const SizedBox(width: 9),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                      letterSpacing: 0,
+                      color: foreground,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),

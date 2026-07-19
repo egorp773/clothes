@@ -8,6 +8,7 @@ import '../models/created_outfit.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
+import '../widgets/app_glass_surface.dart';
 import 'edit_profile_screen.dart';
 import 'profile_feature_screens.dart';
 import 'reviews_screen.dart';
@@ -123,6 +124,11 @@ class ProfileScreen extends StatelessWidget {
           order.status != AppOrderStatus.canceled;
     }).toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     final topInset = MediaQuery.of(context).viewPadding.top;
+    final profileOverview = _ProfileOverviewCard(
+      profile: profile,
+      onEditTap: () => _openEditProfile(context),
+      onReviewsTap: () => _openReviews(context),
+    );
 
     return Scaffold(
       backgroundColor: context.appBackdrop.scaffoldColor,
@@ -140,11 +146,17 @@ class ProfileScreen extends StatelessWidget {
               onSettingsTap: () => _openSettings(context),
             ),
             const SizedBox(height: 16),
-            _ProfileOverviewCard(
-              profile: profile,
-              onEditTap: () => _openEditProfile(context),
-              onReviewsTap: () => _openReviews(context),
-            ),
+            if (context.appGlass.enabled)
+              AppGlassSurface(
+                key: const Key('profile-glass-overview'),
+                role: AppGlassRole.card,
+                borderRadius: BorderRadius.circular(22),
+                padding: const EdgeInsets.all(16),
+                interactiveGlint: false,
+                child: profileOverview,
+              )
+            else
+              profileOverview,
             if (activeOrders.isNotEmpty)
               _ActiveOrdersOverview(
                 orders: activeOrders,
@@ -545,33 +557,38 @@ class _ProfileActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(999),
-        child: SizedBox(
-          width: 36,
-          height: 36,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              Icon(icon, size: 20, color: palette.ink),
-              if (hasIndicator)
-                Positioned(
-                  top: 9,
-                  right: 9,
-                  child: Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFF4D46),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: palette.page, width: 1.5),
+    return AppGlassSurface(
+      role: AppGlassRole.compactButton,
+      borderRadius: BorderRadius.circular(999),
+      padding: EdgeInsets.zero,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(999),
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(icon, size: 20, color: palette.ink),
+                if (hasIndicator)
+                  Positioned(
+                    top: 9,
+                    right: 9,
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFF4D46),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: palette.page, width: 1.5),
+                      ),
                     ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -598,7 +615,9 @@ class _ProfileOverviewCard extends StatelessWidget {
         : profile.name.trim();
     final handle = _normalizedHandle(profile.handle);
     final city = profile.city.trim();
-    final rating = profile.rating.toStringAsFixed(1).replaceAll('.', ',');
+    final rating = profile.rating > 0
+        ? profile.rating.toStringAsFixed(1).replaceAll('.', ',')
+        : '—';
 
     return Padding(
       padding: const EdgeInsets.only(top: 2),

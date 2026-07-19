@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../core/app_appearance.dart';
 import '../../../core/app_typography.dart';
+import '../../../widgets/app_glass_surface.dart';
 
 /// Header shared by the steps of the listing publication flow.
 ///
@@ -138,14 +139,19 @@ class _HeaderAction extends StatelessWidget {
   Widget build(BuildContext context) {
     if (onPressed == null) return const SizedBox(width: 40, height: 40);
 
-    return SizedBox(
-      width: 40,
-      height: 40,
-      child: IconButton(
-        tooltip: tooltip,
-        padding: EdgeInsets.zero,
-        onPressed: onPressed,
-        icon: Icon(icon, size: 20, color: context.appPalette.ink),
+    return AppGlassSurface(
+      role: AppGlassRole.compactButton,
+      borderRadius: BorderRadius.circular(999),
+      padding: EdgeInsets.zero,
+      child: SizedBox(
+        width: 40,
+        height: 40,
+        child: IconButton(
+          tooltip: tooltip,
+          padding: EdgeInsets.zero,
+          onPressed: onPressed,
+          icon: Icon(icon, size: 20, color: context.appPalette.ink),
+        ),
       ),
     );
   }
@@ -173,56 +179,67 @@ class ListingPrimaryBottomButton extends StatelessWidget {
     final isEnabled = onPressed != null && !isLoading;
     final palette = context.appPalette;
 
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: palette.surface,
-        border: showTopDivider
-            ? Border(top: BorderSide(color: palette.border))
-            : null,
-      ),
-      child: SafeArea(
-        top: false,
-        minimum: padding,
-        child: Semantics(
-          button: true,
-          enabled: isEnabled,
-          label: label,
-          child: SizedBox(
-            width: double.infinity,
-            height: 50,
-            child: Material(
-              color: isEnabled ? palette.ink : palette.surfaceMuted,
-              borderRadius: BorderRadius.circular(25),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                splashColor: Colors.transparent,
-                highlightColor: Colors.transparent,
-                hoverColor: Colors.transparent,
-                focusColor: Colors.transparent,
-                onTap: isEnabled ? onPressed : null,
-                child: Center(
-                  child: isLoading
-                      ? SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: palette.ink,
+    return AppGlassSurface(
+      key: const Key('listing-glass-bottom-action'),
+      role: AppGlassRole.toolbar,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+      padding: EdgeInsets.zero,
+      interactiveGlint: false,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: context.appGlass.enabled
+              ? Colors.transparent
+              : palette.surface,
+          border: !context.appGlass.enabled && showTopDivider
+              ? Border(top: BorderSide(color: palette.border))
+              : null,
+        ),
+        child: SafeArea(
+          top: false,
+          minimum: padding,
+          child: Semantics(
+            button: true,
+            enabled: isEnabled,
+            label: label,
+            child: SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: Material(
+                color: isEnabled ? palette.ink : palette.surfaceMuted,
+                borderRadius: BorderRadius.circular(25),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(
+                  splashColor: Colors.transparent,
+                  highlightColor: Colors.transparent,
+                  hoverColor: Colors.transparent,
+                  focusColor: Colors.transparent,
+                  onTap: isEnabled ? onPressed : null,
+                  child: Center(
+                    child: isLoading
+                        ? SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: palette.ink,
+                            ),
+                          )
+                        : Text(
+                            label,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontFamily: AppTypography.fontFamily,
+                              fontSize: 14,
+                              fontWeight: AppTypography.semiBold,
+                              color: isEnabled
+                                  ? palette.surface
+                                  : palette.muted,
+                              height: 1,
+                              letterSpacing: 0,
+                            ),
                           ),
-                        )
-                      : Text(
-                          label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontFamily: AppTypography.fontFamily,
-                            fontSize: 14,
-                            fontWeight: AppTypography.semiBold,
-                            color: isEnabled ? palette.surface : palette.muted,
-                            height: 1,
-                            letterSpacing: 0,
-                          ),
-                        ),
+                  ),
                 ),
               ),
             ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,131 @@ import 'package:flutter/material.dart';
 
 import '../core/app_appearance.dart';
 import 'app_glass_surface.dart';
+
+/// Collapses the shared bottom navigation after deliberate downward scrolling.
+///
+/// This observer is intentionally independent of a particular scroll
+/// controller, so it also works for empty states, search results and nested
+/// vertical lists used by the other root tabs.
+class NavigationCompactOnScroll extends StatefulWidget {
+  const NavigationCompactOnScroll({
+    super.key,
+    required this.controller,
+    required this.child,
+  });
+
+  final ValueNotifier<bool> controller;
+  final Widget child;
+
+  @override
+  State<NavigationCompactOnScroll> createState() =>
+      _NavigationCompactOnScrollState();
+}
+
+class _NavigationCompactOnScrollState extends State<NavigationCompactOnScroll> {
+  Timer? _idleTimer;
+  double _downwardTravel = 0;
+  double _upwardTravel = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_handleControllerChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant NavigationCompactOnScroll oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller == widget.controller) return;
+    oldWidget.controller.removeListener(_handleControllerChanged);
+    widget.controller.addListener(_handleControllerChanged);
+    _resetTravel();
+  }
+
+  void _handleControllerChanged() {
+    if (!widget.controller.value) {
+      _idleTimer?.cancel();
+      _resetTravel();
+    }
+  }
+
+  void _resetTravel() {
+    _downwardTravel = 0;
+    _upwardTravel = 0;
+  }
+
+  void _setCompact(bool value) {
+    if (widget.controller.value == value) return;
+    widget.controller.value = value;
+  }
+
+  void _handleScrollUpdate(ScrollUpdateNotification notification) {
+    final offset = notification.metrics.pixels
+        .clamp(0.0, double.infinity)
+        .toDouble();
+    final delta = notification.scrollDelta ?? 0;
+
+    if (offset < 28) {
+      _resetTravel();
+      _setCompact(false);
+      return;
+    }
+    if (delta > 1.2) {
+      _upwardTravel = 0;
+      _downwardTravel += delta;
+      if (offset > 72 && _downwardTravel >= 42) {
+        _downwardTravel = 0;
+        _setCompact(true);
+      }
+      return;
+    }
+    if (delta < -1.2) {
+      _downwardTravel = 0;
+      _upwardTravel += -delta;
+      if (_upwardTravel >= 24) {
+        _upwardTravel = 0;
+        _setCompact(false);
+      }
+    }
+  }
+
+  void _scheduleIdleExpand() {
+    _idleTimer?.cancel();
+    if (!widget.controller.value) return;
+    _idleTimer = Timer(const Duration(milliseconds: 720), () {
+      if (!mounted) return;
+      _resetTravel();
+      _setCompact(false);
+    });
+  }
+
+  bool _handleNotification(ScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical) return false;
+    if (notification is ScrollStartNotification) {
+      _idleTimer?.cancel();
+    } else if (notification is ScrollUpdateNotification) {
+      _handleScrollUpdate(notification);
+    } else if (notification is ScrollEndNotification) {
+      _scheduleIdleExpand();
+    }
+    return false;
+  }
+
+  @override
+  void dispose() {
+    _idleTimer?.cancel();
+    widget.controller.removeListener(_handleControllerChanged);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationListener<ScrollNotification>(
+      onNotification: _handleNotification,
+      child: widget.child,
+    );
+  }
+}
 
 /// The app's floating navigation capsule.
 ///
@@ -19,12 +145,14 @@ class AppBottomNav extends StatefulWidget {
     required this.onTabSelected,
     required this.onCreateTap,
     this.compactListenable,
+    this.unreadCount = 0,
   });
 
   final int currentIndex;
   final ValueChanged<int> onTabSelected;
   final VoidCallback onCreateTap;
   final ValueListenable<bool>? compactListenable;
+  final int unreadCount;
 
   @override
   State<AppBottomNav> createState() => _AppBottomNavState();
@@ -130,6 +258,7 @@ class _AppBottomNavState extends State<AppBottomNav>
                           currentIndex: widget.currentIndex,
                           onTabSelected: widget.onTabSelected,
                           onCreateTap: widget.onCreateTap,
+                          unreadCount: widget.unreadCount,
                         ),
                       ),
                     ),
@@ -150,12 +279,14 @@ class _NavigationMaterial extends StatefulWidget {
     required this.currentIndex,
     required this.onTabSelected,
     required this.onCreateTap,
+    required this.unreadCount,
   });
 
   final double progress;
   final int currentIndex;
   final ValueChanged<int> onTabSelected;
   final VoidCallback onCreateTap;
+  final int unreadCount;
 
   @override
   State<_NavigationMaterial> createState() => _NavigationMaterialState();
@@ -205,17 +336,24 @@ class _NavigationMaterialState extends State<_NavigationMaterial>
     if (oldWidget.currentIndex != widget.currentIndex &&
         _activePointer == null) {
       _setVisualIndex(_safeIndex(widget.currentIndex));
+      final target = _centerForIndex(_safeIndex(widget.currentIndex));
+      if (_settleController.isAnimating &&
+          (_settleTarget - target).abs() < 0.001) {
+        return;
+      }
       _settleToIndex(widget.currentIndex);
     }
   }
 
   void _tickSettleAnimation() {
     final raw = _settleController.value;
-    final travel = Curves.easeOutBack.transform(raw);
+    // Position must never overshoot an edge item. The liquid deformation still
+    // carries momentum, but the lens center stops exactly on the selected tab.
+    final travel = Curves.easeOutCubic.transform(raw);
     final decay = Curves.easeOutCubic.transform(raw);
     final distance = _settleTarget - _settleBegin.position;
     final travelPeak = 4 * raw * (1 - raw);
-    final travelStretch = (distance.abs() * 1.45 * travelPeak).clamp(0.0, 0.7);
+    final travelStretch = (distance.abs() * 0.75 * travelPeak).clamp(0.0, 0.34);
     _lens.value = _NavLensVisual(
       position: lerpDouble(
         _settleBegin.position,
@@ -267,7 +405,7 @@ class _NavigationMaterialState extends State<_NavigationMaterial>
     _settleTarget = target;
     final travel = (target - _settleBegin.position).abs();
     _settleController.duration = Duration(
-      milliseconds: (215 + travel * 210).round().clamp(220, 360),
+      milliseconds: (190 + travel * 135).round().clamp(200, 300),
     );
     _settleController.forward(from: 0);
   }
@@ -308,9 +446,13 @@ class _NavigationMaterialState extends State<_NavigationMaterial>
         : event.delta.dx.abs() > 0.01
         ? event.delta.dx.sign
         : _lens.value.direction;
+    final itemPhase = fraction * _itemCount - 0.5;
+    final distanceBetweenCenters = (itemPhase - itemPhase.round()).abs();
+    final betweenItems = (distanceBetweenCenters * 2).clamp(0.0, 1.0);
+    final velocityStretch = (_filteredVelocity.abs() / 1250).clamp(0.0, 1.0);
     final stretch = _reduceMotion
         ? 0.0
-        : (_filteredVelocity.abs() / 1550).clamp(0.0, 1.0);
+        : (0.12 + velocityStretch * 0.72 + betweenItems * 0.48).clamp(0.0, 1.0);
     _lens.value = _NavLensVisual(
       position: fraction,
       stretch: stretch,
@@ -481,6 +623,7 @@ class _NavigationMaterialState extends State<_NavigationMaterial>
                   icon: _NavIconKind.chat,
                   label: 'Чаты',
                   progress: widget.progress,
+                  badgeCount: widget.unreadCount,
                   onTap: _handleItemTap,
                 ),
                 _NavItem(
@@ -552,29 +695,53 @@ class _NavLensPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
     final visual = lens.value;
-    final baseWidth = lerpDouble(43, 40, progress)!;
-    final baseHeight = lerpDouble(34, 38, progress)!;
-    final width = baseWidth + visual.pressure * 3 + visual.stretch * 19;
-    final height = baseHeight + visual.pressure * 2 - visual.stretch * 2.5;
+    final baseWidth = lerpDouble(45, 42, progress)!;
+    final baseHeight = lerpDouble(35, 39, progress)!;
+    final width = baseWidth + visual.pressure * 6 + visual.stretch * 25;
+    final height = baseHeight + visual.pressure * 4 - visual.stretch * 3;
     final center = Offset(
-      size.width * visual.position + visual.direction * visual.stretch * 2.5,
+      size.width * visual.position + visual.direction * visual.stretch * 3,
       lerpDouble(size.height / 2 - 5, size.height / 2, progress)!,
     );
     final rect = Rect.fromCenter(center: center, width: width, height: height);
     final shape = RRect.fromRectAndRadius(rect, Radius.circular(height * 0.52));
 
+    if (visual.stretch > 0.04) {
+      final trailWidth = width * (0.28 + visual.stretch * 0.16);
+      final trailHeight = height * (0.5 + visual.pressure * 0.08);
+      final trailCenter = center.translate(
+        -visual.direction * width * (0.3 + visual.stretch * 0.08),
+        0.6,
+      );
+      final trailRect = Rect.fromCenter(
+        center: trailCenter,
+        width: trailWidth,
+        height: trailHeight,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(trailRect, Radius.circular(trailHeight * 0.52)),
+        Paint()
+          ..isAntiAlias = true
+          ..color = palette.accentSoft.withValues(
+            alpha:
+                (glassEnabled ? 0.1 : 0.065) * visual.stretch * visual.pressure,
+          )
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.5),
+      );
+    }
+
     final haloAlpha =
         (glassEnabled ? 0.14 : 0.09) +
-        visual.pressure * 0.05 +
-        visual.stretch * 0.035;
+        visual.pressure * 0.07 +
+        visual.stretch * 0.05;
     canvas.drawRRect(
-      shape.inflate(1.3 + visual.pressure),
+      shape.inflate(1.8 + visual.pressure * 1.8),
       Paint()
         ..isAntiAlias = true
         ..color = palette.accentSoft.withValues(alpha: haloAlpha)
         ..maskFilter = MaskFilter.blur(
           BlurStyle.normal,
-          5 + visual.pressure * 2,
+          6 + visual.pressure * 3,
         ),
     );
 
@@ -657,6 +824,7 @@ class _NavItem extends StatelessWidget {
     required this.progress,
     required this.onTap,
     this.emphasize = false,
+    this.badgeCount = 0,
   });
 
   final int index;
@@ -666,6 +834,7 @@ class _NavItem extends StatelessWidget {
   final String label;
   final double progress;
   final bool emphasize;
+  final int badgeCount;
   final ValueChanged<int> onTap;
 
   @override
@@ -678,15 +847,21 @@ class _NavItem extends StatelessWidget {
     final iconOffset = lerpDouble(-5, 0, progress)!;
     final indicatorWidth = lerpDouble(emphasize ? 40 : 38, 36, progress)!;
     final indicatorHeight = lerpDouble(33, 36, progress)!;
+    final normalizedBadgeCount = badgeCount < 0 ? 0 : badgeCount;
+    final semanticLabel = normalizedBadgeCount > 0
+        ? '$label, $normalizedBadgeCount непрочитанных'
+        : label;
 
     return Expanded(
       child: Semantics(
         button: true,
         selected: isActive,
-        label: label,
+        label: semanticLabel,
+        excludeSemantics: true,
+        onTap: () => onTap(index),
         child: AppGlassPressable(
           onTap: () => onTap(index),
-          pressedScale: 0.92,
+          pressedScale: 0.96,
           child: SizedBox.expand(
             key: Key('bottom-nav-item-$index'),
             child: Stack(
@@ -702,24 +877,40 @@ class _NavItem extends StatelessWidget {
                         ? Duration.zero
                         : const Duration(milliseconds: 180),
                     curve: Curves.easeOutBack,
-                    child: Container(
-                      key: Key('bottom-nav-indicator-$index'),
-                      width: indicatorWidth,
-                      height: indicatorHeight,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: Colors.transparent,
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: Colors.transparent,
-                          width: 0.6,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
+                          key: Key('bottom-nav-indicator-$index'),
+                          width: indicatorWidth,
+                          height: indicatorHeight,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: Colors.transparent,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(
+                              color: Colors.transparent,
+                              width: 0.6,
+                            ),
+                          ),
+                          child: _NavIcon(
+                            kind: icon,
+                            isActive: isVisuallyActive,
+                            emphasize: emphasize,
+                          ),
                         ),
-                      ),
-                      child: _NavIcon(
-                        kind: icon,
-                        isActive: isVisuallyActive,
-                        emphasize: emphasize,
-                      ),
+                        if (normalizedBadgeCount > 0)
+                          Positioned(
+                            top: -4,
+                            right: -7,
+                            child: ExcludeSemantics(
+                              child: _NavUnreadBadge(
+                                index: index,
+                                count: normalizedBadgeCount,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -746,6 +937,44 @@ class _NavItem extends StatelessWidget {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavUnreadBadge extends StatelessWidget {
+  const _NavUnreadBadge({required this.index, required this.count});
+
+  final int index;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final label = count > 99 ? '99+' : count.toString();
+    return Container(
+      key: Key('bottom-nav-unread-badge-$index'),
+      height: 17,
+      constraints: const BoxConstraints(minWidth: 17),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: colorScheme.error,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: colorScheme.surface, width: 1.2),
+      ),
+      child: Text(
+        label,
+        key: Key('bottom-nav-unread-count-$index'),
+        maxLines: 1,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: colorScheme.onError,
+          fontSize: 9.5,
+          height: 1,
+          fontWeight: FontWeight.w700,
+          fontFeatures: const [FontFeature.tabularFigures()],
         ),
       ),
     );

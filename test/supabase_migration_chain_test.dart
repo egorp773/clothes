@@ -98,6 +98,21 @@ void main() {
     expect(migration, contains('buyer_id <> seller_id'));
   });
 
+  test('seller rating is a server-owned review aggregate', () {
+    final migration = File(
+      'supabase/migrations/20260719190000_profile_review_rating.sql',
+    ).readAsStringSync();
+
+    expect(migration, contains('alter column rating set default 0'));
+    expect(migration, contains('review_count integer not null default 0'));
+    expect(migration, contains('coalesce(avg(review.rating), 0)'));
+    expect(
+      migration,
+      contains('after insert or update of seller_id, rating or delete'),
+    );
+    expect(migration, contains('security definer'));
+  });
+
   test('checkout migration normalizes legacy UUID order ids', () {
     final migration = File(
       'supabase/migrations/'

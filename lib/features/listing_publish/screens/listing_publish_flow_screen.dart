@@ -162,10 +162,7 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
               ),
             ),
             Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                child: KeyedSubtree(key: ValueKey(step), child: _bodyFor(step)),
-              ),
+              child: KeyedSubtree(key: ValueKey(step), child: _bodyFor(step)),
             ),
             ListingPrimaryBottomButton(
               label: step == ListingPublishStep.preview

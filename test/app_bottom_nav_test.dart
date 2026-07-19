@@ -331,6 +331,137 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('long tab jumps never move the liquid lens past the target', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final compact = ValueNotifier<bool>(false);
+    final current = ValueNotifier<int>(0);
+    addTearDown(compact.dispose);
+    addTearDown(current.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildAppTheme(
+          Brightness.light,
+          settings: const AppAppearanceSettings(liquidGlassEnabled: true),
+        ),
+        home: BackdropGroup(
+          child: Scaffold(
+            bottomNavigationBar: ValueListenableBuilder<int>(
+              valueListenable: current,
+              builder: (context, index, _) => AppBottomNav(
+                currentIndex: index,
+                compactListenable: compact,
+                onTabSelected: (_) {},
+                onCreateTap: () {},
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    current.value = 4;
+    await tester.pump();
+    for (var frame = 0; frame < 24; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      final dynamic painter = tester
+          .widget<CustomPaint>(find.byKey(const Key('bottom-nav-liquid-lens')))
+          .painter;
+      final double position = painter.lens.value.position as double;
+      expect(position, inInclusiveRange(0.1, 0.900001));
+    }
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('slow drag produces a broad liquid bridge between tabs', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final compact = ValueNotifier<bool>(false);
+    addTearDown(compact.dispose);
+
+    await _pumpNavigation(
+      tester,
+      compact: compact,
+      appearance: const AppAppearanceSettings(liquidGlassEnabled: true),
+    );
+
+    final first = tester.getCenter(find.byKey(const Key('bottom-nav-item-0')));
+    final second = tester.getCenter(find.byKey(const Key('bottom-nav-item-1')));
+    final gesture = await tester.startGesture(first);
+    await tester.pump(const Duration(milliseconds: 240));
+    await gesture.moveTo(Offset((first.dx + second.dx) / 2, first.dy));
+    await tester.pump();
+
+    final dynamic painter = tester
+        .widget<CustomPaint>(find.byKey(const Key('bottom-nav-liquid-lens')))
+        .painter;
+    final double stretch = painter.lens.value.stretch as double;
+    expect(stretch, greaterThan(0.45));
+
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('shared vertical scroll observer compacts and idly expands', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final compact = ValueNotifier<bool>(false);
+    addTearDown(compact.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NavigationCompactOnScroll(
+          controller: compact,
+          child: ListView.builder(
+            physics: const BouncingScrollPhysics(),
+            itemExtent: 80,
+            itemCount: 30,
+            itemBuilder: (_, index) => Text('Item $index'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.drag(find.byType(ListView), const Offset(0, -150));
+    await tester.pump();
+    expect(compact.value, isTrue);
+
+    await tester.pump(const Duration(milliseconds: 721));
+    expect(compact.value, isFalse);
+  });
+
+  testWidgets('shared scroll observer ignores horizontal carousels', (
+    tester,
+  ) async {
+    final compact = ValueNotifier<bool>(false);
+    addTearDown(compact.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NavigationCompactOnScroll(
+          controller: compact,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemExtent: 160,
+            itemCount: 20,
+            itemBuilder: (_, index) => Text('Item $index'),
+          ),
+        ),
+      ),
+    );
+
+    await tester.drag(find.byType(ListView), const Offset(-180, 0));
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(compact.value, isFalse);
+  });
+
   testWidgets('catalog scroll hysteresis prevents compact-state jitter', (
     tester,
   ) async {
@@ -485,6 +616,83 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('chat unread badge is hidden at zero and exposes semantics', (
+    tester,
+  ) async {
+    _setViewport(tester, const Size(390, 844));
+    final compact = ValueNotifier<bool>(false);
+    addTearDown(compact.dispose);
+    final semantics = tester.ensureSemantics();
+
+    await _pumpNavigation(
+      tester,
+      compact: compact,
+      appearance: const AppAppearanceSettings(liquidGlassEnabled: true),
+    );
+
+    expect(find.byKey(const Key('bottom-nav-unread-badge-3')), findsNothing);
+    expect(find.bySemanticsLabel('Чаты'), findsOneWidget);
+
+    await _pumpNavigation(
+      tester,
+      compact: compact,
+      appearance: const AppAppearanceSettings(liquidGlassEnabled: true),
+      unreadCount: 7,
+    );
+
+    expect(find.byKey(const Key('bottom-nav-unread-badge-3')), findsOneWidget);
+    expect(find.byKey(const Key('bottom-nav-unread-count-3')), findsOneWidget);
+    expect(find.text('7'), findsOneWidget);
+    expect(find.bySemanticsLabel('Чаты, 7 непрочитанных'), findsOneWidget);
+    semantics.dispose();
+  });
+
+  testWidgets(
+    'chat unread badge caps at 99+ and remains visible when compact',
+    (tester) async {
+      _setViewport(tester, const Size(390, 844));
+      final compact = ValueNotifier<bool>(true);
+      addTearDown(compact.dispose);
+      final semantics = tester.ensureSemantics();
+
+      await _pumpNavigation(
+        tester,
+        compact: compact,
+        appearance: const AppAppearanceSettings(liquidGlassEnabled: true),
+        unreadCount: 145,
+        brightness: Brightness.dark,
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+
+      final badge = find.byKey(const Key('bottom-nav-unread-badge-3'));
+      expect(badge, findsOneWidget);
+      expect(find.text('99+'), findsOneWidget);
+      expect(find.bySemanticsLabel('Чаты, 145 непрочитанных'), findsOneWidget);
+
+      final badgeRect = tester.getRect(badge);
+      final itemRect = tester.getRect(
+        find.byKey(const Key('bottom-nav-item-3')),
+      );
+      final panelRect = tester.getRect(
+        find.byKey(const Key('app-bottom-nav-panel')),
+      );
+      expect(itemRect.overlaps(badgeRect), isTrue);
+      expect(panelRect.contains(badgeRect.topLeft), isTrue);
+      expect(panelRect.contains(badgeRect.bottomRight), isTrue);
+
+      final badgeWidget = tester.widget<Container>(badge);
+      final decoration = badgeWidget.decoration! as BoxDecoration;
+      final context = tester.element(badge);
+      expect(decoration.color, Theme.of(context).colorScheme.error);
+      final count = tester.widget<Text>(
+        find.byKey(const Key('bottom-nav-unread-count-3')),
+      );
+      expect(count.style?.color, Theme.of(context).colorScheme.onError);
+      semantics.dispose();
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 void _setViewport(WidgetTester tester, Size size) {
@@ -501,10 +709,12 @@ Future<void> _pumpNavigation(
   ValueChanged<int>? onTabSelected,
   VoidCallback? onCreateTap,
   bool disableAnimations = false,
+  int unreadCount = 0,
+  Brightness brightness = Brightness.light,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
-      theme: buildAppTheme(Brightness.light, settings: appearance),
+      theme: buildAppTheme(brightness, settings: appearance),
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(
           context,
@@ -518,6 +728,7 @@ Future<void> _pumpNavigation(
             compactListenable: compact,
             onTabSelected: onTabSelected ?? (_) {},
             onCreateTap: onCreateTap ?? () {},
+            unreadCount: unreadCount,
           ),
         ),
       ),

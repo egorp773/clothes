@@ -13,6 +13,7 @@ import '../models/product.dart';
 import '../models/profile_feature.dart';
 import '../services/image_download_service.dart';
 import '../widgets/app_image.dart';
+import '../widgets/app_glass_surface.dart';
 import 'product_screen.dart';
 
 const _outfitMediaBackground = Color(0xFFF4F4F4);
@@ -769,64 +770,73 @@ class _EmptyOutfitsState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 40, 24, 36),
-      decoration: BoxDecoration(
-        color: context.appPalette.surfaceRaised,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        children: [
-          const Icon(Icons.checkroom_outlined, size: 38),
-          const SizedBox(height: 16),
-          Text(
-            'Пока нет опубликованных образов',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontFamily: AppTypography.fontFamily,
-              fontSize: 17,
-              height: 1.25,
-              fontWeight: AppTypography.bold,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Соберите первый образ из вещей каталога — он появится здесь после публикации.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontFamily: AppTypography.fontFamily,
-              fontSize: 13,
-              height: 1.4,
-              fontWeight: AppTypography.medium,
-              color: context.appPalette.muted,
-            ),
-          ),
-          const SizedBox(height: 22),
-          SizedBox(
-            height: 46,
-            child: ElevatedButton(
-              onPressed: onCreateTap,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Theme.of(context).colorScheme.primary,
-                foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                elevation: 0,
-                padding: const EdgeInsets.symmetric(horizontal: 22),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'СОЗДАТЬ ОБРАЗ',
-                style: TextStyle(
-                  fontFamily: AppTypography.fontFamily,
-                  fontSize: 13,
-                  fontWeight: AppTypography.semiBold,
-                ),
+    return AppGlassSurface(
+      key: const Key('outfits-glass-empty-state'),
+      role: AppGlassRole.card,
+      borderRadius: BorderRadius.circular(20),
+      padding: EdgeInsets.zero,
+      interactiveGlint: false,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(24, 40, 24, 36),
+        decoration: BoxDecoration(
+          color: context.appGlass.enabled
+              ? Colors.transparent
+              : context.appPalette.surfaceRaised,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          children: [
+            const Icon(Icons.checkroom_outlined, size: 38),
+            const SizedBox(height: 16),
+            Text(
+              'Пока нет опубликованных образов',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 17,
+                height: 1.25,
+                fontWeight: AppTypography.bold,
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 8),
+            Text(
+              'Соберите первый образ из вещей каталога — он появится здесь после публикации.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: AppTypography.fontFamily,
+                fontSize: 13,
+                height: 1.4,
+                fontWeight: AppTypography.medium,
+                color: context.appPalette.muted,
+              ),
+            ),
+            const SizedBox(height: 22),
+            SizedBox(
+              height: 46,
+              child: ElevatedButton(
+                onPressed: onCreateTap,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(horizontal: 22),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text(
+                  'СОЗДАТЬ ОБРАЗ',
+                  style: TextStyle(
+                    fontFamily: AppTypography.fontFamily,
+                    fontSize: 13,
+                    fontWeight: AppTypography.semiBold,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -858,16 +868,22 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
-          GestureDetector(
-            onTap: onCreateTap,
-            behavior: HitTestBehavior.opaque,
-            child: SizedBox(
-              width: 44,
-              height: 44,
-              child: Icon(
-                Icons.add_circle_outline,
-                size: 24,
-                color: context.appPalette.ink,
+          AppGlassSurface(
+            key: const Key('outfits-glass-create-button'),
+            role: AppGlassRole.compactButton,
+            borderRadius: BorderRadius.circular(999),
+            padding: EdgeInsets.zero,
+            child: AppGlassPressable(
+              onTap: onCreateTap,
+              pressedScale: 0.95,
+              child: SizedBox(
+                width: 44,
+                height: 44,
+                child: Icon(
+                  Icons.add_circle_outline,
+                  size: 24,
+                  color: context.appPalette.ink,
+                ),
               ),
             ),
           ),

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -601,9 +602,9 @@ class AppGlassStyle extends ThemeExtension<AppGlassStyle> {
         shadowSpread: -8,
         shadowOffset: const Offset(0, 12),
         radius: 29,
-        duration: const Duration(milliseconds: 280),
-        glintOpacity: isDark ? 0.11 : 0.13,
-        glintRadius: 0.72,
+        duration: const Duration(milliseconds: 210),
+        glintOpacity: isDark ? 0.14 : 0.16,
+        glintRadius: 0.86,
       ),
       toolbar: material(
         blur: 15,
@@ -867,6 +868,42 @@ extension AppBackdropContext on BuildContext {
       );
 }
 
+/// Presents regular application pages without a push/pop animation while
+/// retaining Cupertino's interactive edge-swipe detector.
+///
+/// Product details use their own [PageRoute] and intentionally keep their
+/// card entrance animation. This builder is only the default for ordinary
+/// [MaterialPageRoute]s.
+class InstantPageTransitionsBuilder extends PageTransitionsBuilder {
+  const InstantPageTransitionsBuilder();
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Duration get reverseTransitionDuration => Duration.zero;
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (route.fullscreenDialog) return child;
+
+    final interactivePop = route.popGestureInProgress;
+    return CupertinoRouteTransitionMixin.buildPageTransitions<T>(
+      route,
+      context,
+      interactivePop ? animation : kAlwaysCompleteAnimation,
+      kAlwaysDismissedAnimation,
+      child,
+    );
+  }
+}
+
 ThemeData buildAppTheme(
   Brightness brightness, {
   AppAppearanceSettings settings = const AppAppearanceSettings(),
@@ -897,6 +934,16 @@ ThemeData buildAppTheme(
   ).apply(bodyColor: palette.ink, displayColor: palette.ink);
 
   return base.copyWith(
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: <TargetPlatform, PageTransitionsBuilder>{
+        TargetPlatform.android: InstantPageTransitionsBuilder(),
+        TargetPlatform.iOS: InstantPageTransitionsBuilder(),
+        TargetPlatform.macOS: InstantPageTransitionsBuilder(),
+        TargetPlatform.windows: InstantPageTransitionsBuilder(),
+        TargetPlatform.linux: InstantPageTransitionsBuilder(),
+        TargetPlatform.fuchsia: InstantPageTransitionsBuilder(),
+      },
+    ),
     scaffoldBackgroundColor: backdrop.scaffoldColor,
     canvasColor: palette.surface,
     cardColor: palette.surfaceRaised,

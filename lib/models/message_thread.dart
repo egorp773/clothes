@@ -562,7 +562,7 @@ class MessageThread {
       title: json['title'] as String? ?? '',
       groupAvatar: json['group_avatar'] as String? ?? '',
       createdBy: json['created_by'] as String? ?? '',
-      members: _parseMembers(json['members']),
+      members: _parseMembers(json['members'], memberIds: json['member_ids']),
       // Remote preferences and drafts live in chat_thread_member_state and are
       // hydrated by AppRepository for the authenticated participant. Never
       // consume the deprecated shared columns from message_threads here.
@@ -574,16 +574,30 @@ class MessageThread {
     );
   }
 
-  static List<ConversationMember> _parseMembers(dynamic value) {
-    if (value is! List) return const [];
-    return value
-        .whereType<Map>()
-        .map(
-          (item) =>
-              ConversationMember.fromJson(Map<String, dynamic>.from(item)),
-        )
-        .where((member) => member.id.isNotEmpty)
-        .toList(growable: false);
+  static List<ConversationMember> _parseMembers(
+    dynamic value, {
+    dynamic memberIds,
+  }) {
+    final parsed = value is List
+        ? value
+              .whereType<Map>()
+              .map(
+                (item) => ConversationMember.fromJson(
+                  Map<String, dynamic>.from(item),
+                ),
+              )
+              .where((member) => member.id.isNotEmpty)
+              .toList()
+        : <ConversationMember>[];
+    final knownIds = parsed.map((member) => member.id).toSet();
+    if (memberIds is List) {
+      for (final id in memberIds.whereType<String>()) {
+        if (id.isNotEmpty && knownIds.add(id)) {
+          parsed.add(ConversationMember(id: id, name: '', handle: ''));
+        }
+      }
+    }
+    return List.unmodifiable(parsed);
   }
 
   List<String> get memberIds {

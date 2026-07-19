@@ -113,6 +113,8 @@ class PushNotificationService {
   static final _tokenRefreshController = StreamController<String>.broadcast();
   static final _tapController =
       StreamController<PushNotificationTap>.broadcast();
+  static final _foregroundController =
+      StreamController<PushNotificationTap>.broadcast();
 
   static Future<bool>? _initialization;
   static StreamSubscription<String>? _tokenRefreshSubscription;
@@ -150,6 +152,9 @@ class PushNotificationService {
 
   static Stream<PushNotificationTap> get onNotificationTap =>
       _tapController.stream;
+
+  static Stream<PushNotificationTap> get onForegroundMessage =>
+      _foregroundController.stream;
 
   static Future<PushPermissionStatus> get permissionStatus =>
       getPermissionStatus();
@@ -326,9 +331,12 @@ class PushNotificationService {
   }
 
   static Future<void> _handleForegroundMessage(RemoteMessage message) async {
-    // Chat/message updates already have an in-app realtime presentation.
-    // A second system banner here would be a distracting duplicate.
-    if (_messageType(message) == 'message') return;
+    if (_messageType(message) == 'message') {
+      // Realtime is the fastest path; FCM is its independent foreground
+      // fallback when a websocket reconnects or a device changes networks.
+      _foregroundController.add(PushNotificationTap.fromRemoteMessage(message));
+      return;
+    }
     await _showLocalNotification(message);
   }
 

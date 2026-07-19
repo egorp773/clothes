@@ -15,6 +15,7 @@ import '../models/message_thread.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
+import '../widgets/app_glass_surface.dart';
 import '../widgets/promo_banner_carousel.dart';
 import 'messages_screen.dart';
 import 'product_screen.dart';
@@ -529,19 +530,33 @@ class _CatalogScreenState extends State<CatalogScreen>
 
   Widget _buildFloatingSearch(double scale) {
     final palette = context.appPalette;
+    final content = Padding(
+      padding: EdgeInsets.fromLTRB(
+        widget.sidePadding,
+        MediaQuery.of(context).viewPadding.top + 8,
+        widget.sidePadding,
+        10,
+      ),
+      child: SizedBox(
+        height: 42,
+        child: _buildSearchActions(scale, wrapInGlass: false),
+      ),
+    );
+    if (context.appGlass.enabled) {
+      return AppGlassSurface(
+        key: const Key('catalog-floating-glass-search'),
+        role: AppGlassRole.toolbar,
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(22)),
+        padding: EdgeInsets.zero,
+        interactiveGlint: false,
+        child: content,
+      );
+    }
     return Material(
       color: palette.surfaceRaised,
       elevation: 8,
       shadowColor: palette.shadow,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          widget.sidePadding,
-          MediaQuery.of(context).viewPadding.top + 8,
-          widget.sidePadding,
-          10,
-        ),
-        child: SizedBox(height: 42, child: _buildSearchActions(scale)),
-      ),
+      child: content,
     );
   }
 
@@ -557,10 +572,12 @@ class _CatalogScreenState extends State<CatalogScreen>
     );
   }
 
-  Widget _buildSearchActions(double scale) {
+  Widget _buildSearchActions(double scale, {bool wrapInGlass = true}) {
     final palette = context.appPalette;
-    return Material(
-      color: palette.surfaceMuted,
+    final content = Material(
+      color: context.appGlass.enabled
+          ? Colors.transparent
+          : palette.surfaceMuted,
       borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
       child: Row(
@@ -623,6 +640,14 @@ class _CatalogScreenState extends State<CatalogScreen>
           ),
         ],
       ),
+    );
+    if (!wrapInGlass) return content;
+    return AppGlassSurface(
+      key: const Key('catalog-glass-search'),
+      role: AppGlassRole.input,
+      borderRadius: BorderRadius.circular(14),
+      padding: EdgeInsets.zero,
+      child: content,
     );
   }
 

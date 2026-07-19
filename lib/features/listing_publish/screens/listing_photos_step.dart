@@ -286,15 +286,12 @@ class ListingPhotosStep extends StatelessWidget {
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black,
-      transitionDuration: const Duration(milliseconds: 220),
+      transitionDuration: Duration.zero,
       pageBuilder: (context, animation, secondaryAnimation) {
         return _FullscreenPhotoPreview(
           photos: photos,
           initialIndex: initialIndex,
         );
-      },
-      transitionBuilder: (context, animation, secondaryAnimation, child) {
-        return FadeTransition(opacity: animation, child: child);
       },
     );
   }
