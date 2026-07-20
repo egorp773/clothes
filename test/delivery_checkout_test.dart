@@ -27,7 +27,7 @@ void main() {
               return AppOrder.fromProduct(
                 product: product,
                 buyerId: 'buyer-id',
-                status: AppOrderStatus.awaitingPayment,
+                status: AppOrderStatus.created,
                 deliveryProfile: _completeProfile,
                 deliveryService: deliveryService,
                 deliveryPrice: deliveryPrice,
@@ -185,7 +185,7 @@ void main() {
             return AppOrder.fromProduct(
               product: product,
               buyerId: 'buyer-id',
-              status: AppOrderStatus.pendingConfirmation,
+              status: AppOrderStatus.created,
               deliveryProfile: _completeProfile,
               deliveryService: deliveryService,
               deliveryPrice: deliveryPrice,

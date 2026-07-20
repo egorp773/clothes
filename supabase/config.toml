@@ -1,0 +1,116 @@
+project_id = "clothes"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[api.tls]
+enabled = false
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 15
+
+[db.migrations]
+enabled = true
+schema_paths = []
+
+[db.seed]
+enabled = false
+sql_paths = []
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = true
+port = 54323
+api_url = "http://127.0.0.1"
+
+[inbucket]
+enabled = true
+port = 54324
+smtp_port = 54325
+pop3_port = 54326
+
+[storage]
+enabled = true
+file_size_limit = "20MiB"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["com.example.clothes://login-callback/"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+enable_signup = true
+enable_anonymous_sign_ins = false
+minimum_password_length = 8
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = true
+max_frequency = "1m"
+otp_length = 6
+otp_expiry = 3600
+
+[auth.sms]
+enable_signup = true
+enable_confirmations = true
+template = "Код подтверждения: {{ .Code }}"
+max_frequency = "1m"
+
+[edge_runtime]
+enabled = true
+policy = "per_worker"
+inspector_port = 8083
+
+[analytics]
+enabled = false
+port = 54327
+backend = "postgres"
+
+[functions.delete-account]
+verify_jwt = true
+
+[functions.complete-registration]
+verify_jwt = true
+
+[functions.publish-listing]
+verify_jwt = true
+
+[functions.edit-listing]
+verify_jwt = true
+
+[functions.withdraw-marketing-consent]
+verify_jwt = true
+
+[functions.finalize-dispute-evidence]
+verify_jwt = true
+
+[functions.process-product-image]
+verify_jwt = true
+
+[functions.process-accessory-image]
+verify_jwt = true
+
+[functions.send-message-push]
+verify_jwt = true
+
+# OAuth start/callback endpoints validate provider signatures, a one-time
+# server-side state and an exact redirect allowlist themselves. They cannot rely
+# on a Supabase user JWT before authentication is complete.
+[functions.telegram-auth]
+verify_jwt = false
+
+[functions.yandex-auth]
+verify_jwt = false
+
+[functions.vk-auth]
+verify_jwt = false

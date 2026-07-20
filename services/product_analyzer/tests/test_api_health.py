@@ -22,11 +22,17 @@ def test_health_does_not_load_models():
     }
 
 
-def test_analysis_degrades_to_partial_result_without_weights():
+def test_analysis_degrades_to_partial_result_without_weights(monkeypatch):
+    monkeypatch.setattr(
+        jwt_verifier,
+        "verify",
+        lambda _: AuthenticatedUser(id="user"),
+    )
     fixture = Path(__file__).parent / "fixtures" / "dark_blue_on_red.ppm"
     with fixture.open("rb") as image:
         response = TestClient(app).post(
             "/v1/analyze",
+            headers={"Authorization": "Bearer test"},
             files=[("files", (fixture.name, image, "image/x-portable-pixmap"))],
         )
     assert response.status_code == 200
@@ -44,6 +50,10 @@ def test_analysis_requires_jwt_when_enabled(monkeypatch):
             files=[("files", (fixture.name, image, "image/x-portable-pixmap"))],
         )
     assert response.status_code == 401
+
+
+def test_analysis_requires_jwt_by_default():
+    assert settings.require_analysis_auth is True
 
 
 def test_analysis_accepts_verified_jwt(monkeypatch):

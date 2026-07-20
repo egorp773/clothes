@@ -32,6 +32,7 @@ class ListingPublishFlowScreen extends StatefulWidget {
     this.successMessage = '',
     this.failureMessage = '',
     this.controller,
+    this.assertCanPublish,
   });
 
   final double sidePadding;
@@ -48,6 +49,7 @@ class ListingPublishFlowScreen extends StatefulWidget {
   final String successMessage;
   final String failureMessage;
   final ListingPublishController? controller;
+  final Future<String?> Function()? assertCanPublish;
 
   @override
   State<ListingPublishFlowScreen> createState() =>
@@ -76,6 +78,7 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
             sellerName: widget.sellerName,
             sellerHandle: widget.sellerHandle,
             fallbackCity: widget.initialCity,
+            assertCanPublish: widget.assertCanPublish,
           ),
           analyzer: RemoteProductImageAnalyzer(),
           sellerName: widget.sellerName,
@@ -213,7 +216,8 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
 
   bool _isPrimaryEnabled(ListingPublishStep step) => switch (step) {
     ListingPublishStep.photos => _controller.canContinueFromPhotos,
-    ListingPublishStep.preview => !_controller.isPublishing,
+    ListingPublishStep.preview =>
+      !_controller.isPublishing && _controller.draft.hasAllSellerDeclarations,
     ListingPublishStep.success => false,
     _ => true,
   };
@@ -245,6 +249,11 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
         try {
           final product = await _controller.publish();
           if (!mounted) return;
+          if (_controller.publicationHeldForReview) {
+            _publishedProduct = null;
+            setState(() {});
+            return;
+          }
           _publishedProduct = product;
           setState(() {});
           await Future<void>.delayed(const Duration(milliseconds: 900));
@@ -412,10 +421,12 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
                 ),
               ),
               const SizedBox(height: 22),
-              const SizedBox(
+              SizedBox(
                 width: double.infinity,
                 child: Text(
-                  'Объявление опубликовано',
+                  _controller.publicationHeldForReview
+                      ? 'Объявление отправлено на проверку'
+                      : 'Объявление опубликовано',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600),
                 ),
@@ -425,7 +436,11 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
                 width: double.infinity,
                 child: Text(
                   _completionError ??
-                      (_completionSent ? 'Готово' : 'Открываем карточку вещи'),
+                      (_controller.publicationHeldForReview
+                          ? 'Публикация скрыта до завершения проверки продавца или объявления.'
+                          : (_completionSent
+                                ? 'Готово'
+                                : 'Открываем карточку вещи')),
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 13,
@@ -446,6 +461,12 @@ class _ListingPublishFlowScreenState extends State<ListingPublishFlowScreen>
                     overlayColor: Colors.transparent,
                   ),
                   child: const Text('ОТКРЫТЬ КАРТОЧКУ'),
+                )
+              else if (_controller.publicationHeldForReview)
+                FilledButton(
+                  key: const Key('listing-held-close'),
+                  onPressed: widget.onClose,
+                  child: const Text('Закрыть'),
                 )
               else if (!_completionSent)
                 CircularProgressIndicator(

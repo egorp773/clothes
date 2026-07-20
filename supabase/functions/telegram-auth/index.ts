@@ -1,382 +1,151 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  beginOAuthAttempt,
+  claimOAuthCallback,
+  completeOAuthCallback,
+  exchangeOAuthCode,
+  failOAuthAttempt,
+  oauthAdmin,
+  type OAuthAttempt,
+} from "../_shared/oauth.ts";
+import {
+  EdgeError,
+  errorResponse,
+  exactRedirect,
+  redirectWithParams,
+  requiredEnv,
+  strictCorsHeaders,
+} from "../_shared/edge.ts";
+import { verifyTelegramLogin } from "../_shared/telegram.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+const provider = "telegram" as const;
 
-const maxAuthAgeSeconds = 24 * 60 * 60;
-const fallbackTelegramBotId = "8941747263";
-
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  const url = new URL(req.url);
-
-  if (req.method === "GET" && url.searchParams.has("hash")) {
-    return handleTelegramCallback(url.searchParams);
-  }
-
-  if (req.method === "POST") {
-    try {
-      const body = await req.json();
-      return handleTelegramCallback(new URLSearchParams(body));
-    } catch {
-      return json({ error: "Invalid JSON body" }, 400);
+Deno.serve(async (request) => {
+  const requestId = crypto.randomUUID();
+  try {
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: strictCorsHeaders(request, "OAUTH_ALLOWED_WEB_ORIGINS"),
+      });
     }
-  }
+    if (request.method === "POST") {
+      return await exchangeOAuthCode(
+        request,
+        provider,
+        strictCorsHeaders(request, "OAUTH_ALLOWED_WEB_ORIGINS"),
+      );
+    }
+    if (request.method !== "GET") {
+      throw new EdgeError(
+        405,
+        "method_not_allowed",
+        "Use GET, POST, or OPTIONS",
+      );
+    }
 
-  if (req.method === "GET") {
-    return renderLoginPage(url);
+    const url = new URL(request.url);
+    if (url.searchParams.has("hash") || url.searchParams.has("state")) {
+      return await handleCallback(url);
+    }
+    return await beginAuthorization(url);
+  } catch (error) {
+    return errorResponse(error, requestId);
   }
-
-  return json({ error: "Method not allowed" }, 405);
 });
 
-async function handleTelegramCallback(params: URLSearchParams) {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN");
-
-  if (!supabaseUrl || !serviceRoleKey || !botToken) {
-    return renderMessage(
-      "Telegram login is not configured",
-      "Set SUPABASE_SERVICE_ROLE_KEY and TELEGRAM_BOT_TOKEN for the telegram-auth function.",
+async function beginAuthorization(url: URL): Promise<Response> {
+  const botId = requiredEnv("TELEGRAM_BOT_ID");
+  const botToken = requiredEnv("TELEGRAM_BOT_TOKEN");
+  if (!/^\d{1,32}$/.test(botId) || botToken.length < 20) {
+    throw new EdgeError(
       500,
+      "server_misconfigured",
+      "Telegram credentials are invalid",
     );
   }
-
-  const redirectTo = safeRedirectTo(params.get("redirect_to"));
-  const verification = await verifyTelegramPayload(params, botToken);
-  if (!verification.ok) {
-    return redirectWithError(redirectTo, verification.error);
-  }
-
-  const telegramId = params.get("id")!;
-  const firstName = params.get("first_name") ?? "";
-  const lastName = params.get("last_name") ?? "";
-  const username = params.get("username") ?? "";
-  const photoUrl = params.get("photo_url") ?? "";
-  const fullName = [firstName, lastName].filter(Boolean).join(" ").trim();
-  const email = `telegram_${telegramId}@telegram.local`;
-
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false },
+  const redirectUri = exactRedirect(url.searchParams.get("redirect_to"));
+  const attempt = await beginOAuthAttempt(oauthAdmin(), {
+    provider,
+    redirectUri,
+    appCodeChallenge: url.searchParams.get("code_challenge") ?? "",
   });
 
-  const { data, error } = await supabase.auth.admin.generateLink({
-    type: "magiclink",
-    email,
-    options: {
-      data: {
-        provider: "telegram",
-        telegram_id: telegramId,
-        username,
-        full_name: fullName || username || `Telegram ${telegramId}`,
-        avatar_url: photoUrl,
+  const returnTo = new URL(callbackUrl());
+  returnTo.searchParams.set("state", attempt.state);
+  const authorizationUrl = new URL("https://oauth.telegram.org/auth");
+  authorizationUrl.searchParams.set("bot_id", botId);
+  authorizationUrl.searchParams.set(
+    "origin",
+    new URL(requiredEnv("SUPABASE_URL")).origin,
+  );
+  authorizationUrl.searchParams.set("return_to", returnTo.toString());
+  return externalRedirect(authorizationUrl.toString());
+}
+
+async function handleCallback(url: URL): Promise<Response> {
+  const admin = oauthAdmin();
+  let attempt: OAuthAttempt | null = null;
+  try {
+    await verifyTelegramLogin(
+      url.searchParams,
+      requiredEnv("TELEGRAM_BOT_TOKEN"),
+      {
+        maxAgeSeconds: Number(
+          Deno.env.get("TELEGRAM_AUTH_MAX_AGE_SECONDS") ?? 300,
+        ),
       },
-      redirectTo,
+    );
+    attempt = await claimOAuthCallback(
+      admin,
+      provider,
+      url.searchParams.get("state"),
+    );
+    const subject = url.searchParams.get("id") ?? "";
+    const firstName = url.searchParams.get("first_name") ?? "";
+    const lastName = url.searchParams.get("last_name") ?? "";
+    const username = url.searchParams.get("username") ?? "";
+    const fullName = `${firstName} ${lastName}`.trim();
+    const exchangeCode = await completeOAuthCallback(admin, attempt, {
+      subject,
+      username,
+      fullName: fullName || username || `Telegram ${subject}`,
+      avatarUrl: url.searchParams.get("photo_url") ?? "",
+    });
+    return redirectWithParams(attempt.redirect_uri, {
+      oauth_code: exchangeCode,
+      oauth_provider: provider,
+    });
+  } catch (error) {
+    if (!attempt) throw error;
+    await failOAuthAttempt(admin, attempt.id);
+    return redirectWithParams(attempt.redirect_uri, {
+      oauth_error: error instanceof EdgeError
+        ? error.code
+        : "authentication_failed",
+      oauth_provider: provider,
+    });
+  }
+}
+
+function callbackUrl(): string {
+  const base = new URL(requiredEnv("SUPABASE_URL"));
+  if (base.protocol !== "https:" && base.hostname !== "127.0.0.1") {
+    throw new EdgeError(
+      500,
+      "server_misconfigured",
+      "SUPABASE_URL must use HTTPS",
+    );
+  }
+  return new URL("/functions/v1/telegram-auth", base).toString();
+}
+
+function externalRedirect(location: string): Response {
+  return new Response(null, {
+    status: 303,
+    headers: {
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+      Location: location,
     },
   });
-
-  const properties = data?.properties as
-    | {
-      action_link?: string;
-      actionLink?: string;
-      hashed_token?: string;
-      hashedToken?: string;
-    }
-    | undefined;
-  const hashedToken = properties?.hashed_token ?? properties?.hashedToken ?? "";
-
-  if (error || !hashedToken) {
-    return redirectWithError(
-      redirectTo,
-      error?.message ?? "Could not create Telegram session.",
-    );
-  }
-
-  const session = await createSupabaseSession(supabaseUrl, serviceRoleKey, hashedToken);
-  if (!session.ok) {
-    return redirectWithError(redirectTo, session.error);
-  }
-
-  return redirectWithSession(redirectTo, session.data);
-}
-
-async function createSupabaseSession(
-  supabaseUrl: string,
-  serviceRoleKey: string,
-  tokenHash: string,
-) {
-  try {
-    const response = await fetch(`${supabaseUrl}/auth/v1/verify`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        apikey: serviceRoleKey,
-        authorization: `Bearer ${serviceRoleKey}`,
-      },
-      body: JSON.stringify({
-        type: "magiclink",
-        token_hash: tokenHash,
-      }),
-    });
-
-    const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      return {
-        ok: false as const,
-        error: data?.msg ?? data?.message ?? "Could not verify Telegram session.",
-      };
-    }
-    if (!data?.access_token || !data?.refresh_token) {
-      return {
-        ok: false as const,
-        error: "Supabase did not return a session.",
-      };
-    }
-
-    return {
-      ok: true as const,
-      data: {
-        accessToken: String(data.access_token),
-        refreshToken: String(data.refresh_token),
-        expiresIn: String(data.expires_in ?? 3600),
-        tokenType: String(data.token_type ?? "bearer"),
-      },
-    };
-  } catch (error) {
-    return {
-      ok: false as const,
-      error: error instanceof Error ? error.message : "Could not create session.",
-    };
-  }
-}
-
-function redirectWithSession(
-  redirectTo: string,
-  session: {
-    accessToken: string;
-    refreshToken: string;
-    expiresIn: string;
-    tokenType: string;
-  },
-) {
-  const uri = new URL(redirectTo);
-  uri.hash = new URLSearchParams({
-    access_token: session.accessToken,
-    refresh_token: session.refreshToken,
-    expires_in: session.expiresIn,
-    token_type: session.tokenType,
-    type: "magiclink",
-  }).toString();
-
-  if (isAppRedirect(uri)) {
-    return renderAppRedirect(uri.toString());
-  }
-
-  return Response.redirect(uri.toString(), 302);
-}
-
-function redirectWithError(redirectTo: string, message: string) {
-  const uri = new URL(redirectTo);
-  uri.hash = new URLSearchParams({
-    error: "auth_failed",
-    error_description: message,
-  }).toString();
-  if (isAppRedirect(uri)) {
-    return renderAppRedirect(uri.toString(), "Вход не выполнен", message);
-  }
-
-  return Response.redirect(uri.toString(), 302);
-}
-
-async function verifyTelegramPayload(params: URLSearchParams, botToken: string) {
-  const hash = params.get("hash");
-  const authDate = Number(params.get("auth_date"));
-
-  if (!hash || !params.get("id") || !authDate) {
-    return { ok: false, error: "Telegram payload is missing required fields." };
-  }
-
-  const now = Math.floor(Date.now() / 1000);
-  if (now - authDate > maxAuthAgeSeconds) {
-    return { ok: false, error: "Telegram login payload has expired." };
-  }
-
-  const dataCheckString = [...params.entries()]
-    .filter(([key]) => key !== "hash" && key !== "redirect_to")
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, value]) => `${key}=${value}`)
-    .join("\n");
-
-  const secretKey = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(botToken),
-  );
-  const key = await crypto.subtle.importKey(
-    "raw",
-    secretKey,
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(dataCheckString),
-  );
-
-  const expected = bytesToHex(new Uint8Array(signature));
-  if (!timingSafeEqual(expected, hash)) {
-    return { ok: false, error: "Telegram signature is invalid." };
-  }
-
-  return { ok: true };
-}
-
-function renderLoginPage(url: URL) {
-  const botId = Deno.env.get("TELEGRAM_BOT_ID") ?? fallbackTelegramBotId;
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const redirectTo = safeRedirectTo(url.searchParams.get("redirect_to"));
-
-  if (!botId || !supabaseUrl) {
-    return renderMessage(
-      "Telegram login is not configured",
-      "Set TELEGRAM_BOT_ID and SUPABASE_URL for the telegram-auth function.",
-      500,
-    );
-  }
-
-  const callbackUrl = new URL(`${supabaseUrl}/functions/v1/telegram-auth`);
-  callbackUrl.searchParams.set("redirect_to", redirectTo);
-
-  const authUrl = new URL("https://oauth.telegram.org/auth");
-  authUrl.searchParams.set("bot_id", botId);
-  authUrl.searchParams.set("origin", supabaseUrl);
-  authUrl.searchParams.set("return_to", callbackUrl.toString());
-  authUrl.searchParams.set("request_access", "write");
-
-  return Response.redirect(authUrl.toString(), 302);
-}
-
-function isAppRedirect(uri: URL) {
-  return uri.protocol === "com.example.clothes:";
-}
-
-function safeRedirectTo(value: string | null | undefined) {
-  const defaultRedirectTo = "com.example.clothes://login-callback/";
-  if (!value) return defaultRedirectTo;
-  try {
-    const uri = new URL(value);
-    if (
-      uri.protocol === "com.example.clothes:" ||
-      uri.protocol === "http:" ||
-      uri.protocol === "https:"
-    ) {
-      return uri.toString();
-    }
-  } catch {
-    // Fall through to the app redirect.
-  }
-  return defaultRedirectTo;
-}
-
-function renderMessage(title: string, message: string, status = 200) {
-  return html(`<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(title)}</title>
-  <style>
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#fff;color:#070707}
-    main{min-height:100vh;display:grid;place-items:center;padding:24px}
-    section{width:min(420px,100%);text-align:center}
-    h1{font-size:22px;margin:0 0 10px;font-weight:800}
-    p{font-size:14px;line-height:1.45;color:#72727a;margin:0}
-  </style>
-</head>
-<body>
-  <main><section><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></section></main>
-</body>
-</html>`, status);
-}
-
-function renderAppRedirect(
-  appUrl: string,
-  title = "Вход выполнен",
-  message = "Сейчас вернём вас в приложение.",
-) {
-  const encodedUrl = escapeHtml(appUrl);
-  const jsUrl = JSON.stringify(appUrl);
-  return html(`<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Возвращаем в приложение</title>
-  <style>
-    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#fff;color:#070707}
-    main{min-height:100vh;display:grid;place-items:center;padding:24px}
-    section{width:min(420px,100%);text-align:center}
-    h1{font-size:22px;margin:0 0 10px;font-weight:800}
-    p{font-size:14px;line-height:1.45;color:#72727a;margin:0 0 22px}
-    a{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 18px;border-radius:8px;background:#050505;color:#fff;text-decoration:none;font-weight:700}
-  </style>
-</head>
-<body>
-  <main>
-    <section>
-      <h1>${escapeHtml(title)}</h1>
-      <p>${escapeHtml(message)}</p>
-      <a href="${encodedUrl}">Открыть приложение</a>
-    </section>
-  </main>
-  <script>
-    window.location.replace(${jsUrl});
-    setTimeout(function () { window.location.href = ${jsUrl}; }, 500);
-  </script>
-</body>
-</html>`);
-}
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
-}
-
-function html(body: string, status = 200) {
-  return new Response(body, {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
-function bytesToHex(bytes: Uint8Array) {
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function timingSafeEqual(a: string, b: string) {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }

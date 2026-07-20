@@ -4,30 +4,34 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   final expectedRedirect = Uri.parse('com.example.clothes://oauth-callback/');
 
-  test('reads Supabase session tokens from OAuth callback fragment', () {
+  test('reads a provider-bound one-time exchange code from the callback', () {
     final callback = Uri.parse(
       'com.example.clothes://oauth-callback/'
-      '#access_token=access.jwt&refresh_token=refresh-token'
-      '&expires_in=3600&token_type=bearer',
+      '?oauth_code=one-time-code&oauth_provider=yandex',
     );
 
-    final tokens = parseOAuthCallback(
+    final exchange = parseOAuthExchangeCallback(
       callback,
       expectedRedirect: expectedRedirect,
+      expectedProvider: 'yandex',
     );
 
-    expect(tokens.accessToken, 'access.jwt');
-    expect(tokens.refreshToken, 'refresh-token');
+    expect(exchange.code, 'one-time-code');
+    expect(exchange.provider, 'yandex');
   });
 
   test('surfaces provider error returned in OAuth callback', () {
     final callback = Uri.parse(
       'com.example.clothes://oauth-callback/'
-      '#error=auth_failed&error_description=Access%20denied',
+      '?error=auth_failed&error_description=Access%20denied',
     );
 
     expect(
-      () => parseOAuthCallback(callback, expectedRedirect: expectedRedirect),
+      () => parseOAuthExchangeCallback(
+        callback,
+        expectedRedirect: expectedRedirect,
+        expectedProvider: 'yandex',
+      ),
       throwsA(
         isA<OAuthCallbackException>().having(
           (error) => error.message,
@@ -38,13 +42,17 @@ void main() {
     );
   });
 
-  test('rejects callbacks without a complete Supabase session', () {
+  test('rejects callbacks without an exchange code', () {
     final callback = Uri.parse(
-      'com.example.clothes://oauth-callback/#access_token=access.jwt',
+      'com.example.clothes://oauth-callback/?oauth_provider=yandex',
     );
 
     expect(
-      () => parseOAuthCallback(callback, expectedRedirect: expectedRedirect),
+      () => parseOAuthExchangeCallback(
+        callback,
+        expectedRedirect: expectedRedirect,
+        expectedProvider: 'yandex',
+      ),
       throwsA(isA<OAuthCallbackException>()),
     );
   });
@@ -52,11 +60,31 @@ void main() {
   test('rejects a callback intended for another deep-link route', () {
     final callback = Uri.parse(
       'com.example.clothes://login-callback/'
-      '#access_token=access.jwt&refresh_token=refresh-token',
+      '?oauth_code=one-time-code&oauth_provider=yandex',
     );
 
     expect(
-      () => parseOAuthCallback(callback, expectedRedirect: expectedRedirect),
+      () => parseOAuthExchangeCallback(
+        callback,
+        expectedRedirect: expectedRedirect,
+        expectedProvider: 'yandex',
+      ),
+      throwsA(isA<OAuthCallbackException>()),
+    );
+  });
+
+  test('rejects an exchange code issued for another provider', () {
+    final callback = Uri.parse(
+      'com.example.clothes://oauth-callback/'
+      '?oauth_code=one-time-code&oauth_provider=vk',
+    );
+
+    expect(
+      () => parseOAuthExchangeCallback(
+        callback,
+        expectedRedirect: expectedRedirect,
+        expectedProvider: 'yandex',
+      ),
       throwsA(isA<OAuthCallbackException>()),
     );
   });

@@ -1,12 +1,28 @@
-import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import {
+  createClient,
+  type SupabaseClient,
+} from "npm:@supabase/supabase-js@2.49.8";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
+import {
+  bearerToken,
+  EdgeError,
+  errorResponse,
+  fetchWithTimeout,
+  jsonResponse,
+  readJsonObject,
+  readLimitedBody,
+  requiredEnv,
+  sha256BytesHex,
+  strictCorsHeaders,
+} from "../_shared/edge.ts";
+import {
+  accessoryImageBucket,
+  canonicalAccessoryStoragePath,
+} from "../_shared/accessory_storage.ts";
 
-const bucketName = "product-images";
+const bucketName = accessoryImageBucket;
+const maxInputBytes = 15 * 1024 * 1024;
+const maxOutputBytes = 20 * 1024 * 1024;
 
 type EdgeRuntimeGlobal = {
   EdgeRuntime?: {
@@ -14,173 +30,381 @@ type EdgeRuntimeGlobal = {
   };
 };
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const analyzerUrl = Deno.env.get("PRODUCT_ANALYZER_URL");
-  const authorization = req.headers.get("Authorization");
-
-  if (!supabaseUrl || !serviceRoleKey || !analyzerUrl || !authorization) {
-    return json({ error: "Missing Supabase, analyzer, or authorization env" }, 500);
-  }
-
-  let accessoryId = "";
-
+Deno.serve(async (request) => {
+  const requestId = crypto.randomUUID();
+  let cors: Record<string, string> = {};
   try {
-    const body = await req.json();
-    accessoryId = String(body.accessory_id ?? "");
-  } catch {
-    return json({ error: "Invalid JSON body" }, 400);
-  }
+    cors = strictCorsHeaders(request, "IMAGE_PROCESSING_ALLOWED_WEB_ORIGINS");
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: cors });
+    }
+    if (request.method !== "POST") {
+      throw new EdgeError(405, "method_not_allowed", "Use POST");
+    }
 
-  if (!accessoryId) {
-    return json({ error: "accessory_id is required" }, 400);
-  }
+    const body = await readJsonObject(request, 8 * 1024);
+    const accessoryId = String(body.accessory_id ?? "").toLowerCase();
+    if (!isUuid(accessoryId)) {
+      throw new EdgeError(
+        400,
+        "invalid_accessory_id",
+        "accessory_id must be a UUID",
+      );
+    }
 
-  const supabase = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false },
-  });
-  const token = authorization.replace(/^Bearer\s+/i, "");
-  const { data: authData, error: authError } = await supabase.auth.getUser(token);
-  if (authError || !authData.user) {
-    return json({ error: "Invalid authorization" }, 401);
-  }
-  const { data: accessory, error: accessoryError } = await supabase
-    .from("outfit_accessories")
-    .select("owner_id,original_image,scope")
-    .eq("id", accessoryId)
-    .maybeSingle();
-  if (accessoryError || !accessory) {
-    return json({ error: "Accessory not found" }, 404);
-  }
-  if (!accessory.owner_id || accessory.owner_id !== authData.user.id) {
-    return json({ error: "Only the accessory owner can process its image" }, 403);
-  }
-  const imageUrl = String(accessory.original_image ?? "");
-  if (!imageUrl.startsWith(`${supabaseUrl}/storage/v1/object/`)) {
-    return json({ error: "Accessory image must be in project storage" }, 422);
-  }
+    const supabaseUrl = requiredEnv("SUPABASE_URL");
+    const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+    const analyzerUrl = validateAnalyzerUrl(
+      requiredEnv("PRODUCT_ANALYZER_URL"),
+    );
+    const analyzerSecret = requiredEnv("PRODUCT_ANALYZER_SHARED_SECRET");
+    if (analyzerSecret.length < 32) {
+      throw new EdgeError(
+        500,
+        "server_misconfigured",
+        "Analyzer service secret is invalid",
+      );
+    }
+    const admin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+    const { data: authData, error: authError } = await admin.auth.getUser(
+      bearerToken(request),
+    );
+    if (authError || !authData.user) {
+      throw new EdgeError(401, "invalid_session", "Authentication required");
+    }
+    const { data: accessory, error: accessoryError } = await admin
+      .from("outfit_accessories")
+      .select("owner_id,original_image,scope")
+      .eq("id", accessoryId)
+      .maybeSingle();
+    if (accessoryError) {
+      throw new EdgeError(
+        503,
+        "accessory_lookup_failed",
+        "Accessory ownership could not be verified",
+      );
+    }
+    if (!accessory) {
+      throw new EdgeError(404, "accessory_not_found", "Accessory not found");
+    }
+    if (
+      accessory.owner_id !== authData.user.id ||
+      accessory.scope !== "private"
+    ) {
+      throw new EdgeError(
+        403,
+        "accessory_owner_required",
+        "Only the private accessory owner can process it",
+      );
+    }
+    const originalPath = canonicalAccessoryStoragePath(
+      String(accessory.original_image ?? ""),
+      supabaseUrl,
+      authData.user.id,
+      accessoryId,
+    );
 
-  const work = processAccessoryImage({
-    supabase,
-    analyzerUrl,
-    authorization,
-    accessoryId,
-    imageUrl,
-    ownerId: String(accessory.owner_id),
-  });
-
-  const edgeRuntime = (globalThis as EdgeRuntimeGlobal).EdgeRuntime;
-  if (edgeRuntime) {
-    edgeRuntime.waitUntil(work);
-    return json({ queued: true, accessory_id: accessoryId }, 202);
+    const work = processAccessoryImage({
+      admin,
+      supabaseUrl,
+      serviceRoleKey,
+      analyzerUrl,
+      analyzerSecret,
+      accessoryId,
+      originalPath,
+      ownerId: authData.user.id,
+      requestId,
+    });
+    const edgeRuntime = (globalThis as EdgeRuntimeGlobal).EdgeRuntime;
+    if (edgeRuntime) {
+      edgeRuntime.waitUntil(work);
+    } else {
+      await work;
+    }
+    return jsonResponse(
+      {
+        queued: true,
+        accessory_id: accessoryId,
+        request_id: requestId,
+      },
+      202,
+      cors,
+    );
+  } catch (error) {
+    return errorResponse(error, requestId, cors);
   }
-
-  await work;
-  return json({ queued: true, accessory_id: accessoryId }, 202);
 });
 
 async function processAccessoryImage({
-  supabase,
+  admin,
+  supabaseUrl,
+  serviceRoleKey,
   analyzerUrl,
-  authorization,
+  analyzerSecret,
   accessoryId,
-  imageUrl,
+  originalPath,
   ownerId,
+  requestId,
 }: {
-  supabase: SupabaseClient;
-  analyzerUrl: string;
-  authorization: string;
+  admin: SupabaseClient;
+  supabaseUrl: string;
+  serviceRoleKey: string;
+  analyzerUrl: URL;
+  analyzerSecret: string;
   accessoryId: string;
-  imageUrl: string;
+  originalPath: string;
   ownerId: string;
-}) {
-  await supabase
+  requestId: string;
+}): Promise<void> {
+  await admin
     .from("outfit_accessories")
     .update({ background_status: "processing", background_error: null })
     .eq("id", accessoryId)
     .eq("owner_id", ownerId);
 
   try {
-    const original = await fetch(imageUrl);
-    if (!original.ok) {
-      throw new Error(`Image fetch failed: ${original.status}`);
-    }
-    const advertisedSize = Number(original.headers.get("content-length") ?? 0);
-    if (advertisedSize > 15 * 1024 * 1024) {
-      throw new Error("Image is larger than 15 MB");
-    }
-    const originalBlob = await original.blob();
-    if (originalBlob.size > 15 * 1024 * 1024) {
-      throw new Error("Image is larger than 15 MB");
-    }
-
+    const original = await downloadStorageObject({
+      supabaseUrl,
+      serviceRoleKey,
+      path: originalPath,
+      maxBytes: maxInputBytes,
+    });
     const form = new FormData();
-    form.append("file", originalBlob, `${accessoryId}.jpg`);
-
-    const removed = await fetch(
-      `${analyzerUrl.replace(/\/$/, "")}/v1/remove-background`,
+    form.append(
+      "file",
+      new Blob([Uint8Array.from(original.bytes).buffer], {
+        type: original.mimeType,
+      }),
+      `${accessoryId}.${extensionForMime(original.mimeType)}`,
+    );
+    const response = await fetchWithTimeout(
+      new URL("/v1/remove-background", analyzerUrl),
       {
         method: "POST",
-        headers: { Authorization: authorization },
+        headers: { "X-Analyzer-Service-Token": analyzerSecret },
         body: form,
       },
+      30_000,
     );
-
-    if (!removed.ok) {
-      throw new Error(
-        `background removal failed: ${removed.status}`,
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new EdgeError(
+        502,
+        "background_removal_failed",
+        "Background removal service failed",
+      );
+    }
+    const mimeType = (response.headers.get("content-type") ?? "")
+      .split(";", 1)[0]
+      .trim()
+      .toLowerCase();
+    if (mimeType !== "image/png") {
+      await response.body?.cancel().catch(() => undefined);
+      throw new EdgeError(
+        502,
+        "invalid_analyzer_response",
+        "Background removal returned an invalid image type",
+      );
+    }
+    const advertised = Number(response.headers.get("content-length") ?? 0);
+    if (
+      !Number.isFinite(advertised) || advertised < 0 ||
+      advertised > maxOutputBytes
+    ) {
+      throw new EdgeError(
+        502,
+        "invalid_analyzer_response",
+        "Background removal response is too large",
+      );
+    }
+    const cutout = await readLimitedBody(response.body, maxOutputBytes);
+    assertPng(cutout);
+    const contentHash = await sha256BytesHex(cutout);
+    const cutoutPath = `${ownerId}/${accessoryId}/cutout-` +
+      `${contentHash.slice(0, 24)}.png`;
+    const uploaded = await admin.storage
+      .from(bucketName)
+      .upload(cutoutPath, cutout, {
+        contentType: "image/png",
+        cacheControl: "31536000",
+        upsert: false,
+      });
+    if (
+      uploaded.error && !await sameStoredObject(
+        {
+          supabaseUrl,
+          serviceRoleKey,
+          path: cutoutPath,
+          maxBytes: maxOutputBytes,
+        },
+        contentHash,
+      )
+    ) {
+      throw new EdgeError(
+        503,
+        "cutout_upload_failed",
+        "Processed image could not be stored",
       );
     }
 
-    const bytes = new Uint8Array(await removed.arrayBuffer());
-    const storagePath = `accessory-cutouts/${accessoryId}.png`;
-    const uploaded = await supabase.storage
-      .from(bucketName)
-      .upload(storagePath, bytes, {
-        contentType: "image/png",
-        cacheControl: "31536000",
-        upsert: true,
-      });
-
-    if (uploaded.error) {
-      throw uploaded.error;
-    }
-
-    const { data } = supabase.storage.from(bucketName).getPublicUrl(storagePath);
-    const cutoutUrl = data.publicUrl;
-
-    const updated = await supabase
+    // Store the canonical object path rather than a public URL. The bucket is
+    // private and access is mediated by RLS/signed delivery.
+    const updated = await admin
       .from("outfit_accessories")
       .update({
-        original_image: imageUrl,
-        cutout_image: cutoutUrl,
+        cutout_image: cutoutPath,
         background_status: "completed",
         background_error: null,
       })
       .eq("id", accessoryId)
       .eq("owner_id", ownerId);
-
     if (updated.error) {
-      throw updated.error;
+      throw new EdgeError(
+        503,
+        "accessory_update_failed",
+        "Accessory processing result could not be saved",
+      );
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await supabase
+    const code = error instanceof EdgeError
+      ? error.code
+      : "background_processing_failed";
+    console.error(`[process-accessory-image:${requestId}] ${code}`, error);
+    await admin
       .from("outfit_accessories")
-      .update({ background_status: "failed", background_error: message })
+      .update({
+        background_status: "failed",
+        background_error: code,
+      })
       .eq("id", accessoryId)
       .eq("owner_id", ownerId);
   }
 }
 
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
-  });
+async function downloadStorageObject({
+  supabaseUrl,
+  serviceRoleKey,
+  path,
+  maxBytes,
+}: {
+  supabaseUrl: string;
+  serviceRoleKey: string;
+  path: string;
+  maxBytes: number;
+}): Promise<{ bytes: Uint8Array; mimeType: string }> {
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const response = await fetchWithTimeout(
+    `${supabaseUrl}/storage/v1/object/${bucketName}/${encoded}`,
+    {
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+        Accept: "image/jpeg,image/png,image/webp",
+      },
+    },
+    8_000,
+  );
+  if (!response.ok) {
+    throw new EdgeError(
+      response.status === 404 ? 404 : 502,
+      "storage_download_failed",
+      "Stored image could not be read",
+    );
+  }
+  const advertised = Number(response.headers.get("content-length") ?? 0);
+  if (!Number.isFinite(advertised) || advertised < 0 || advertised > maxBytes) {
+    throw new EdgeError(413, "image_too_large", "Stored image is too large");
+  }
+  const mimeType = (response.headers.get("content-type") ?? "")
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType)) {
+    throw new EdgeError(
+      415,
+      "invalid_image_type",
+      "Stored image type is invalid",
+    );
+  }
+  const bytes = await readLimitedBody(response.body, maxBytes);
+  return { bytes, mimeType };
+}
+
+async function sameStoredObject(
+  input: {
+    supabaseUrl: string;
+    serviceRoleKey: string;
+    path: string;
+    maxBytes: number;
+  },
+  expectedHash: string,
+): Promise<boolean> {
+  try {
+    const existing = await downloadStorageObject(input);
+    return await sha256BytesHex(existing.bytes) === expectedHash;
+  } catch {
+    return false;
+  }
+}
+
+function assertPng(bytes: Uint8Array): void {
+  const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (
+    bytes.length < signature.length ||
+    signature.some((byte, index) => bytes[index] !== byte)
+  ) {
+    throw new EdgeError(
+      502,
+      "invalid_analyzer_response",
+      "Background removal response is not a PNG",
+    );
+  }
+}
+
+function extensionForMime(mimeType: string): string {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/webp") return "webp";
+  throw new EdgeError(415, "invalid_image_type", "Image type is invalid");
+}
+
+function validateAnalyzerUrl(value: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new EdgeError(
+      500,
+      "server_misconfigured",
+      "PRODUCT_ANALYZER_URL is invalid",
+    );
+  }
+  const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
+  if (
+    (url.protocol !== "https:" && !(loopback && url.protocol === "http:")) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new EdgeError(
+      500,
+      "server_misconfigured",
+      "PRODUCT_ANALYZER_URL must be an HTTPS service origin",
+    );
+  }
+  return url;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    .test(
+      value,
+    );
 }

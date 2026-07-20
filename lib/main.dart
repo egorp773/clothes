@@ -10,6 +10,7 @@ import 'features/catalog_search/catalog_search_engine.dart';
 import 'features/chat/chat_actions.dart';
 import 'features/chat/product_share_sheet.dart';
 import 'features/listing_publish/screens/listing_publish_flow_screen.dart';
+import 'features/listing_edit/screens/listing_edit_screen.dart';
 import 'models/app_profile.dart';
 import 'models/created_outfit.dart';
 import 'models/message_thread.dart';
@@ -18,6 +19,7 @@ import 'models/profile_feature.dart';
 import 'screens/catalog_screen.dart';
 import 'screens/appearance_editor_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/legal_onboarding_screen.dart';
 import 'screens/messages_screen.dart';
 import 'screens/outfit_create_screen.dart';
 import 'screens/outfits_screen.dart';
@@ -28,6 +30,7 @@ import 'screens/publish_outfit_screen.dart';
 import 'screens/product_screen.dart';
 import 'screens/reviews_screen.dart';
 import 'screens/seller_profile_screen.dart';
+import 'screens/seller_activation_screen.dart';
 import 'services/push_notification_service.dart';
 import 'widgets/app_bottom_nav.dart';
 import 'widgets/app_appearance_background.dart';
@@ -178,6 +181,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   OverlayEntry? _messageNotificationEntry;
   final List<Product> _draftOutfitProducts = [];
   final AppRepository _repository = AppRepository();
+  VoidCallback? _postOnboardingAction;
 
   ChatActions get _chatActions => ChatActions(
     sendText: _repository.sendChatText,
@@ -189,6 +193,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     sendMedia: _repository.sendChatMedia,
     editMessage: _repository.editMessage,
     deleteMessage: _repository.deleteMessage,
+    reportMessage: _repository.reportMessage,
+    blockUser: _repository.blockChatUser,
     updateThread: _repository.updateThreadPreferences,
     saveDraft: _repository.saveThreadDraft,
     markRead: _repository.markThreadRead,
@@ -575,7 +581,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             location: product.location,
             isLiked: product.isLiked,
             shippingAddress: product.shippingAddress,
-            canPurchase: !product.isHidden,
+            canPurchase: !product.isHidden && _repository.canBuy,
             publishedAt: product.publishedAt,
             viewsCount: product.viewsCount,
             likesCount: product.likesCount,
@@ -615,6 +621,17 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     // optimistic unique-view update before its first await, so every entry
     // point (profile, chat, notification) renders the same current value.
     unawaited(_repository.recordProductView(product.id));
+  }
+
+  Future<Product?> _editOwnListing(Product product) async {
+    final edited = await Navigator.of(context, rootNavigator: true)
+        .push<Product>(
+          MaterialPageRoute<Product>(
+            builder: (_) => ListingEditScreen(product: product),
+          ),
+        );
+    if (edited == null) return null;
+    return _repository.adoptServerProductSnapshot(edited);
   }
 
   void _openProductFromChat(String productId) {
@@ -922,6 +939,14 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _openLoginScreen(onSignedIn: _openCreateItem);
       return;
     }
+    if (!_repository.canUseMarketplace) {
+      _postOnboardingAction = _openCreateItem;
+      return;
+    }
+    if (!_repository.canSell) {
+      unawaited(_openSellerActivation(onActivated: _openCreateItem));
+      return;
+    }
     setState(() {
       _createMode = _CreateMode.createItem;
       _currentIndex = 2;
@@ -958,24 +983,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     });
   }
 
-  Future<bool> _publishProduct(Product product) async {
-    final didPublish = await _repository.publishProduct(product);
-    if (didPublish) {
-      setState(() {
-        if (_returnToPublishOutfitAfterItem) {
-          _currentIndex = 2;
-          _createMode = _CreateMode.publishOutfit;
-        } else {
-          _currentIndex = 0;
-          _createMode = _CreateMode.none;
-        }
-        _returnToPublishOutfitAfterItem = false;
-        _createItemForOutfitOnly = false;
-      });
-    }
-    return didPublish;
-  }
-
   Future<void> _completeAutomatedListing(Product product) async {
     final adoptedProduct = await _repository.adoptPublishedProduct(product);
     if (!mounted) return;
@@ -1003,8 +1010,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       isHidden: true,
       ownerId: _repository.currentUserId,
     );
-    final didPublish = await _repository.publishProduct(draftProduct);
-    if (!didPublish) return false;
+    // Outfit-only items are local composition assets, never hidden product
+    // rows that bypass the authoritative listing publication command.
     setState(() {
       _draftOutfitProducts.insert(0, draftProduct);
       _currentIndex = 2;
@@ -1115,12 +1122,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         builder: (ctx) => _OutfitItemChoiceSheet(
           onPublishItem: () {
             Navigator.pop(ctx);
-            setState(() {
-              _returnToPublishOutfitAfterItem = true;
-              _createItemForOutfitOnly = false;
-              _createMode = _CreateMode.createItem;
-              _currentIndex = 2;
-            });
+            _openCreateItemForOutfit();
           },
           onOutfitOnlyItem: () {
             Navigator.pop(ctx);
@@ -1136,7 +1138,48 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
+  void _openCreateItemForOutfit() {
+    if (!_repository.isSignedIn) {
+      _openLoginScreen(onSignedIn: _openCreateItemForOutfit);
+      return;
+    }
+    if (!_repository.canUseMarketplace) {
+      _postOnboardingAction = _openCreateItemForOutfit;
+      return;
+    }
+    if (!_repository.canSell) {
+      unawaited(_openSellerActivation(onActivated: _openCreateItemForOutfit));
+      return;
+    }
+    setState(() {
+      _returnToPublishOutfitAfterItem = true;
+      _createItemForOutfitOnly = false;
+      _createMode = _CreateMode.createItem;
+      _currentIndex = 2;
+    });
+  }
+
+  Future<void> _openSellerActivation({VoidCallback? onActivated}) async {
+    await Navigator.of(context, rootNavigator: true).push<void>(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (context) => AnimatedBuilder(
+          animation: _repository,
+          builder: (context, _) => SellerActivationScreen(
+            entitlements: _repository.entitlements,
+            onRequestActivation: _repository.requestPrivateSellerActivation,
+            onRefresh: _repository.refreshUserEntitlements,
+          ),
+        ),
+      ),
+    );
+    if (!mounted || !_repository.canSell) return;
+    onActivated?.call();
+  }
+
   void _openLoginScreen({VoidCallback? onSignedIn}) {
+    _postOnboardingAction = onSignedIn;
+    unawaited(_repository.refreshRegistrationDocuments());
     var didComplete = false;
 
     void closeLoginFlow(BuildContext loginContext) {
@@ -1154,39 +1197,26 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (loginContext) => AnimatedBuilder(
-          animation: _repository,
-          builder: (context, _) {
-            if (_repository.isSignedIn && !didComplete) {
-              didComplete = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                closeLoginFlow(loginContext);
-                onSignedIn?.call();
-              });
-            }
-            return LoginScreen(
-              onClose: () => Navigator.of(loginContext).pop(),
-              onYandexTap: _repository.signInWithYandex,
-              onVkTap: _repository.signInWithVk,
-              isSigningIn: _repository.isSigningIn,
-              authError: _repository.authError,
-              onPhoneTap: () {
-                Navigator.of(loginContext).push(
-                  MaterialPageRoute<void>(
-                    builder: (phoneContext) => PhoneLoginScreen(
-                      onBack: () => Navigator.of(phoneContext).pop(),
-                      onClose: () => closeLoginFlow(loginContext),
-                      onRequestCode: _repository.requestPhoneOtp,
-                      onVerifyCode: _repository.verifyPhoneOtp,
-                    ),
-                  ),
-                );
-              },
-            );
+        builder: (loginContext) => _RegistrationLoginFlow(
+          repository: _repository,
+          onAuthenticated: () {
+            if (didComplete) return;
+            didComplete = true;
+            closeLoginFlow(loginContext);
           },
+          onClose: () => Navigator.of(loginContext).pop(),
         ),
       ),
     );
+  }
+
+  void _runPostOnboardingAction() {
+    final action = _postOnboardingAction;
+    if (action == null || !_repository.canUseMarketplace) return;
+    _postOnboardingAction = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) action();
+    });
   }
 
   @override
@@ -1211,6 +1241,23 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             ),
           );
         }
+
+        if (_repository.isSignedIn && !_repository.canUseMarketplace) {
+          return LegalOnboardingScreen(
+            documents: _repository.registrationDocuments,
+            initialIntent: _repository.pendingRegistrationIntent,
+            isSubmitting: _repository.entitlementsLoading,
+            errorMessage:
+                _repository.entitlementsError ??
+                _repository.registrationDocumentsError,
+            onRetryDocuments: () =>
+                unawaited(_repository.refreshRegistrationDocuments()),
+            onSignOut: _repository.signOut,
+            onDeleteAccount: _repository.deleteAccount,
+            onSubmit: _repository.completeRegistration,
+          );
+        }
+        _runPostOnboardingAction();
 
         return Scaffold(
           backgroundColor: context.appBackdrop.scaffoldColor,
@@ -1358,10 +1405,15 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     onSavePersonalProfile: _repository.savePersonalProfile,
                     onConfirmEmail: _repository.requestEmailConfirmation,
                     onDeleteAccount: _repository.deleteAccount,
+                    onRequestOrderTransition:
+                        _repository.requestOrderTransition,
+                    onOpenDispute: _repository.openDispute,
+                    onUploadDisputeEvidence: _repository.uploadDisputeEvidence,
                     onToggleProductLike: _repository.toggleProductLike,
                     onToggleOutfitLike: _repository.toggleOutfitLike,
                     onClearRecentlyViewed: _repository.clearRecentlyViewed,
                     onDeleteProduct: _repository.deleteProduct,
+                    onEditProduct: _editOwnListing,
                     onProductTap: _openProductDetails,
                     onShareProduct: _shareProduct,
                     onOutfitAuthorTap: _openOutfitAuthorProfile,
@@ -1371,6 +1423,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     onNotificationTap: _openProfileNotification,
                     onUpdateNotificationPreferences:
                         _repository.updateNotificationPreferences,
+                    onWithdrawMarketingConsent:
+                        _repository.withdrawMarketingConsent,
                     onLoadReviews: _repository.fetchSellerReviews,
                     onOpenCatalog: () => _changeTab(0),
                   ),
@@ -1426,12 +1480,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           sellerHandle: _repository.profile.handle,
           initialCity: _repository.profile.city,
           onPublished: _completeAutomatedListing,
+          assertCanPublish: _repository.assertCanPublishListing,
           onClose: _closeCreateItem,
           onTabChange: _changeTab,
-          onPublish: _createItemForOutfitOnly
-              ? _addProductToOutfitOnly
-              : _publishProduct,
-          onUploadImage: _repository.uploadImage,
           publishButtonText: _createItemForOutfitOnly
               ? 'Добавить в образ'
               : 'Опубликовать вещь',
@@ -1464,6 +1515,84 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       onUploadImage: _repository.uploadImage,
       onAddItem: _showOutfitItemChoiceSheet,
     );
+  }
+}
+
+class _RegistrationLoginFlow extends StatefulWidget {
+  const _RegistrationLoginFlow({
+    required this.repository,
+    required this.onAuthenticated,
+    required this.onClose,
+  });
+
+  final AppRepository repository;
+  final VoidCallback onAuthenticated;
+  final VoidCallback onClose;
+
+  @override
+  State<_RegistrationLoginFlow> createState() => _RegistrationLoginFlowState();
+}
+
+class _RegistrationLoginFlowState extends State<_RegistrationLoginFlow> {
+  bool _hasRegistrationIntent = false;
+  bool _authenticationCallbackQueued = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: widget.repository,
+      builder: (context, _) {
+        if (widget.repository.isSignedIn && !_authenticationCallbackQueued) {
+          _authenticationCallbackQueued = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) widget.onAuthenticated();
+          });
+        }
+        if (!_hasRegistrationIntent) {
+          return LegalOnboardingScreen(
+            preAuthentication: true,
+            documents: widget.repository.registrationDocuments,
+            initialIntent: widget.repository.pendingRegistrationIntent,
+            errorMessage: widget.repository.registrationDocumentsError,
+            onRetryDocuments: () =>
+                unawaited(widget.repository.refreshRegistrationDocuments()),
+            onExistingAccountLogin: () {
+              widget.repository.beginExistingAccountLogin();
+              if (mounted) setState(() => _hasRegistrationIntent = true);
+            },
+            onSubmit: (intent) async {
+              widget.repository.setPendingRegistrationIntent(intent);
+              if (mounted) setState(() => _hasRegistrationIntent = true);
+              return null;
+            },
+          );
+        }
+        return LoginScreen(
+          onClose: _close,
+          onYandexTap: widget.repository.signInWithYandex,
+          onVkTap: widget.repository.signInWithVk,
+          isSigningIn: widget.repository.isSigningIn,
+          authError: widget.repository.authError,
+          onPhoneTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (phoneContext) => PhoneLoginScreen(
+                  onBack: () => Navigator.of(phoneContext).pop(),
+                  onClose: _close,
+                  onRequestCode: widget.repository.requestPhoneOtp,
+                  onVerifyCode: widget.repository.verifyPhoneOtp,
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _close() {
+    widget.repository.clearPendingRegistrationIntent();
+    widget.onClose();
   }
 }
 

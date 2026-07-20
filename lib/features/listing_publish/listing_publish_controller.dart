@@ -31,6 +31,7 @@ class ListingPublishController extends ChangeNotifier {
   bool hasRecoverableDraft = false;
   bool isPickingPhotos = false;
   bool isPublishing = false;
+  bool publicationHeldForReview = false;
   bool isWaitingForAnalysis = false;
   String? transientError;
 
@@ -581,6 +582,17 @@ class ListingPublishController extends ChangeNotifier {
     _markChanged();
   }
 
+  void setSellerDeclaration(SellerDeclaration declaration, bool accepted) {
+    if (accepted) {
+      draft.sellerDeclarations.add(declaration);
+    } else {
+      draft.sellerDeclarations.remove(declaration);
+    }
+    draft.sellerConfirmationVersion =
+        ListingDraft.currentSellerConfirmationVersion;
+    _markChanged();
+  }
+
   void goToStep(ListingPublishStep step) {
     draft.currentStep = step;
     _markChanged();
@@ -1041,7 +1053,8 @@ class ListingPublishController extends ChangeNotifier {
     _safeNotify();
     try {
       await flush();
-      await repository.publish(draft);
+      final result = await repository.publish(draft);
+      publicationHeldForReview = !result.isPublished;
       draft.currentStep = ListingPublishStep.success;
       return buildProduct();
     } on ListingPublishException catch (error) {
@@ -1102,7 +1115,8 @@ class ListingPublishController extends ChangeNotifier {
         'beige',
         'yellow',
       }.contains(draft.primaryColor),
-      status: 'published',
+      status: draft.status == ListingStatus.published ? 'published' : 'ready',
+      isHidden: draft.status != ListingStatus.published,
       section: draft.section,
       subcategory: draft.subcategory,
       itemType: draft.itemType,
@@ -1119,7 +1133,9 @@ class ListingPublishController extends ChangeNotifier {
       shippingAddress: draft.shippingAddress,
       deliveryMethods: List.unmodifiable(draft.deliveryMethods),
       mainImage: image,
-      publishedAt: DateTime.now().toUtc(),
+      publishedAt: draft.status == ListingStatus.published
+          ? DateTime.now().toUtc()
+          : null,
       analysisStatus: draft.analysisStatus.value,
       normalizedCategory: draft.normalizedCategory,
       normalizedBrand: draft.brand,

@@ -15,6 +15,7 @@ from PIL import Image, ImageOps
 
 from app.config import Settings
 from app.model_manager import ModelManager
+from app.security.remote_fetch import download_limited, parse_allowed_hosts
 from app.visual_search.preprocessor import VisualSearchPreprocessor
 from app.visual_search.regions import RegionDetectionResult, VisualSearchRegionDetector
 from app.visual_search.reranker import VisualSearchReranker
@@ -56,9 +57,19 @@ class VisualSearchService:
         self.model_version = f"{settings.fashion_model_id}@{settings.fashion_model_revision}"
         self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
         self._cache_lock = threading.Lock()
+        self._remote_image_hosts = parse_allowed_hosts(
+            settings.remote_image_allowed_hosts,
+            supabase_url=settings.supabase_url,
+        )
         self._download_client = httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(settings.visual_search_download_timeout_seconds, connect=2.5),
+            follow_redirects=False,
+            timeout=httpx.Timeout(
+                min(
+                    settings.visual_search_download_timeout_seconds,
+                    settings.remote_fetch_timeout_seconds,
+                ),
+                connect=settings.remote_fetch_connect_timeout_seconds,
+            ),
         )
 
     def detect_regions(self, image: Image.Image) -> RegionDetectionResult:
@@ -548,14 +559,15 @@ class VisualSearchService:
         )
 
     def _download_image(self, url: str) -> tuple[bytes, Image.Image]:
-        response = self._download_client.get(url)
-        response.raise_for_status()
-        content_type = response.headers.get("content-type", "").split(";", 1)[0]
-        if content_type not in {"image/jpeg", "image/png", "image/webp"}:
-            raise ValueError(f"Unsupported remote image MIME: {content_type}")
-        payload = response.content
-        if len(payload) > self.settings.visual_search_max_image_bytes:
-            raise ValueError("Remote image is too large")
+        payload, _, _ = download_limited(
+            self._download_client,
+            url,
+            max_bytes=self.settings.visual_search_max_image_bytes,
+            accepted_content_types={"image/jpeg", "image/png", "image/webp"},
+            allowed_hosts=self._remote_image_hosts or None,
+            allow_http=self.settings.allow_http_remote_images,
+            max_redirects=self.settings.remote_fetch_max_redirects,
+        )
         image = ImageOps.exif_transpose(Image.open(io.BytesIO(payload)))
         image.load()
         return payload, image

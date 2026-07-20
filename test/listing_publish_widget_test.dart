@@ -430,8 +430,9 @@ class _FlowRepository extends ListingPublishRepository {
   Future<void> syncRemoteDraft(ListingDraft draft) async {}
 
   @override
-  Future<void> publish(ListingDraft draft) async {
+  Future<ListingPublishResult> publish(ListingDraft draft) async {
     publishCalls += 1;
     draft.status = ListingStatus.published;
+    return const ListingPublishResult(ListingPublicationDisposition.published);
   }
 }

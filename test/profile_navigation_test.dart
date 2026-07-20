@@ -1,4 +1,5 @@
 import 'package:clothes/models/app_profile.dart';
+import 'package:clothes/models/account_deletion.dart';
 import 'package:clothes/models/product.dart';
 import 'package:clothes/models/profile_feature.dart';
 import 'package:clothes/screens/edit_profile_screen.dart';
@@ -208,7 +209,11 @@ ProfileScreen _profileScreen({
     onUpdateProfile: ({required name, required handle}) async => null,
     onSavePersonalProfile: (_, _) async => null,
     onConfirmEmail: (_) async => null,
-    onDeleteAccount: () async => null,
+    onDeleteAccount: () async => const AccountDeletionResult(
+      status: AccountDeletionStatus.anonymized,
+      requestId: '',
+      retainedCategories: [],
+    ),
     onToggleProductLike: (_) async {},
     onToggleOutfitLike: (_) async {},
     onClearRecentlyViewed: onClear ?? () async {},

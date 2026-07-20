@@ -690,10 +690,11 @@ class _FakeRepository extends ListingPublishRepository {
   Future<void> syncRemoteDraft(ListingDraft draft) async {}
 
   @override
-  Future<void> publish(ListingDraft draft) async {
+  Future<ListingPublishResult> publish(ListingDraft draft) async {
     publishCalls += 1;
     await Future<void>.delayed(const Duration(milliseconds: 10));
     draft.status = ListingStatus.published;
+    return const ListingPublishResult(ListingPublicationDisposition.published);
   }
 }
 
@@ -701,13 +702,14 @@ class _RetryingPublishRepository extends _FakeRepository {
   var _shouldFail = true;
 
   @override
-  Future<void> publish(ListingDraft draft) async {
+  Future<ListingPublishResult> publish(ListingDraft draft) async {
     publishCalls += 1;
     if (_shouldFail) {
       _shouldFail = false;
       throw StateError('network disconnected');
     }
     draft.status = ListingStatus.published;
+    return const ListingPublishResult(ListingPublicationDisposition.published);
   }
 }
 

@@ -5,7 +5,6 @@ import 'dart:ui' show Rect, Size;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../models/product.dart';
 import '../../core/app_config.dart';
@@ -106,21 +105,18 @@ class VisualSearchService {
   VisualSearchService({
     String? baseUrl,
     http.Client? client,
+    @Deprecated('Visual search is public and must never receive a user JWT.')
     String? Function()? accessTokenProvider,
   }) : baseUrl = (baseUrl ?? AppConfig.productAnalyzerUrl).replaceAll(
          RegExp(r'/$'),
          '',
        ),
        _client = client ?? http.Client(),
-       _ownsClient = client == null,
-       _accessTokenProvider =
-           accessTokenProvider ??
-           (() => Supabase.instance.client.auth.currentSession?.accessToken);
+       _ownsClient = client == null;
 
   final String baseUrl;
   http.Client _client;
   final bool _ownsClient;
-  final String? Function() _accessTokenProvider;
 
   Future<VisualSearchRegionsResult> detectRegions(
     XFile image, {
@@ -246,28 +242,9 @@ class VisualSearchService {
   }
 
   Future<void> indexProduct(String productId) async {
-    final token = _accessTokenProvider();
-    if (token == null || token.isEmpty) return;
-    for (var attempt = 0; attempt < 2; attempt++) {
-      final response = await _client
-          .post(
-            Uri.parse('$baseUrl/v1/products/$productId/embeddings'),
-            headers: {'Authorization': 'Bearer $token'},
-          )
-          .timeout(const Duration(seconds: 120));
-      if (response.statusCode >= 200 && response.statusCode < 300) return;
-      final retryable =
-          response.statusCode == 429 ||
-          response.statusCode == 503 ||
-          response.statusCode == 504;
-      if (attempt == 0 && retryable) {
-        await Future<void>.delayed(const Duration(seconds: 2));
-        continue;
-      }
-      throw VisualSearchException(
-        'Индексация товара временно недоступна (${response.statusCode})',
-      );
-    }
+    throw const VisualSearchException(
+      'Индексация выполняется сервером после публикации товара',
+    );
   }
 
   Future<http.Response> _sendVisualSearchImage({

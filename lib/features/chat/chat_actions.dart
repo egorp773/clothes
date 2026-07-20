@@ -39,6 +39,9 @@ typedef EditMessageCallback =
 
 typedef DeleteMessageCallback =
     Future<bool> Function(String threadId, String messageId);
+typedef ReportMessageCallback =
+    Future<bool> Function(String threadId, String messageId, String reason);
+typedef BlockChatUserCallback = Future<bool> Function(String threadId);
 
 typedef UpdateThreadCallback =
     Future<bool> Function(
@@ -72,6 +75,8 @@ class ChatActions {
     this.sendMedia,
     this.editMessage,
     this.deleteMessage,
+    this.reportMessage,
+    this.blockUser,
     this.updateThread,
     this.saveDraft,
     this.markRead,
@@ -87,6 +92,8 @@ class ChatActions {
   final SendChatMediaCallback? sendMedia;
   final EditMessageCallback? editMessage;
   final DeleteMessageCallback? deleteMessage;
+  final ReportMessageCallback? reportMessage;
+  final BlockChatUserCallback? blockUser;
   final UpdateThreadCallback? updateThread;
   final SaveDraftCallback? saveDraft;
   final MarkThreadReadCallback? markRead;

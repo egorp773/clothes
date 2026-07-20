@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../core/app_appearance.dart';
+import '../models/account_deletion.dart';
 import '../models/app_profile.dart';
 import '../widgets/app_image.dart';
 
@@ -28,7 +29,7 @@ class EditProfileScreen extends StatefulWidget {
   onUpdateIdentity;
   final Future<String?> Function(AppProfile profile, XFile? avatarFile) onSave;
   final Future<String?> Function(String email) onConfirmEmail;
-  final Future<String?> Function() onDeleteAccount;
+  final Future<AccountDeletionResult> Function() onDeleteAccount;
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -213,8 +214,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 value: _birthDate == null
                     ? 'Не указана'
                     : _formatDate(_birthDate!),
-                trailing: const Icon(Icons.keyboard_arrow_down, size: 17),
-                onTap: _pickBirthDate,
+                trailing: const Icon(Icons.lock_outline, size: 17),
+                onTap: null,
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Дата рождения подтверждается при регистрации. Для исправления обратитесь в поддержку.',
+                style: TextStyle(fontSize: 10.5, color: Color(0xFF7A7A80)),
               ),
               const SizedBox(height: 26),
               const _SectionLabel(
@@ -266,7 +272,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ),
               const SizedBox(height: 10),
               const Text(
-                'После удаления восстановить профиль и связанные с ним данные не получится.',
+                'Удаляемые персональные данные будут удалены или обезличены. '
+                'Финансовая история, сведения о сделках, спорах и модерации '
+                'могут храниться ограниченный срок, если это требуется законом '
+                'или для защиты сторон.',
+                key: Key('account-deletion-retention-notice'),
                 style: TextStyle(
                   fontFamily: 'Montserrat',
                   fontSize: 10.5,
@@ -422,20 +432,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
-  Future<void> _pickBirthDate() async {
-    final now = DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _birthDate ?? DateTime(now.year - 18, now.month, now.day),
-      firstDate: DateTime(1900),
-      lastDate: now,
-      helpText: 'ДАТА РОЖДЕНИЯ',
-      cancelText: 'ОТМЕНА',
-      confirmText: 'ГОТОВО',
-    );
-    if (picked != null && mounted) setState(() => _birthDate = picked);
-  }
-
   Future<void> _selectCity() async {
     final selected = await showModalBottomSheet<String>(
       context: context,
@@ -485,7 +481,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       lastName: lastName,
       middleName: _middleNameController.text.trim(),
       gender: _gender,
-      birthDate: _birthDate?.toIso8601String().split('T').first ?? '',
+      birthDate: widget.profile.birthDate,
       city: _city.trim(),
       phone: phoneDigits.isEmpty ? '' : '+7$phoneDigits',
       email: _emailController.text.trim().toLowerCase(),
@@ -549,8 +545,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         title: const Text('Удалить аккаунт?'),
         content: Text(
           widget.isSignedIn
-              ? 'Профиль и связанные с ним данные будут удалены без возможности восстановления.'
-              : 'Локальные данные профиля будут удалены без возможности восстановления.',
+              ? 'Будет создан запрос на удаление и обезличивание аккаунта. '
+                    'Данные, необходимые для финансовой отчётности, споров, '
+                    'безопасности и исполнения закона, не удаляются немедленно '
+                    'и хранятся только установленный срок.'
+              : 'Локальные данные профиля будут очищены.',
         ),
         actions: [
           TextButton(
@@ -567,13 +566,38 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (accepted != true || !mounted) return;
     setState(() => _deleting = true);
     try {
-      final error = await widget.onDeleteAccount();
+      final result = await widget.onDeleteAccount();
       if (!mounted) return;
-      if (error != null) {
-        _showMessage(error);
+      if (!result.isSuccess) {
+        _showMessage(result.errorMessage!);
         return;
       }
-      Navigator.of(context).pop();
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(
+            result.isDeferred ? 'Удаление отложено' : 'Запрос выполнен',
+          ),
+          content: Text(
+            result.isDeferred
+                ? 'Аккаунт пока нельзя удалить: '
+                      '${result.deferredReasons.isEmpty ? 'есть незавершённые обязательства' : result.deferredReasons.join(', ')}. '
+                      'Доступ к аккаунту сохранён.'
+                : result.retainedCategories.isEmpty
+                ? 'Локальные данные очищены. Сервер завершит удаление или обезличивание согласно срокам хранения.'
+                : 'Будут временно сохранены или обезличены категории: '
+                      '${result.retainedCategories.join(', ')}.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Понятно'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (result.isFinalized) Navigator.of(context).pop();
     } catch (_) {
       _showMessage('Не удалось удалить аккаунт. Попробуйте ещё раз.');
     } finally {
@@ -896,7 +920,7 @@ class _TapValueField extends StatelessWidget {
   });
 
   final String value;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final Widget trailing;
 
   @override

@@ -1,36 +1,30 @@
 import 'package:clothes/data/app_repository.dart';
-import 'package:clothes/models/product.dart';
 import 'package:clothes/models/profile_feature.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('AppOrder Supabase payload', () {
-    test('serializes missing or non-UUID seller as null', () {
-      final missingSeller = _order(id: 'missing', sellerId: '');
-      final localSeller = _order(id: 'local', sellerId: 'local-showroom');
+  group('AppOrder server-authoritative projection', () {
+    test('parses server wire status and delivery values', () {
+      final order = AppOrder.fromJson({
+        'id': 'server-order',
+        'seller_id': 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+        'buyer_id': 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'status': 'seller_confirmed',
+        'delivery_service': 'Пункт выдачи',
+        'delivery_price': 0,
+      });
 
-      expect(missingSeller.toSupabaseJson()['seller_id'], isNull);
-      expect(localSeller.toSupabaseJson()['seller_id'], isNull);
-      expect(
-        localSeller.toSupabaseJson()['buyer_id'],
-        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-      );
+      expect(order.status, AppOrderStatus.sellerConfirmed);
+      expect(order.deliveryService, 'Пункт выдачи');
+      expect(order.deliveryPrice, 0);
     });
 
-    test('preserves a valid seller UUID and selected delivery values', () {
-      const sellerId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-      final order = AppOrder.fromProduct(
-        product: _product(ownerId: '  $sellerId  '),
-        buyerId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-        status: AppOrderStatus.pendingConfirmation,
-        deliveryService: 'Пункт выдачи',
-        deliveryPrice: 0,
-      );
-      final payload = order.toSupabaseJson();
+    test('local cache serialization is not a remote write payload', () {
+      final payload = _order(id: 'local').toJson();
 
-      expect(payload['seller_id'], sellerId);
-      expect(payload['delivery_service'], 'Пункт выдачи');
-      expect(payload['delivery_price'], 0);
+      expect(payload['statusName'], AppOrderStatus.created.name);
+      expect(payload, isNot(contains('seller_id')));
+      expect(payload, isNot(contains('buyer_id')));
     });
   });
 
@@ -80,25 +74,6 @@ void main() {
   });
 }
 
-Product _product({String ownerId = ''}) {
-  return Product(
-    id: 'product-1',
-    title: 'Тестовый товар',
-    detailTitle: 'Тестовый товар',
-    price: '1 500 ₽',
-    detailPrice: '1 500 ₽',
-    priceValue: 1500,
-    image: 'image.jpg',
-    category: 'Одежда',
-    brand: 'Test',
-    size: 'M',
-    color: 'Чёрный',
-    condition: 'Новое',
-    ownerId: ownerId,
-    dotsOnDark: false,
-  );
-}
-
 AppOrder _order({
   required String id,
   String title = 'Order',
@@ -123,7 +98,7 @@ AppOrder _order({
     recipientPhone: '',
     recipientEmail: '',
     deliveryPrice: 122,
-    status: AppOrderStatus.pendingConfirmation,
+    status: AppOrderStatus.created,
     createdAt: timestamp,
     updatedAt: timestamp,
   );

@@ -1500,7 +1500,11 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Удалить сообщение?'),
-        content: Text('Оно исчезнет у всех участников беседы.'),
+        content: const Text(
+          'Сообщение будет скрыто для участников. Оригинал и вложение могут '
+          'храниться ограниченный срок для споров, безопасности и модерации.',
+          key: Key('chat-delete-retention-notice'),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -1523,6 +1527,79 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (!mounted || removed) return;
     _showError('Не удалось удалить сообщение. Попробуйте ещё раз.');
+  }
+
+  Future<void> _reportChatMessage(ChatMessage message) async {
+    final report = widget.actions?.reportMessage;
+    if (report == null) return;
+    final reason = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(title: Text('Причина жалобы')),
+            for (final option in const <(String, String)>[
+              ('fraud', 'Мошенничество'),
+              ('prohibited_content', 'Подделка или запрещённый товар'),
+              ('harassment', 'Оскорбления или угрозы'),
+              ('personal_data', 'Разглашение персональных данных'),
+              ('other', 'Другое нарушение'),
+            ])
+              ListTile(
+                key: Key('message-report-reason-${option.$1}'),
+                title: Text(option.$2),
+                onTap: () => Navigator.pop(context, option.$1),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (reason == null || !mounted) return;
+    final submitted = await report(_thread.id, message.id, reason);
+    if (!mounted) return;
+    if (submitted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Жалоба отправлена на модерацию')),
+      );
+    } else {
+      _showError('Не удалось отправить жалобу. Попробуйте ещё раз.');
+    }
+  }
+
+  Future<void> _blockChatUser() async {
+    final block = widget.actions?.blockUser;
+    if (block == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Заблокировать пользователя?'),
+        content: const Text(
+          'Он не сможет писать вам или начинать новые сделки.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            key: const Key('chat-block-confirm'),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Заблокировать'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final blocked = await block(_thread.id);
+    if (!mounted) return;
+    if (blocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Пользователь заблокирован')),
+      );
+    } else {
+      _showError('Не удалось заблокировать пользователя.');
+    }
   }
 
   Future<void> _showMessageActions(ChatMessage message) async {
@@ -1594,6 +1671,26 @@ class _ChatScreenState extends State<ChatScreen> {
                     onTap: () {
                       Navigator.pop(sheetContext);
                       _deleteChatMessage(message);
+                    },
+                  ),
+                if (!message.isMine && widget.actions?.reportMessage != null)
+                  ListTile(
+                    key: const Key('message-action-report'),
+                    leading: const Icon(Icons.flag_outlined),
+                    title: const Text('Пожаловаться'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _reportChatMessage(message);
+                    },
+                  ),
+                if (!message.isMine && widget.actions?.blockUser != null)
+                  ListTile(
+                    key: const Key('message-action-block-user'),
+                    leading: const Icon(Icons.block_outlined),
+                    title: const Text('Заблокировать пользователя'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _blockChatUser();
                     },
                   ),
               ],

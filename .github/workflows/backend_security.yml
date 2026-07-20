@@ -1,0 +1,99 @@
+name: Backend security gates
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "supabase/**"
+      - "services/product_analyzer/**"
+      - ".github/workflows/backend_security.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "supabase/**"
+      - "services/product_analyzer/**"
+      - ".github/workflows/backend_security.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  supabase-security:
+    name: Clean migrations and database security tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Start clean local Supabase
+        run: npx --yes supabase@2.98.2 start
+
+      - name: Rebuild the database from migrations
+        run: npx --yes supabase@2.98.2 db reset
+
+      - name: Run pgTAP security contracts
+        run: npx --yes supabase@2.98.2 test db
+
+      - name: Stop local Supabase
+        if: always()
+        run: npx --yes supabase@2.98.2 stop --no-backup
+
+  analyzer-security:
+    name: Product analyzer tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: services/product_analyzer/requirements.txt
+
+      - name: Install analyzer dependencies
+        working-directory: services/product_analyzer
+        run: python -m pip install --requirement requirements.txt
+
+      - name: Run unit and security tests
+        working-directory: services/product_analyzer
+        run: python -m pytest -m "not integration"
+
+  edge-security:
+    name: Edge Function unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.4.5
+
+      - name: Run Edge security tests
+        shell: bash
+        run: |
+          mapfile -t tests < <(find supabase/functions -type f -name '*_test.ts' -print)
+          if [ "${#tests[@]}" -eq 0 ]; then
+            echo "No Edge tests found"
+            exit 1
+          fi
+          deno test --allow-env "${tests[@]}"

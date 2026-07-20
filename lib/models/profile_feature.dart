@@ -195,15 +195,22 @@ Map<String, String> _stringMap(Object? value) {
 enum AppOrderRole { buyer, seller }
 
 enum AppOrderStatus {
-  pendingConfirmation,
-  pendingShipment,
-  inTransit,
-  deliveredToPickup,
-  awaitingPayment,
-  returning,
-  disputed,
+  created,
+  paid,
+  sellerConfirmed,
+  shipped,
+  received,
+  inspection,
   completed,
-  canceled,
+  dispute,
+  cancelled,
+}
+
+extension AppOrderStatusWire on AppOrderStatus {
+  String get wireName => switch (this) {
+    AppOrderStatus.sellerConfirmed => 'seller_confirmed',
+    _ => name,
+  };
 }
 
 class DeliveryProfile {
@@ -491,29 +498,6 @@ class AppOrder {
       'updatedAt': updatedAt.toUtc().toIso8601String(),
     };
   }
-
-  Map<String, dynamic> toSupabaseJson() {
-    return {
-      'id': id,
-      'product_id': productId,
-      'product_title': productTitle,
-      'product_image': productImage,
-      'product_price': productPrice,
-      'product_price_value': productPriceValue,
-      'seller_id': _uuidOrNull(sellerId),
-      'buyer_id': buyerId,
-      'tracking_number': trackingNumber,
-      'delivery_service': deliveryService,
-      'delivery_address': deliveryAddress,
-      'recipient_name': recipientName,
-      'recipient_phone': recipientPhone,
-      'recipient_email': recipientEmail,
-      'delivery_price': deliveryPrice,
-      'status': status.name,
-      'created_at': createdAt.toUtc().toIso8601String(),
-      'updated_at': updatedAt.toUtc().toIso8601String(),
-    };
-  }
 }
 
 class SellerDashboardStats {
@@ -535,17 +519,13 @@ class SellerDashboardStats {
 }
 
 AppOrderStatus _statusFromString(String value) {
+  final normalized = value.trim().toLowerCase();
+  if (normalized == 'seller_confirmed') {
+    return AppOrderStatus.sellerConfirmed;
+  }
   return AppOrderStatus.values.firstWhere(
-    (status) => status.name == value,
-    orElse: () => AppOrderStatus.pendingConfirmation,
+    (status) => status.name.toLowerCase() == normalized,
+    // Unknown states must never be interpreted as paid or completed.
+    orElse: () => AppOrderStatus.created,
   );
-}
-
-final RegExp _uuidPattern = RegExp(
-  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
-);
-
-String? _uuidOrNull(String value) {
-  final normalized = value.trim();
-  return _uuidPattern.hasMatch(normalized) ? normalized : null;
 }

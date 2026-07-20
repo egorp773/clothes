@@ -164,6 +164,27 @@ pytest -q
 полная Grounded-SAM/FashionSigLIP интеграция проверяются после установки весов
 интеграционным smoke-запросом к `/v1/analyze`.
 
+## Edge-to-analyzer service secret
+
+`/warmup`, `/v1/enrichment/wakeup`, and `/v1/remove-background` accept only
+`X-Analyzer-Service-Token`. Configure the same random value, at least 32 bytes
+of entropy, as `ANALYZER_SERVICE_SECRET` in the analyzer secret manager and as
+`PRODUCT_ANALYZER_SHARED_SECRET` in Supabase Edge Function secrets. Never put
+either value in Flutter, a Dart define, logs, or repository files.
+
+Use a two-phase rotation:
+
+1. Put the old value in `ANALYZER_SERVICE_SECRET_PREVIOUS` and deploy a new
+   `ANALYZER_SERVICE_SECRET` to the analyzer.
+2. Change `PRODUCT_ANALYZER_SHARED_SECRET` in Supabase to the new value and
+   redeploy the calling Edge Functions.
+3. Verify authenticated wake-up/background processing, then remove
+   `ANALYZER_SERVICE_SECRET_PREVIOUS`.
+
+An empty secret fails closed with HTTP 503. Browser CORS also fails closed by
+default; production must configure an exact `CORS_ORIGIN_REGEX` only if a
+browser client genuinely needs direct access.
+
 ## Production
 
 - Не открывайте сервис напрямую в интернет без TLS, auth и rate limiting.

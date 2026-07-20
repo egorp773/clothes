@@ -30,6 +30,11 @@ class AppProfile {
   final String phone;
   final String email;
   final String avatarUrl;
+  ProfileStats get stats => ProfileStats(
+    rating: rating,
+    salesCount: salesCount,
+    followersCount: followersCount,
+  );
 
   factory AppProfile.fromJson(Map<String, dynamic> json) {
     final legacyName = json['name'] as String? ?? '';
@@ -83,9 +88,6 @@ class AppProfile {
     String? name,
     String? handle,
     String? city,
-    double? rating,
-    int? salesCount,
-    int? followersCount,
     String? firstName,
     String? lastName,
     String? middleName,
@@ -99,9 +101,9 @@ class AppProfile {
       name: name ?? this.name,
       handle: handle ?? this.handle,
       city: city ?? this.city,
-      rating: rating ?? this.rating,
-      salesCount: salesCount ?? this.salesCount,
-      followersCount: followersCount ?? this.followersCount,
+      rating: rating,
+      salesCount: salesCount,
+      followersCount: followersCount,
       firstName: firstName ?? this.firstName,
       lastName: lastName ?? this.lastName,
       middleName: middleName ?? this.middleName,
@@ -112,6 +114,40 @@ class AppProfile {
       avatarUrl: avatarUrl ?? this.avatarUrl,
     );
   }
+
+  /// Applies statistics returned by an authoritative server projection.
+  ///
+  /// User-editable profile mutations intentionally cannot accept these fields.
+  AppProfile withServerStats(ProfileStats serverStats) {
+    return AppProfile(
+      name: name,
+      handle: handle,
+      city: city,
+      rating: serverStats.rating,
+      salesCount: serverStats.salesCount,
+      followersCount: serverStats.followersCount,
+      firstName: firstName,
+      lastName: lastName,
+      middleName: middleName,
+      gender: gender,
+      birthDate: birthDate,
+      phone: phone,
+      email: email,
+      avatarUrl: avatarUrl,
+    );
+  }
+}
+
+class ProfileStats {
+  const ProfileStats({
+    required this.rating,
+    required this.salesCount,
+    required this.followersCount,
+  });
+
+  final double rating;
+  final int salesCount;
+  final int followersCount;
 }
 
 class AppUserProfile {

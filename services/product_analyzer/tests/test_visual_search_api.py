@@ -5,7 +5,7 @@ import io
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.main import app, jwt_verifier, models, visual_search, visual_store
+from app.main import app, jwt_verifier, models, settings, visual_search, visual_store
 from app.segmentation.rembg_adapter import ForegroundProposal
 from app.visual_search.schemas import (
     AuthenticatedUser,
@@ -153,11 +153,7 @@ def test_background_removal_releases_region_model_and_returns_local_png(monkeypa
         nonlocal region_unloads
         region_unloads += 1
 
-    monkeypatch.setattr(
-        jwt_verifier,
-        "verify",
-        lambda _: AuthenticatedUser(id="user"),
-    )
+    monkeypatch.setattr(settings, "analyzer_service_secret", "s" * 48)
     monkeypatch.setattr(
         models.background_removal,
         "remove_background",
@@ -170,7 +166,7 @@ def test_background_removal_releases_region_model_and_returns_local_png(monkeypa
     )
     response = TestClient(app).post(
         "/v1/remove-background",
-        headers={"Authorization": "Bearer test"},
+        headers={"X-Analyzer-Service-Token": "s" * 48},
         files={"file": ("query.jpg", _jpeg(), "image/jpeg")},
     )
     assert response.status_code == 200

@@ -1,5 +1,6 @@
 import 'package:clothes/models/app_profile.dart';
 import 'package:clothes/data/app_repository.dart';
+import 'package:clothes/models/account_deletion.dart';
 import 'package:clothes/models/product.dart';
 import 'package:clothes/models/profile_feature.dart';
 import 'package:clothes/screens/profile_screen.dart';
@@ -14,7 +15,7 @@ void main() {
     final pending = _reviewOrder(
       buyerId: buyerId,
       sellerId: sellerId,
-      status: AppOrderStatus.deliveredToPickup,
+      status: AppOrderStatus.received,
     );
     final completed = _reviewOrder(
       buyerId: buyerId,
@@ -155,7 +156,11 @@ void main() {
           onUpdateProfile: ({required name, required handle}) async => null,
           onSavePersonalProfile: (profile, avatar) async => null,
           onConfirmEmail: (email) async => null,
-          onDeleteAccount: () async => null,
+          onDeleteAccount: () async => const AccountDeletionResult(
+            status: AccountDeletionStatus.anonymized,
+            requestId: '',
+            retainedCategories: [],
+          ),
           onToggleProductLike: (id) async {},
           onToggleOutfitLike: (id) async {},
           onClearRecentlyViewed: () async {},

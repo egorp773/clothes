@@ -78,7 +78,7 @@ AppOrder _order({
     recipientPhone: '',
     recipientEmail: '',
     deliveryPrice: 200,
-    status: AppOrderStatus.inTransit,
+    status: AppOrderStatus.shipped,
     createdAt: createdAt,
     updatedAt: createdAt,
   );

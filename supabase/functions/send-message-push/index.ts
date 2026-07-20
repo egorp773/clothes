@@ -1,19 +1,19 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  createClient,
+  type SupabaseClient,
+} from "npm:@supabase/supabase-js@2.49.8";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
-
-type ChatMessage = {
-  id?: string;
-  text?: string;
-  sender_id?: string;
-  sender_name?: string;
-  type?: string;
-  product?: { title?: string };
-};
+import {
+  EdgeError,
+  errorResponse,
+  fetchWithTimeout,
+  jsonResponse,
+  readJsonObject,
+  readLimitedBody,
+  requiredEnv,
+  safeErrorCode,
+  strictCorsHeaders,
+} from "../_shared/edge.ts";
 
 type ServiceAccount = {
   project_id: string;
@@ -28,11 +28,9 @@ type NotificationSettings = {
   sound_enabled: boolean | null;
 };
 
-type RecipientPreferences = {
-  userId: string;
-  pushEnabled: boolean;
-  messagesEnabled: boolean;
-  soundEnabled: boolean;
+type ThreadMemberState = {
+  user_id: string;
+  is_muted: boolean | null;
 };
 
 type PushToken = {
@@ -40,290 +38,346 @@ type PushToken = {
   token: string;
 };
 
-type ThreadMemberState = {
-  user_id: string;
-  is_muted: boolean | null;
-};
-
 type FcmSendResult = {
   ok: boolean;
-  status: number;
   invalidToken: boolean;
   error: string;
 };
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const serviceAccount = loadFirebaseServiceAccount();
-
-  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
-    return json({ error: "Missing Supabase env vars" }, 500);
-  }
-
-  let threadId = "";
-  let messageId = "";
+Deno.serve(async (request) => {
+  const requestId = crypto.randomUUID();
+  let cors: Record<string, string> = {};
   try {
-    const body = await req.json();
-    threadId = String(body.thread_id ?? "");
-    messageId = String(body.message_id ?? "");
-  } catch {
-    return json({ error: "Invalid JSON body" }, 400);
+    cors = strictCorsHeaders(request, "PUSH_ALLOWED_WEB_ORIGINS");
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: cors });
+    }
+    if (request.method !== "POST") {
+      throw new EdgeError(405, "method_not_allowed", "Use POST");
+    }
+
+    const body = await readJsonObject(request, 8 * 1024);
+    const threadId = validateIdentifier(body.thread_id, "thread_id");
+    const messageId = validateIdentifier(body.message_id, "message_id");
+    const supabaseUrl = requiredEnv("SUPABASE_URL");
+    const anonKey = requiredEnv("SUPABASE_ANON_KEY");
+    const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+    const authorization = request.headers.get("Authorization") ?? "";
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authorization } },
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+    const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+    const { data: authData, error: authError } = await userClient.auth
+      .getUser();
+    if (authError || !authData.user) {
+      throw new EdgeError(401, "invalid_session", "Authentication required");
+    }
+    const senderId = authData.user.id;
+
+    const { data: thread, error: threadError } = await userClient
+      .from("message_threads")
+      .select("id,buyer_id,seller_id,member_ids")
+      .eq("id", threadId)
+      .maybeSingle();
+    if (threadError) {
+      throw new EdgeError(
+        503,
+        "thread_lookup_failed",
+        "Message thread could not be verified",
+      );
+    }
+    if (!thread) {
+      throw new EdgeError(404, "thread_not_found", "Message thread not found");
+    }
+    const memberIds = Array.isArray(thread.member_ids)
+      ? thread.member_ids.map(String)
+      : [thread.buyer_id, thread.seller_id].filter(Boolean).map(String);
+    if (!memberIds.includes(senderId)) {
+      throw new EdgeError(
+        403,
+        "thread_membership_required",
+        "Message thread membership is required",
+      );
+    }
+
+    const { data: message, error: messageError } = await userClient
+      .from("chat_messages")
+      .select("id,sender_id,deleted_at")
+      .eq("id", messageId)
+      .eq("thread_id", threadId)
+      .maybeSingle();
+    if (messageError) {
+      throw new EdgeError(
+        503,
+        "message_lookup_failed",
+        "Message could not be verified",
+      );
+    }
+    if (
+      !message ||
+      message.sender_id !== senderId ||
+      message.deleted_at
+    ) {
+      throw new EdgeError(404, "message_not_found", "Message not found");
+    }
+
+    const deliveryAttemptId = await claimPushDelivery(
+      serviceClient,
+      messageId,
+      senderId,
+      threadId,
+    );
+    if (!deliveryAttemptId) {
+      return jsonResponse(
+        {
+          sent: 0,
+          skipped: "already_claimed",
+          request_id: requestId,
+        },
+        200,
+        cors,
+      );
+    }
+
+    try {
+      const result = await deliverGenericPush({
+        serviceClient,
+        serviceAccount: loadFirebaseServiceAccount(),
+        recipientIds: [
+          ...new Set(
+            memberIds.filter((memberId: string) => memberId !== senderId),
+          ),
+        ],
+        threadId,
+        messageId,
+      });
+      await completePushDelivery(
+        serviceClient,
+        deliveryAttemptId,
+        result.status,
+        result.error,
+      );
+      return jsonResponse(
+        {
+          sent: result.sent,
+          failed: result.failed,
+          total: result.total,
+          invalid_tokens_removed: result.invalidTokensRemoved,
+          skipped: result.skipped,
+          request_id: requestId,
+        },
+        200,
+        cors,
+      );
+    } catch (error) {
+      await completePushDelivery(
+        serviceClient,
+        deliveryAttemptId,
+        "failed",
+        error instanceof EdgeError ? error.code : "push_delivery_failed",
+      );
+      throw error;
+    }
+  } catch (error) {
+    return errorResponse(error, requestId, cors);
   }
+});
 
-  if (!threadId || !messageId) {
-    return json({ error: "thread_id and message_id are required" }, 400);
-  }
-
-  const authorization = req.headers.get("Authorization") ?? "";
-  const userClient = createClient(supabaseUrl, anonKey, {
-    global: { headers: { Authorization: authorization } },
-  });
-  const serviceClient = createClient(supabaseUrl, serviceRoleKey);
-
-  const {
-    data: { user },
-    error: userError,
-  } = await userClient.auth.getUser();
-
-  if (userError || !user) {
-    return json({ error: "Unauthorized" }, 401);
-  }
-
-  const { data: thread, error: threadError } = await userClient
-    .from("message_threads")
-    .select(
-      "id,buyer_id,seller_id,buyer_name,seller_name,title,is_group,member_ids",
-    )
-    .eq("id", threadId)
-    .maybeSingle();
-
-  if (threadError) return json({ error: threadError.message }, 500);
-  if (!thread) return json({ error: "Thread not found" }, 404);
-
-  const senderId = user.id;
-  const memberIds = Array.isArray(thread.member_ids)
-    ? thread.member_ids.map(String)
-    : [thread.buyer_id, thread.seller_id].filter(Boolean).map(String);
-  if (!memberIds.includes(senderId)) {
-    return json({ error: "Forbidden" }, 403);
-  }
-
-  const { data: message, error: messageError } = await userClient
-    .from("chat_messages")
-    .select("id,text,sender_id,sender_name,type,product")
-    .eq("id", messageId)
-    .eq("thread_id", threadId)
-    .maybeSingle() as {
-      data: ChatMessage | null;
-      error: { message: string } | null;
-    };
-
-  if (messageError) return json({ error: messageError.message }, 500);
-  if (!message || message.sender_id !== senderId) {
-    return json({ error: "Message not found" }, 404);
-  }
-
-  const recipientIds = [
-    ...new Set(memberIds.filter((id: string) => id !== senderId)),
-  ];
+async function deliverGenericPush({
+  serviceClient,
+  serviceAccount,
+  recipientIds,
+  threadId,
+  messageId,
+}: {
+  serviceClient: SupabaseClient<any, "public", any>;
+  serviceAccount: ServiceAccount | null;
+  recipientIds: string[];
+  threadId: string;
+  messageId: string;
+}): Promise<{
+  status: "sent" | "skipped" | "failed";
+  sent: number;
+  failed: number;
+  total: number;
+  invalidTokensRemoved: number;
+  skipped: string | null;
+  error: string;
+}> {
   if (recipientIds.length === 0) {
-    return json({ sent: 0, skipped: "empty_recipient" });
+    return skippedResult("empty_recipient");
+  }
+  const [
+    { data: settingsRows, error: settingsError },
+    { data: memberStates, error: statesError },
+  ] = await Promise.all([
+    serviceClient
+      .from("notification_settings")
+      .select("user_id,push_enabled,messages_enabled,sound_enabled")
+      .in("user_id", recipientIds),
+    serviceClient
+      .from("chat_thread_member_state")
+      .select("user_id,is_muted")
+      .eq("thread_id", threadId)
+      .in("user_id", recipientIds),
+  ]);
+  if (settingsError || statesError) {
+    throw new EdgeError(
+      503,
+      "push_preferences_unavailable",
+      "Push preferences could not be loaded",
+    );
   }
 
-  const title = truncateNotificationText(
-    message.sender_name?.trim() ||
-      (senderId === thread.buyer_id ? thread.buyer_name : thread.seller_name) ||
-      "Новое сообщение",
-    80,
-  );
-  const rawBody = message.type === "product"
-    ? `Объявление: ${message.product?.title ?? "товар"}`
-    : message.type === "image"
-    ? message.text?.trim() || "Фотография"
-    : message.type === "video"
-    ? message.text?.trim() || "Видео"
-    : message.text?.trim() || "Новое сообщение";
-  const body = truncateNotificationText(rawBody, 180);
-
-  const { data: settingsRows, error: settingsError } = await serviceClient
-    .from("notification_settings")
-    .select("user_id,push_enabled,messages_enabled,sound_enabled")
-    .in("user_id", recipientIds) as {
-      data: NotificationSettings[] | null;
-      error: { message: string } | null;
-    };
-
-  if (settingsError) return json({ error: settingsError.message }, 500);
-
-  const { data: threadStateRows, error: threadStateError } = await serviceClient
-    .from("chat_thread_member_state")
-    .select("user_id,is_muted")
-    .eq("thread_id", threadId)
-    .in("user_id", recipientIds) as {
-      data: ThreadMemberState[] | null;
-      error: { message: string } | null;
-    };
-
-  if (threadStateError) {
-    return json({ error: threadStateError.message }, 500);
-  }
-  const mutedRecipientIds = new Set(
-    (threadStateRows ?? [])
+  const muted = new Set(
+    ((memberStates ?? []) as ThreadMemberState[])
       .filter((state) => state.is_muted === true)
       .map((state) => state.user_id),
   );
-
-  const settingsByUser = new Map(
-    (settingsRows ?? []).map((settings) => [settings.user_id, settings]),
+  const settings = new Map(
+    ((settingsRows ?? []) as NotificationSettings[])
+      .map((row) => [row.user_id, row]),
   );
-  const recipients: RecipientPreferences[] = recipientIds.map((userId) => {
-    const settings = settingsByUser.get(userId);
-    return {
-      userId,
-      // A missing settings row (or a nullable legacy value) means enabled.
-      pushEnabled: settings?.push_enabled ?? true,
-      messagesEnabled: settings?.messages_enabled ?? true,
-      soundEnabled: settings?.sound_enabled ?? true,
-    };
+  const enabledRecipients = recipientIds.filter((recipientId) => {
+    const preferences = settings.get(recipientId);
+    return !muted.has(recipientId) &&
+      (preferences?.push_enabled ?? true) &&
+      (preferences?.messages_enabled ?? true);
   });
-  const pushRecipients = recipients.filter(
-    (item) =>
-      item.messagesEnabled &&
-      item.pushEnabled &&
-      !mutedRecipientIds.has(item.userId),
-  );
-
-  if (pushRecipients.length === 0) {
-    return json({
-      sent: 0,
-      total: 0,
-      skipped: "messages_push_disabled_or_thread_muted",
-    });
+  if (enabledRecipients.length === 0) {
+    return skippedResult("push_disabled_or_thread_muted");
   }
 
-  const pushRecipientIds = pushRecipients.map((item) => item.userId);
-  const preferencesByUser = new Map(
-    pushRecipients.map((preferences) => [preferences.userId, preferences]),
-  );
-  const { data: tokenRows, error: tokensError } = await serviceClient
+  const { data: tokenRows, error: tokenError } = await serviceClient
     .from("device_push_tokens")
     .select("user_id,token")
-    .in("user_id", pushRecipientIds) as {
-      data: PushToken[] | null;
-      error: { message: string } | null;
-    };
-
-  if (tokensError) return json({ error: tokensError.message }, 500);
-  const tokens = (tokenRows ?? []).filter((row) =>
-    row.token && preferencesByUser.has(row.user_id)
-  );
-  if (tokens.length === 0) {
-    return json({
-      sent: 0,
-      total: 0,
-      skipped: "no_tokens",
-    });
+    .in("user_id", enabledRecipients);
+  if (tokenError) {
+    throw new EdgeError(
+      503,
+      "push_tokens_unavailable",
+      "Push tokens could not be loaded",
+    );
   }
-
+  const enabledSet = new Set(enabledRecipients);
+  const tokens = ((tokenRows ?? []) as PushToken[]).filter((row) =>
+    row.token && enabledSet.has(row.user_id)
+  );
+  if (tokens.length === 0) return skippedResult("no_tokens");
   if (!serviceAccount) {
-    return json({
-      sent: 0,
-      total: tokens.length,
-      skipped: "firebase_not_configured",
-    });
+    throw new EdgeError(
+      503,
+      "push_provider_unconfigured",
+      "Push provider is not configured",
+    );
   }
-
-  const badgeByUser = new Map<string, number>();
-  await Promise.all(
-    pushRecipientIds.map(async (recipientId) => {
-      const { count, error } = await serviceClient
-        .from("notifications")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", recipientId)
-        .eq("is_read", false)
-        .neq("kind", "message");
-      if (error) {
-        console.error(`Badge count failed for recipient: ${error.message}`);
-        badgeByUser.set(recipientId, 0);
-        return;
-      }
-      badgeByUser.set(recipientId, count ?? 0);
-    }),
-  );
 
   let accessToken: string;
   try {
     accessToken = await firebaseAccessToken(serviceAccount);
-  } catch (error) {
-    console.error("Could not authorize Firebase push delivery", error);
-    return json({
-      error: "Could not authorize push delivery",
-    }, 502);
+  } catch {
+    throw new EdgeError(
+      502,
+      "push_provider_unavailable",
+      "Push provider is unavailable",
+    );
   }
-
+  const soundByRecipient = new Map(
+    enabledRecipients.map((recipientId) => [
+      recipientId,
+      settings.get(recipientId)?.sound_enabled ?? true,
+    ]),
+  );
   const results = await Promise.all(
-    tokens.map(async ({ user_id: recipientId, token }) => {
-      const preferences = preferencesByUser.get(recipientId);
-      if (!preferences) return { sent: false, invalidTokenRemoved: false };
-
-      try {
-        const result = await sendFcmMessage({
-          accessToken,
-          projectId: serviceAccount.project_id,
-          token,
-          title,
-          body,
-          threadId,
-          messageId,
-          badge: badgeByUser.get(recipientId) ?? 0,
-          soundEnabled: preferences.soundEnabled,
-        });
-
-        let invalidTokenRemoved = false;
-        if (result.invalidToken) {
-          const { error: deleteError } = await serviceClient
-            .from("device_push_tokens")
-            .delete()
-            .eq("token", token);
-          if (deleteError) {
-            console.error(
-              `Could not remove invalid push token: ${deleteError.message}`,
-            );
-          } else {
-            invalidTokenRemoved = true;
-          }
-        }
-
-        if (!result.ok) {
-          console.error(
-            `FCM delivery failed with status ${result.status}: ${result.error}`,
-          );
-        }
-        return { sent: result.ok, invalidTokenRemoved };
-      } catch (error) {
-        // A network or payload failure for one installation must not prevent
-        // delivery attempts to the recipient's other installations.
-        console.error("FCM delivery failed for one installation", error);
-        return { sent: false, invalidTokenRemoved: false };
+    tokens.map(async (row) => {
+      const result = await sendFcmMessage({
+        accessToken,
+        projectId: serviceAccount.project_id,
+        token: row.token,
+        threadId,
+        messageId,
+        soundEnabled: soundByRecipient.get(row.user_id) ?? true,
+      }).catch((): FcmSendResult => ({
+        ok: false,
+        invalidToken: false,
+        error: "network_error",
+      }));
+      let invalidTokenRemoved = false;
+      if (result.invalidToken) {
+        const { error } = await serviceClient
+          .from("device_push_tokens")
+          .delete()
+          .eq("token", row.token)
+          .eq("user_id", row.user_id);
+        invalidTokenRemoved = !error;
       }
+      return { ...result, invalidTokenRemoved };
     }),
   );
-
-  return json({
-    sent: results.filter((result) => result.sent).length,
-    failed: results.filter((result) => !result.sent).length,
+  const sent = results.filter((result) => result.ok).length;
+  const failed = results.length - sent;
+  return {
+    status: sent > 0 ? "sent" : "failed",
+    sent,
+    failed,
     total: results.length,
-    invalid_tokens_removed: results.filter((result) =>
-      result.invalidTokenRemoved
-    ).length,
+    invalidTokensRemoved:
+      results.filter((result) => result.invalidTokenRemoved).length,
+    skipped: null,
+    error: failed > 0 ? `failed_installations:${failed}` : "",
+  };
+}
+
+async function claimPushDelivery(
+  serviceClient: SupabaseClient<any, "public", any>,
+  messageId: string,
+  senderId: string,
+  threadId: string,
+): Promise<string | null> {
+  const { data, error } = await serviceClient.rpc("claim_push_delivery", {
+    p_message_id: messageId,
+    p_sender_id: senderId,
+    p_thread_id: threadId,
   });
-});
+  if (error) {
+    const code = safeErrorCode(error.message);
+    if (error.code === "55000" || code.includes("rate_limit")) {
+      throw new EdgeError(429, "push_rate_limited", "Too many push requests");
+    }
+    console.error("Push delivery claim failed", error);
+    throw new EdgeError(
+      503,
+      "push_claim_failed",
+      "Push delivery could not be claimed",
+    );
+  }
+  return typeof data === "string" && isUuid(data) ? data : null;
+}
+
+async function completePushDelivery(
+  serviceClient: SupabaseClient<any, "public", any>,
+  attemptId: string,
+  status: "sent" | "skipped" | "failed",
+  errorMessage: string,
+): Promise<void> {
+  const { error } = await serviceClient.rpc("complete_push_delivery", {
+    p_attempt_id: attemptId,
+    p_status: status,
+    p_error: errorMessage.slice(0, 500),
+  });
+  if (error) console.error("Push delivery completion failed", error);
+}
 
 function loadFirebaseServiceAccount(): ServiceAccount | null {
   const rawJson = Deno.env.get("FIREBASE_SERVICE_ACCOUNT_JSON");
@@ -337,7 +391,6 @@ function loadFirebaseServiceAccount(): ServiceAccount | null {
       return null;
     }
   }
-
   const projectId = Deno.env.get("FIREBASE_PROJECT_ID");
   const clientEmail = Deno.env.get("FIREBASE_CLIENT_EMAIL");
   const privateKey = Deno.env.get("FIREBASE_PRIVATE_KEY")?.replaceAll(
@@ -376,21 +429,28 @@ async function firebaseAccessToken(account: ServiceAccount): Promise<string> {
     new TextEncoder().encode(unsignedJwt),
   );
   const assertion = `${unsignedJwt}.${base64UrlBytes(signature)}`;
-
-  const response = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Could not get Firebase access token: ${response.status}`);
+  const response = await fetchWithTimeout(
+    "https://oauth2.googleapis.com/token",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion,
+      }),
+    },
+    8_000,
+  );
+  const bytes = await readLimitedBody(response.body, 32 * 1024);
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    // Handled as an unavailable provider below.
   }
-
-  const data = await response.json();
+  if (!response.ok || !data.access_token) {
+    throw new Error("Firebase access token request failed");
+  }
   return String(data.access_token);
 }
 
@@ -398,37 +458,30 @@ async function sendFcmMessage({
   accessToken,
   projectId,
   token,
-  title,
-  body,
   threadId,
   messageId,
-  badge,
   soundEnabled,
 }: {
   accessToken: string;
   projectId: string;
   token: string;
-  title: string;
-  body: string;
   threadId: string;
   messageId: string;
-  badge: number;
   soundEnabled: boolean;
 }): Promise<FcmSendResult> {
+  const title = "Новое сообщение";
+  const body = "Откройте приложение, чтобы прочитать.";
   const androidNotification: Record<string, unknown> = {
     channel_id: soundEnabled ? "messages" : "messages_silent",
     click_action: "FLUTTER_NOTIFICATION_CLICK",
   };
   if (soundEnabled) androidNotification.sound = "default";
-
-  const aps: Record<string, unknown> = {
-    badge,
-    "thread-id": threadId,
-  };
+  const aps: Record<string, unknown> = { "thread-id": threadId };
   if (soundEnabled) aps.sound = "default";
-
-  const response = await fetch(
-    `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
+  const response = await fetchWithTimeout(
+    `https://fcm.googleapis.com/v1/projects/${
+      encodeURIComponent(projectId)
+    }/messages:send`,
     {
       method: "POST",
       headers: {
@@ -445,9 +498,6 @@ async function sendFcmMessage({
             target_id: messageId,
             thread_id: threadId,
             message_id: messageId,
-            title,
-            body,
-            sound_enabled: String(soundEnabled),
           },
           android: {
             priority: "high",
@@ -458,25 +508,20 @@ async function sendFcmMessage({
               "apns-priority": "10",
               "apns-push-type": "alert",
             },
-            payload: {
-              aps,
-            },
+            payload: { aps },
           },
         },
       }),
     },
+    8_000,
   );
-
-  const responseText = await response.text();
-  if (response.ok) {
-    return { ok: true, status: response.status, invalidToken: false, error: "" };
-  }
-
+  const responseText = new TextDecoder().decode(
+    await readLimitedBody(response.body, 16 * 1024),
+  );
   return {
-    ok: false,
-    status: response.status,
-    invalidToken: isUnregisteredFcmToken(responseText),
-    error: responseText.slice(0, 1000),
+    ok: response.ok,
+    invalidToken: !response.ok && isUnregisteredFcmToken(responseText),
+    error: response.ok ? "" : `fcm_http_${response.status}`,
   };
 }
 
@@ -486,15 +531,9 @@ function isUnregisteredFcmToken(responseText: string): boolean {
   ) {
     return true;
   }
-
   try {
     const payload = JSON.parse(responseText) as {
-      error?: {
-        details?: Array<{
-          errorCode?: string;
-          [key: string]: unknown;
-        }>;
-      };
+      error?: { details?: Array<{ errorCode?: string }> };
     };
     return payload.error?.details?.some((detail) =>
       detail.errorCode?.toUpperCase() === "UNREGISTERED"
@@ -504,10 +543,35 @@ function isUnregisteredFcmToken(responseText: string): boolean {
   }
 }
 
-function truncateNotificationText(value: string, maxCharacters: number) {
-  const characters = Array.from(value.trim());
-  if (characters.length <= maxCharacters) return characters.join("");
-  return `${characters.slice(0, Math.max(1, maxCharacters - 1)).join("")}…`;
+function skippedResult(reason: string) {
+  return {
+    status: "skipped" as const,
+    sent: 0,
+    failed: 0,
+    total: 0,
+    invalidTokensRemoved: 0,
+    skipped: reason,
+    error: reason,
+  };
+}
+
+function validateIdentifier(value: unknown, field: string): string {
+  const identifier = String(value ?? "");
+  if (
+    identifier.length < 1 ||
+    identifier.length > 200 ||
+    !/^[A-Za-z0-9._:-]+$/.test(identifier)
+  ) {
+    throw new EdgeError(400, `invalid_${field}`, `${field} is invalid`);
+  }
+  return identifier;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(
+      value,
+    );
 }
 
 function pemToArrayBuffer(pem: string): ArrayBuffer {
@@ -517,8 +581,8 @@ function pemToArrayBuffer(pem: string): ArrayBuffer {
     .replace(/\s/g, "");
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = binary.charCodeAt(index);
   }
   return bytes.buffer;
 }
@@ -537,21 +601,9 @@ function base64UrlString(value: string): string {
 function base64UrlBytes(value: ArrayBuffer): string {
   const bytes = new Uint8Array(value);
   let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
+  for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary)
     .replaceAll("+", "-")
     .replaceAll("/", "_")
     .replaceAll("=", "");
-}
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      ...corsHeaders,
-      "Content-Type": "application/json",
-    },
-  });
 }

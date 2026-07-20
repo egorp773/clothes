@@ -1,3 +1,5 @@
+import 'package:image_picker/image_picker.dart';
+
 class OutfitItem {
   const OutfitItem({
     required this.id,
@@ -113,6 +115,7 @@ class CreatedOutfit {
     this.likesCount = 0,
     this.viewsCount = 0,
     this.publishedAt,
+    this.pendingPhotoFiles = const [],
   });
 
   final String id;
@@ -128,6 +131,11 @@ class CreatedOutfit {
   final int likesCount;
   final int viewsCount;
   final DateTime? publishedAt;
+
+  /// Device-local files waiting for the server-created outfit namespace.
+  /// They are deliberately transient and are never serialized to local cache
+  /// or sent to PostgREST as paths controlled by the caller.
+  final List<XFile> pendingPhotoFiles;
 
   factory CreatedOutfit.fromJson(Map<String, dynamic> json) {
     return CreatedOutfit(
@@ -219,6 +227,7 @@ class CreatedOutfit {
     int? likesCount,
     int? viewsCount,
     DateTime? publishedAt,
+    List<XFile>? pendingPhotoFiles,
   }) {
     return CreatedOutfit(
       id: id ?? this.id,
@@ -235,6 +244,7 @@ class CreatedOutfit {
       likesCount: likesCount ?? this.likesCount,
       viewsCount: viewsCount ?? this.viewsCount,
       publishedAt: publishedAt ?? this.publishedAt,
+      pendingPhotoFiles: pendingPhotoFiles ?? this.pendingPhotoFiles,
     );
   }
 }
