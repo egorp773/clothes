@@ -87,8 +87,50 @@ create table if not exists public.users (
   updated_at timestamptz not null default now()
 );
 
-insert into public.users (id, auth_user_id, created_at, updated_at)
-select account.id, account.id, account.created_at, now()
+-- Some legacy projects created public.users before the durable identity
+-- boundary existed. CREATE TABLE IF NOT EXISTS does not add missing columns,
+-- so normalize that shape additively before the first backfill.
+alter table public.users
+  add column if not exists auth_user_id uuid,
+  add column if not exists account_status text not null default 'active',
+  add column if not exists legal_onboarding_completed_at timestamptz,
+  add column if not exists blocked_at timestamptz,
+  add column if not exists anonymized_at timestamptz,
+  add column if not exists created_at timestamptz not null default now(),
+  add column if not exists updated_at timestamptz not null default now();
+
+create unique index if not exists users_auth_user_id_uidx
+  on public.users (auth_user_id) where auth_user_id is not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.users'::regclass
+      and conname = 'users_auth_user_id_fkey'
+  ) then
+    alter table public.users
+      add constraint users_auth_user_id_fkey
+      foreign key (auth_user_id) references auth.users(id)
+      on delete set null not valid;
+    alter table public.users validate constraint users_auth_user_id_fkey;
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.users'::regclass
+      and conname = 'users_account_status_check'
+  ) then
+    alter table public.users
+      add constraint users_account_status_check check (
+        account_status in ('active', 'blocked', 'deletion_pending', 'anonymized')
+      ) not valid;
+    alter table public.users validate constraint users_account_status_check;
+  end if;
+end
+$$;
+
+insert into public.users (id, email, auth_user_id, created_at, updated_at)
+select account.id, coalesce(account.email, ''), account.id, account.created_at, now()
 from auth.users account
 on conflict (id) do update
 set auth_user_id = excluded.auth_user_id,
@@ -423,8 +465,11 @@ security definer
 set search_path = ''
 as $$
 begin
-  insert into public.users (id, auth_user_id, created_at, updated_at)
-  values (new.id, new.id, coalesce(new.created_at, now()), now())
+  insert into public.users (
+    id, email, auth_user_id, created_at, updated_at
+  ) values (
+    new.id, coalesce(new.email, ''), new.id, coalesce(new.created_at, now()), now()
+  )
   on conflict (id) do update
   set auth_user_id = excluded.auth_user_id,
       updated_at = now()
@@ -482,6 +527,19 @@ alter table public.profiles
 alter table public.profiles
   add constraint profiles_id_fkey
   foreign key (id) references public.users(id) on delete restrict;
+
+create table if not exists public.profile_private_details (
+  user_id uuid primary key references public.users(id) on delete restrict,
+  first_name text not null default '',
+  last_name text not null default '',
+  middle_name text not null default '',
+  gender text not null default 'male'
+    check (gender in ('male', 'female')),
+  birth_date date,
+  phone text not null default '',
+  email text not null default '',
+  updated_at timestamptz not null default now()
+);
 
 alter table public.profile_private_details
   drop constraint if exists profile_private_details_user_id_fkey;
@@ -775,8 +833,10 @@ begin
       using errcode = '22023';
   end if;
 
-  insert into public.users (id, auth_user_id)
-  values (p_user_id, p_user_id)
+  insert into public.users (id, email, auth_user_id)
+  select account.id, coalesce(account.email, ''), account.id
+  from auth.users account
+  where account.id = p_user_id
   on conflict (id) do nothing;
 
   if not exists (
@@ -800,8 +860,8 @@ begin
           detail = required_type::text;
     end if;
 
-    select version_row, document
-    into active_version, active_document
+    select version_row.*
+    into active_version
     from public.legal_documents document
     join public.legal_document_versions version_row
       on version_row.document_id = document.id
@@ -821,6 +881,9 @@ begin
         using errcode = '55000',
           detail = required_type::text;
     end if;
+    select document.* into active_document
+    from public.legal_documents document
+    where document.id = active_version.document_id;
 
     insert into public.user_consents (
       user_id,
@@ -850,8 +913,8 @@ begin
   end loop;
 
   if nullif(btrim(coalesce(p_marketing_version, '')), '') is not null then
-    select version_row, document
-    into active_version, active_document
+    select version_row.*
+    into active_version
     from public.legal_documents document
     join public.legal_document_versions version_row
       on version_row.document_id = document.id
@@ -869,6 +932,9 @@ begin
       raise exception 'marketing_document_version_not_active'
         using errcode = '55000';
     end if;
+    select document.* into active_document
+    from public.legal_documents document
+    where document.id = active_version.document_id;
 
     insert into public.user_consents (
       user_id,

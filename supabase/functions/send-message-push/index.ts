@@ -14,6 +14,11 @@ import {
   safeErrorCode,
   strictCorsHeaders,
 } from "../_shared/edge.ts";
+import {
+  parsePushClaimResponse,
+  type PushClaimDecision,
+  takeBoundedPushTokens,
+} from "../_shared/push_security.ts";
 
 type ServiceAccount = {
   project_id: string;
@@ -33,6 +38,10 @@ type ThreadMemberState = {
   is_muted: boolean | null;
 };
 
+type ThreadMember = {
+  user_id: string;
+};
+
 type PushToken = {
   user_id: string;
   token: string;
@@ -43,6 +52,11 @@ type FcmSendResult = {
   invalidToken: boolean;
   error: string;
 };
+
+const maxPushRecipients = 49;
+const maxPushTokensPerRecipient = 5;
+const tokenLookupConcurrency = 6;
+const fcmSendConcurrency = 8;
 
 Deno.serve(async (request) => {
   const requestId = crypto.randomUUID();
@@ -87,7 +101,7 @@ Deno.serve(async (request) => {
 
     const { data: thread, error: threadError } = await userClient
       .from("message_threads")
-      .select("id,buyer_id,seller_id,member_ids")
+      .select("id")
       .eq("id", threadId)
       .maybeSingle();
     if (threadError) {
@@ -100,9 +114,20 @@ Deno.serve(async (request) => {
     if (!thread) {
       throw new EdgeError(404, "thread_not_found", "Message thread not found");
     }
-    const memberIds = Array.isArray(thread.member_ids)
-      ? thread.member_ids.map(String)
-      : [thread.buyer_id, thread.seller_id].filter(Boolean).map(String);
+    const { data: memberRows, error: memberError } = await userClient
+      .from("chat_thread_members")
+      .select("user_id")
+      .eq("thread_id", threadId)
+      .is("left_at", null);
+    if (memberError) {
+      throw new EdgeError(
+        503,
+        "thread_membership_lookup_failed",
+        "Message thread membership could not be verified",
+      );
+    }
+    const memberIds = ((memberRows ?? []) as ThreadMember[])
+      .map((member) => member.user_id);
     if (!memberIds.includes(senderId)) {
       throw new EdgeError(
         403,
@@ -132,17 +157,20 @@ Deno.serve(async (request) => {
       throw new EdgeError(404, "message_not_found", "Message not found");
     }
 
-    const deliveryAttemptId = await claimPushDelivery(
+    const pushClaim = await claimPushDelivery(
       serviceClient,
       messageId,
       senderId,
       threadId,
     );
-    if (!deliveryAttemptId) {
+    if (!pushClaim.attemptId) {
       return jsonResponse(
         {
           sent: 0,
-          skipped: "already_claimed",
+          skipped: pushClaim.skipped,
+          ...(pushClaim.retryAfterSeconds === null
+            ? {}
+            : { retry_after_seconds: pushClaim.retryAfterSeconds }),
           request_id: requestId,
         },
         200,
@@ -164,7 +192,7 @@ Deno.serve(async (request) => {
       });
       await completePushDelivery(
         serviceClient,
-        deliveryAttemptId,
+        pushClaim.attemptId,
         result.status,
         result.error,
       );
@@ -183,7 +211,7 @@ Deno.serve(async (request) => {
     } catch (error) {
       await completePushDelivery(
         serviceClient,
-        deliveryAttemptId,
+        pushClaim.attemptId,
         "failed",
         error instanceof EdgeError ? error.code : "push_delivery_failed",
       );
@@ -215,8 +243,17 @@ async function deliverGenericPush({
   skipped: string | null;
   error: string;
 }> {
-  if (recipientIds.length === 0) {
+  const uniqueRecipientIds = [...new Set(recipientIds)]
+    .filter((recipientId) => isUuid(recipientId));
+  if (uniqueRecipientIds.length === 0) {
     return skippedResult("empty_recipient");
+  }
+  if (uniqueRecipientIds.length > maxPushRecipients) {
+    throw new EdgeError(
+      422,
+      "push_fanout_too_large",
+      "Push recipient fan-out exceeds the supported limit",
+    );
   }
   const [
     { data: settingsRows, error: settingsError },
@@ -225,12 +262,12 @@ async function deliverGenericPush({
     serviceClient
       .from("notification_settings")
       .select("user_id,push_enabled,messages_enabled,sound_enabled")
-      .in("user_id", recipientIds),
+      .in("user_id", uniqueRecipientIds),
     serviceClient
       .from("chat_thread_member_state")
       .select("user_id,is_muted")
       .eq("thread_id", threadId)
-      .in("user_id", recipientIds),
+      .in("user_id", uniqueRecipientIds),
   ]);
   if (settingsError || statesError) {
     throw new EdgeError(
@@ -249,7 +286,7 @@ async function deliverGenericPush({
     ((settingsRows ?? []) as NotificationSettings[])
       .map((row) => [row.user_id, row]),
   );
-  const enabledRecipients = recipientIds.filter((recipientId) => {
+  const enabledRecipients = uniqueRecipientIds.filter((recipientId) => {
     const preferences = settings.get(recipientId);
     return !muted.has(recipientId) &&
       (preferences?.push_enabled ?? true) &&
@@ -259,20 +296,9 @@ async function deliverGenericPush({
     return skippedResult("push_disabled_or_thread_muted");
   }
 
-  const { data: tokenRows, error: tokenError } = await serviceClient
-    .from("device_push_tokens")
-    .select("user_id,token")
-    .in("user_id", enabledRecipients);
-  if (tokenError) {
-    throw new EdgeError(
-      503,
-      "push_tokens_unavailable",
-      "Push tokens could not be loaded",
-    );
-  }
-  const enabledSet = new Set(enabledRecipients);
-  const tokens = ((tokenRows ?? []) as PushToken[]).filter((row) =>
-    row.token && enabledSet.has(row.user_id)
+  const tokens = await loadBoundedPushTokens(
+    serviceClient,
+    enabledRecipients,
   );
   if (tokens.length === 0) return skippedResult("no_tokens");
   if (!serviceAccount) {
@@ -299,8 +325,10 @@ async function deliverGenericPush({
       settings.get(recipientId)?.sound_enabled ?? true,
     ]),
   );
-  const results = await Promise.all(
-    tokens.map(async (row) => {
+  const results = await mapWithConcurrency(
+    tokens,
+    fcmSendConcurrency,
+    async (row) => {
       const result = await sendFcmMessage({
         accessToken,
         projectId: serviceAccount.project_id,
@@ -323,7 +351,7 @@ async function deliverGenericPush({
         invalidTokenRemoved = !error;
       }
       return { ...result, invalidTokenRemoved };
-    }),
+    },
   );
   const sent = results.filter((result) => result.ok).length;
   const failed = results.length - sent;
@@ -344,7 +372,7 @@ async function claimPushDelivery(
   messageId: string,
   senderId: string,
   threadId: string,
-): Promise<string | null> {
+): Promise<PushClaimDecision> {
   const { data, error } = await serviceClient.rpc("claim_push_delivery", {
     p_message_id: messageId,
     p_sender_id: senderId,
@@ -355,14 +383,16 @@ async function claimPushDelivery(
     if (error.code === "55000" || code.includes("rate_limit")) {
       throw new EdgeError(429, "push_rate_limited", "Too many push requests");
     }
-    console.error("Push delivery claim failed", error);
+    console.error("Push delivery claim failed", {
+      code: safeErrorCode(String(error.code ?? error.message)),
+    });
     throw new EdgeError(
       503,
       "push_claim_failed",
       "Push delivery could not be claimed",
     );
   }
-  return typeof data === "string" && isUuid(data) ? data : null;
+  return parsePushClaimResponse(data);
 }
 
 async function completePushDelivery(
@@ -376,7 +406,64 @@ async function completePushDelivery(
     p_status: status,
     p_error: errorMessage.slice(0, 500),
   });
-  if (error) console.error("Push delivery completion failed", error);
+  if (error) {
+    console.error("Push delivery completion failed", {
+      code: safeErrorCode(String(error.code ?? error.message)),
+    });
+  }
+}
+
+async function loadBoundedPushTokens(
+  serviceClient: SupabaseClient<any, "public", any>,
+  recipientIds: string[],
+): Promise<PushToken[]> {
+  const byRecipient = await mapWithConcurrency(
+    recipientIds,
+    tokenLookupConcurrency,
+    async (recipientId): Promise<PushToken[]> => {
+      const { data, error } = await serviceClient
+        .from("device_push_tokens")
+        .select("user_id,token,updated_at")
+        .eq("user_id", recipientId)
+        .order("updated_at", { ascending: false })
+        .limit(maxPushTokensPerRecipient * 3);
+      if (error) {
+        throw new EdgeError(
+          503,
+          "push_tokens_unavailable",
+          "Push tokens could not be loaded",
+        );
+      }
+      return takeBoundedPushTokens(
+        recipientId,
+        (data ?? []) as PushToken[],
+        maxPushTokensPerRecipient,
+      );
+    },
+  );
+  return byRecipient.flat();
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (true) {
+        const index = nextIndex++;
+        if (index >= items.length) return;
+        results[index] = await mapper(items[index], index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
 }
 
 function loadFirebaseServiceAccount(): ServiceAccount | null {

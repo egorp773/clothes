@@ -1252,6 +1252,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final Set<String> _retryingMessageIds = <String>{};
   bool _isMarkingRead = false;
   bool _markReadAgain = false;
+  bool _isLoadingOlder = false;
   ChatMessage? _replyTo;
   ChatMessage? _editingMessage;
   bool _isChatSearching = false;
@@ -1270,6 +1271,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     _controller.text = _thread.draft;
     _controller.addListener(_saveDraftLater);
+    _scrollController.addListener(_loadOlderIfNeeded);
     widget.threadsListenable.addListener(_refreshThread);
     widget.actions?.setVisibility?.call(_thread.id, true);
     unawaited(_markCurrentThreadRead());
@@ -1316,6 +1318,37 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!_scrollController.hasClients) return true;
     final position = _scrollController.position;
     return position.maxScrollExtent - position.pixels < 180;
+  }
+
+  Future<void> _loadOlderIfNeeded() async {
+    final loadOlder = widget.actions?.loadOlder;
+    if (loadOlder == null ||
+        _isLoadingOlder ||
+        !_scrollController.hasClients ||
+        _scrollController.position.pixels > 120) {
+      return;
+    }
+    _isLoadingOlder = true;
+    final previousExtent = _scrollController.position.maxScrollExtent;
+    final previousOffset = _scrollController.position.pixels;
+    try {
+      final loaded = await loadOlder(_thread.id);
+      if (!loaded || !mounted) return;
+      await WidgetsBinding.instance.endOfFrame;
+      if (!_scrollController.hasClients) return;
+      final addedExtent =
+          _scrollController.position.maxScrollExtent - previousExtent;
+      _scrollController.jumpTo(
+        (previousOffset + addedExtent).clamp(
+          0.0,
+          _scrollController.position.maxScrollExtent,
+        ),
+      );
+    } catch (error, stackTrace) {
+      _logChatUiFailure('load older messages', error, stackTrace);
+    } finally {
+      _isLoadingOlder = false;
+    }
   }
 
   bool _messagesChanged(MessageThread latest) {
@@ -1435,6 +1468,7 @@ class _ChatScreenState extends State<ChatScreen> {
       unawaited(_saveDraftSafely(saveDraft, _controller.text));
     }
     _controller.removeListener(_saveDraftLater);
+    _scrollController.removeListener(_loadOlderIfNeeded);
     _controller.dispose();
     _chatSearchController.dispose();
     _composerFocusNode.dispose();

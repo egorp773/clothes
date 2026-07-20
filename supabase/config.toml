@@ -94,6 +94,9 @@ verify_jwt = true
 [functions.finalize-dispute-evidence]
 verify_jwt = true
 
+[functions.cleanup-chat-media]
+verify_jwt = true
+
 [functions.process-product-image]
 verify_jwt = true
 

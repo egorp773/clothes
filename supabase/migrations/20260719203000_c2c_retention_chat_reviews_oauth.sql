@@ -1106,7 +1106,7 @@ as $$
         select 1
         from public.product_images image
         join public.orders marketplace_order
-          on marketplace_order.product_id = image.product_id::text
+          on marketplace_order.product_id::text = image.product_id::text
         where image.storage_bucket = 'product-images'
           and image.storage_path = stored.name
           and (

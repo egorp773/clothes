@@ -57,16 +57,40 @@ void main() {
     expect(repository, contains("'delete_chat_message'"));
   });
 
+  test('authoritative chat commands are idempotent and match client RPCs', () {
+    final migration = File(
+      'supabase/migrations/20260720200000_chat_server_authority.sql',
+    ).readAsStringSync();
+    final remote = File(
+      'lib/features/chat/chat_remote_data_source.dart',
+    ).readAsStringSync();
+
+    expect(migration, contains('p_client_thread_id text'));
+    expect(remote, contains("'p_client_thread_id': clientThreadId"));
+    expect(migration, contains("hashtextextended('chat:group:' || thread_id"));
+    expect(migration, contains('if not thread_has_messages then'));
+    expect(
+      migration,
+      contains(
+        'on public.chat_messages (thread_id, sender_id, client_message_id)',
+      ),
+    );
+  });
+
   test(
-    'message push respects thread mute and bounds notification payloads',
+    'message push respects mute, validates sender, and bounds device fan-out',
     () {
       final function = File(
         'supabase/functions/send-message-push/index.ts',
       ).readAsStringSync();
 
       expect(function, contains('.from("chat_thread_member_state")'));
-      expect(function, contains('!mutedRecipientIds.has(item.userId)'));
-      expect(function, contains('truncateNotificationText(rawBody, 180)'));
+      expect(function, contains('.from("chat_thread_members")'));
+      expect(function, contains('!muted.has(recipientId)'));
+      expect(function, contains('message.sender_id !== senderId'));
+      expect(function, contains('maxPushTokensPerRecipient = 5'));
+      expect(function, contains('parsePushClaimResponse(data)'));
+      expect(function, isNot(contains('.select("id,sender_id,text')));
     },
   );
 }

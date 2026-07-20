@@ -19,8 +19,10 @@ import '../core/pkce.dart';
 import '../core/supabase_config.dart';
 import '../features/chat/chat_media_send_coordinator.dart';
 import '../features/chat/chat_media_url_cache.dart';
-import '../features/chat/chat_remote_write_coordinator.dart';
 import '../features/chat/chat_sync_coordinator.dart';
+import '../features/chat/chat_errors.dart';
+import '../features/chat/chat_repository.dart';
+import '../features/chat/chat_remote_data_source.dart';
 import '../models/app_profile.dart';
 import '../models/account_deletion.dart';
 import '../models/created_outfit.dart';
@@ -92,7 +94,7 @@ class AppRepository extends ChangeNotifier {
   static const _maxChatVideoBytes = 100 * 1024 * 1024;
   static const _chatMediaSignedUrlSeconds = 60 * 60;
   static const _chatHydrationBatchSize = 40;
-  static const _chatHydrationPageSize = 500;
+  static const _chatMessagePageSize = 50;
   static const _nonListingMediaSignedUrlSeconds = 60 * 60;
 
   @visibleForTesting
@@ -225,17 +227,17 @@ class AppRepository extends ChangeNotifier {
   StreamSubscription<AuthState>? _authSubscription;
   Future<User?>? _sessionRefreshInFlight;
   StreamSubscription<String>? _pushTokenSubscription;
-  RealtimeChannel? _messagesChannel;
-  int _messageSubscriptionGeneration = 0;
   final ChatMediaUrlCache _chatMediaUrlCache = ChatMediaUrlCache(
     timeToLive: const Duration(seconds: _chatMediaSignedUrlSeconds),
   );
   final ChatMediaSendCoordinator _chatMediaSendCoordinator =
       const ChatMediaSendCoordinator();
-  final ChatRemoteWriteCoordinator _chatRemoteWriteCoordinator =
-      const ChatRemoteWriteCoordinator();
   final ChatSyncCoordinator _chatThreadSync = ChatSyncCoordinator();
   final Set<String> _knownRemoteThreadIds = <String>{};
+  ChatRepository? _chatRepository;
+  final Map<String, bool> _chatHasOlderMessages = <String, bool>{};
+  final Set<String> _chatPageLoads = <String>{};
+  bool _isAppForeground = true;
   String? _registeredPushToken;
 
   bool get isReady => _isReady;
@@ -414,7 +416,11 @@ class AppRepository extends ChangeNotifier {
       AppConfig.allowUnsafeLocalDemo;
   MessageNotification? get latestMessageNotification =>
       _latestMessageNotification;
-  bool isChatThreadVisible(String threadId) => _activeThreadId == threadId;
+  bool isChatThreadVisible(String threadId) =>
+      _isAppForeground && _activeThreadId == threadId;
+  ChatDiagnostics? get chatDiagnostics => _chatRepository?.diagnostics;
+  bool hasOlderChatMessages(String threadId) =>
+      _chatHasOlderMessages[threadId] ?? false;
   String get currentUserId => _currentUser?.id ?? '';
   DateTime? lastSeenForUser(String userId) => _lastSeenByUserId[userId];
 
@@ -423,6 +429,15 @@ class AppRepository extends ChangeNotifier {
       _activeThreadId = threadId;
     } else if (_activeThreadId == threadId) {
       _activeThreadId = null;
+    }
+    if (isVisible) unawaited(loadLatestChatMessages(threadId));
+  }
+
+  Future<void> setAppForeground(bool isForeground) async {
+    _isAppForeground = isForeground;
+    if (isForeground && _hasSupabase && currentUserId.isNotEmpty) {
+      await _chatRepository?.onForeground();
+      await _syncChatGaps();
     }
   }
 
@@ -1002,13 +1017,30 @@ class AppRepository extends ChangeNotifier {
 
   Future<void> _activateAuthorizedSession(User user) async {
     if (!_entitlements.canUseMarketplace) return;
-    await _subscribeToMessages();
+    _chatRepository ??= ChatRepository(client: _client, preferences: _prefs)
+      ..addListener(_handleChatDiagnosticsChanged);
+    await _chatRepository!.activate(
+      userId: user.id,
+      onMessage: _applyRealtimeChatMessage,
+      onThreadInvalidated: () =>
+          _chatThreadSync.schedule(_syncThreadsFromSupabase),
+      onGapSync: _syncChatGaps,
+    );
     unawaited(_registerPushToken(user.id));
     unawaited(_updatePresence());
     unawaited(_syncBlockedUsers());
     unawaited(_syncUserCollectionsFromSupabase());
     unawaited(_syncProfileFeaturesFromSupabase());
-    unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
+    unawaited(
+      _chatThreadSync.runNow(_syncThreadsFromSupabase).then((_) async {
+        await _chatRepository?.reconcileOutbox();
+      }),
+    );
+  }
+
+  void _handleChatDiagnosticsChanged() {
+    if (!_isReady) return;
+    notifyListeners();
   }
 
   Future<void> load() async {
@@ -1077,9 +1109,8 @@ class AppRepository extends ChangeNotifier {
             _updatePresence();
           }
         }
-        if (_entitlements.canUseMarketplace) {
-          unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
-        }
+        // Chat delivery is Realtime-first. Foreground/reconnect gap-sync is the
+        // recovery path; this timer must not become a polling transport.
       });
     }
   }
@@ -1567,6 +1598,10 @@ class AppRepository extends ChangeNotifier {
 
   Future<void> _handleAuthState(User? user) async {
     final previousUserId = currentUserId;
+    final nextUserId = user?.id ?? '';
+    if (previousUserId != nextUserId) {
+      await _chatRepository?.deactivate();
+    }
     _currentUser = user;
     if (previousUserId != currentUserId) {
       _entitlements = UserEntitlements.unavailable();
@@ -1608,16 +1643,7 @@ class AppRepository extends ChangeNotifier {
       _pendingRegistrationIntent = null;
       _existingAccountLogin = false;
       _chatThreadSync.cancelPending();
-      _messageSubscriptionGeneration++;
-      final messagesChannel = _messagesChannel;
-      _messagesChannel = null;
-      if (messagesChannel != null) {
-        try {
-          await messagesChannel.unsubscribe();
-        } catch (e) {
-          debugPrint('Message channel unsubscribe error: $e');
-        }
-      }
+      await _chatRepository?.deactivate();
       await _pushTokenSubscription?.cancel();
       _pushTokenSubscription = null;
       _registeredPushToken = null;
@@ -2008,70 +2034,6 @@ class AppRepository extends ChangeNotifier {
     return result;
   }
 
-  Future<void> _subscribeToMessages() async {
-    if (!_hasSupabase || currentUserId.isEmpty) return;
-    final subscriberId = currentUserId;
-    final generation = ++_messageSubscriptionGeneration;
-    final channelName = 'messages:$subscriberId';
-    final previousChannel = _messagesChannel;
-    _messagesChannel = null;
-    if (previousChannel != null) {
-      try {
-        await previousChannel.unsubscribe();
-      } catch (e) {
-        debugPrint('Previous message channel unsubscribe error: $e');
-      }
-    }
-    if (generation != _messageSubscriptionGeneration ||
-        currentUserId != subscriberId) {
-      return;
-    }
-    _messagesChannel = _client
-        .channel(channelName)
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'chat_messages',
-          callback: (payload) {
-            if (payload.eventType == PostgresChangeEvent.insert ||
-                payload.eventType == PostgresChangeEvent.update) {
-              unawaited(_applyRealtimeChatMessage(payload.newRecord));
-            } else {
-              _chatThreadSync.schedule(_syncThreadsFromSupabase);
-            }
-          },
-        )
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'message_threads',
-          callback: (_) => _chatThreadSync.schedule(_syncThreadsFromSupabase),
-        )
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'chat_thread_member_state',
-          callback: (_) => _chatThreadSync.schedule(_syncThreadsFromSupabase),
-        )
-        .subscribe((status, error) {
-          if (generation != _messageSubscriptionGeneration ||
-              currentUserId != subscriberId) {
-            return;
-          }
-          if (status == RealtimeSubscribeStatus.subscribed) {
-            _chatThreadSync.schedule(_syncThreadsFromSupabase);
-            return;
-          }
-          if (status == RealtimeSubscribeStatus.channelError ||
-              status == RealtimeSubscribeStatus.timedOut) {
-            debugPrint(
-              'Message realtime subscription error '
-              '(user=$subscriberId, status=$status): $error',
-            );
-          }
-        });
-  }
-
   Future<void> _applyRealtimeChatMessage(Map<String, dynamic> row) async {
     final syncUserId = currentUserId;
     if (syncUserId.isEmpty) return;
@@ -2088,12 +2050,30 @@ class AppRepository extends ChangeNotifier {
         _isBlockedThread(currentThread)) {
       return;
     }
-    var message = ChatMessage.fromJson(row, currentUserId: syncUserId);
-    message = await _resolveChatMessageMedia(message);
+    late ChatMessage message;
+    try {
+      message = ChatMessage.fromJson(row, currentUserId: syncUserId);
+      message = await _resolveChatMessageMedia(message);
+    } catch (error, stackTrace) {
+      final failure = ChatFailure.from(
+        error,
+        stackTrace,
+        operation: 'apply_realtime_message',
+        threadId: threadId,
+        clientMessageId: row['client_message_id']?.toString() ?? '',
+      );
+      logChatFailure(failure, userId: syncUserId);
+      return;
+    }
     if (currentUserId != syncUserId) return;
 
     final messages = List<ChatMessage>.from(currentThread.messages);
-    final existingIndex = messages.indexWhere((item) => item.id == message.id);
+    final existingIndex = messages.indexWhere(
+      (item) =>
+          item.id == message.id ||
+          (message.clientMessageId.isNotEmpty &&
+              item.clientMessageId == message.clientMessageId),
+    );
     final isNew = existingIndex == -1;
     if (isNew) {
       messages.add(message);
@@ -2106,10 +2086,7 @@ class AppRepository extends ChangeNotifier {
     });
 
     final isIncoming = !message.isMine && !message.isDeleted;
-    final isVisible = _activeThreadId == threadId;
-    final alreadyRead =
-        message.readBy.contains(syncUserId) ||
-        (currentThread.lastReadAt?.isAfter(message.createdAt) ?? false);
+    final isVisible = _isAppForeground && _activeThreadId == threadId;
     final updated = currentThread.copyWith(
       messages: messages,
       lastMessage: messages.isEmpty
@@ -2118,13 +2095,13 @@ class AppRepository extends ChangeNotifier {
       updatedAt: message.createdAt.isAfter(currentThread.updatedAt)
           ? message.createdAt
           : currentThread.updatedAt,
-      unreadCount: isVisible
-          ? 0
-          : isNew && isIncoming && !alreadyRead
-          ? currentThread.unreadCount + 1
-          : currentThread.unreadCount,
+      lastMessageId: messages.isEmpty ? '' : messages.last.id,
+      unreadCount: isVisible ? 0 : currentThread.unreadCount,
     );
     _upsertLocalThread(updated);
+    if (message.isMine && message.clientMessageId.isNotEmpty) {
+      unawaited(_chatRepository?.outbox.remove(message.clientMessageId));
+    }
     if (isNew && isIncoming && !isVisible && !currentThread.isMuted) {
       final senderName = message.senderName.trim().isNotEmpty
           ? message.senderName.trim()
@@ -2139,6 +2116,14 @@ class AppRepository extends ChangeNotifier {
     notifyListeners();
     if (isNew && isIncoming && isVisible) {
       unawaited(markThreadRead(threadId));
+    }
+    if (isNew && isIncoming) {
+      unawaited(
+        _chatRepository?.acknowledgeDelivered(
+          threadId: threadId,
+          messageIds: [message.id],
+        ),
+      );
     }
     unawaited(
       _saveThreadsLocal().catchError((Object error) {
@@ -2165,7 +2150,8 @@ class AppRepository extends ChangeNotifier {
         final response = await _client
             .from('chat_thread_member_state')
             .select(
-              'thread_id,is_pinned,is_muted,is_archived,draft,last_read_at',
+              'thread_id,is_pinned,is_muted,is_archived,draft,last_read_at,'
+              'last_read_message_id,unread_count',
             )
             .eq('user_id', currentUserId)
             .inFilter('thread_id', threadIds.sublist(start, end));
@@ -2185,6 +2171,9 @@ class AppRepository extends ChangeNotifier {
               isMuted: state?['is_muted'] as bool? ?? false,
               isArchived: state?['is_archived'] as bool? ?? false,
               draft: state?['draft'] as String? ?? '',
+              unreadCount:
+                  (state?['unread_count'] as num?)?.toInt() ??
+                  thread.unreadCount,
               lastReadAt: rawLastReadAt == null
                   ? null
                   : DateTime.tryParse(rawLastReadAt),
@@ -2202,9 +2191,43 @@ class AppRepository extends ChangeNotifier {
   Future<List<MessageThread>> _hydrateThreadMessages(
     List<MessageThread> threads,
   ) async {
-    if (threads.isEmpty) return threads;
+    if (threads.isEmpty || _chatRepository == null) return threads;
+    final hydrated = <MessageThread>[];
+    for (final thread in threads) {
+      final result = await _chatRepository!.loadLatest(
+        thread.id,
+        limit: _chatMessagePageSize,
+      );
+      final page = result.valueOrNull;
+      if (page == null) {
+        throw result.failureOrNull ??
+            const ChatFailure(
+              code: ChatFailureCode.unknown,
+              operation: 'load_latest_messages',
+            );
+      }
+      final remoteMessages = <ChatMessage>[];
+      for (final row in page.rows) {
+        final parsed = ChatMessage.fromJson(row, currentUserId: currentUserId);
+        remoteMessages.add(await _resolveChatMessageMedia(parsed));
+      }
+      _chatHasOlderMessages[thread.id] = page.hasMore;
+      final messages = _mergeChatMessages(
+        remoteMessages,
+        thread.messages,
+        outbox: _outboxMessagesForThread(thread.id),
+      );
+      hydrated.add(thread.copyWith(messages: messages));
+    }
+    return hydrated;
+  }
+
+  Future<List<MessageThread>> _hydrateThreadMemberships(
+    List<MessageThread> threads,
+  ) async {
+    if (threads.isEmpty || currentUserId.isEmpty) return threads;
     try {
-      final byThread = <String, List<ChatMessage>>{};
+      final idsByThread = <String, List<String>>{};
       final threadIds = threads.map((thread) => thread.id).toList();
       for (
         var start = 0;
@@ -2214,56 +2237,48 @@ class AppRepository extends ChangeNotifier {
         final end = (start + _chatHydrationBatchSize)
             .clamp(0, threadIds.length)
             .toInt();
-        var offset = 0;
-        while (true) {
-          final response = await _client
-              .from('chat_messages')
-              .select()
-              .inFilter('thread_id', threadIds.sublist(start, end))
-              .order('created_at', ascending: true)
-              .order('id', ascending: true)
-              .range(offset, offset + _chatHydrationPageSize - 1);
-          final rows = response as List<dynamic>;
-          for (final item in rows) {
-            final row = item as Map<String, dynamic>;
-            final threadId = row['thread_id'] as String? ?? '';
-            if (threadId.isEmpty) continue;
-            final parsed = ChatMessage.fromJson(
-              row,
-              currentUserId: currentUserId,
-            );
-            final message = await _resolveChatMessageMedia(parsed);
-            byThread.putIfAbsent(threadId, () => []).add(message);
-          }
-          if (rows.length < _chatHydrationPageSize) break;
-          offset += rows.length;
+        final response = await _client
+            .from('chat_thread_members')
+            .select('thread_id,user_id')
+            .inFilter('thread_id', threadIds.sublist(start, end));
+        for (final item in response as List<dynamic>) {
+          final row = item as Map<String, dynamic>;
+          final threadId = row['thread_id'] as String? ?? '';
+          final userId = row['user_id'] as String? ?? '';
+          if (threadId.isEmpty || userId.isEmpty) continue;
+          idsByThread.putIfAbsent(threadId, () => <String>[]).add(userId);
         }
       }
       return threads
           .map((thread) {
-            final messages = byThread[thread.id] ?? const <ChatMessage>[];
-            final unreadCount = messages.where((message) {
-              if (message.senderId == currentUserId || message.isDeleted) {
-                return false;
-              }
-              if (message.readBy.contains(currentUserId)) return false;
-              final lastReadAt = thread.lastReadAt;
-              return lastReadAt == null ||
-                  message.createdAt.isAfter(lastReadAt);
-            }).length;
+            final ids = idsByThread[thread.id];
+            if (ids == null || ids.isEmpty) return thread;
+            final members = <ConversationMember>[
+              ...thread.members,
+              for (final id in ids)
+                if (!thread.members.any((member) => member.id == id))
+                  ConversationMember(id: id, name: '', handle: ''),
+            ];
+            final others = ids.where((id) => id != currentUserId).toList();
             return thread.copyWith(
-              messages: messages,
-              unreadCount: unreadCount,
+              members: members,
+              buyerId: thread.buyerId.isEmpty ? currentUserId : thread.buyerId,
+              sellerId: thread.sellerId.isEmpty && others.isNotEmpty
+                  ? others.first
+                  : thread.sellerId,
             );
           })
           .toList(growable: false);
     } catch (error, stackTrace) {
-      debugPrint('Chat messages sync error: $error');
-      debugPrintStack(stackTrace: stackTrace);
-      // Messages are core conversation data. Treating a failed hydration as
-      // a successful empty response makes RLS/network failures indistinguish-
-      // able from a genuinely empty chat, so let the outer sync expose retry.
-      rethrow;
+      logChatFailure(
+        ChatFailure.from(
+          error,
+          stackTrace,
+          operation: 'hydrate_thread_memberships',
+        ),
+        userId: currentUserId,
+      );
+      return threads;
     }
   }
 
@@ -2373,10 +2388,6 @@ class AppRepository extends ChangeNotifier {
       final response = await _client
           .from('message_threads')
           .select()
-          .or(
-            'buyer_id.eq.$syncUserId,seller_id.eq.$syncUserId,'
-            'member_ids.cs.{$syncUserId}',
-          )
           .order('updated_at', ascending: false);
 
       var fetched = (response as List<dynamic>)
@@ -2389,9 +2400,9 @@ class AppRepository extends ChangeNotifier {
           .toList();
       if (currentUserId != syncUserId) return;
       _knownRemoteThreadIds.addAll(fetched.map((thread) => thread.id));
+      fetched = await _hydrateThreadMemberships(fetched);
       fetched = await _hydrateThreadProfiles(fetched);
       fetched = await _hydrateThreadMemberState(fetched);
-      fetched = await _hydrateThreadMessages(fetched);
       if (currentUserId != syncUserId) return;
 
       if (_hasCompletedThreadSync) {
@@ -2410,6 +2421,17 @@ class AppRepository extends ChangeNotifier {
         for (final thread in _threads) thread.id: thread,
       };
       fetched = mergeChatOutgoingState(fetched, latestLocalById);
+      fetched = fetched
+          .map(
+            (thread) => thread.copyWith(
+              messages: _mergeChatMessages(
+                thread.messages,
+                latestLocalById[thread.id]?.messages ?? const [],
+                outbox: _outboxMessagesForThread(thread.id),
+              ),
+            ),
+          )
+          .toList(growable: false);
       fetched.sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
       if (currentUserId != syncUserId) return;
       _threads = fetched;
@@ -2419,14 +2441,8 @@ class AppRepository extends ChangeNotifier {
       // Presence and disk cache are recovery aids. Keep them off the critical
       // path so incoming messages and their unread badge appear immediately.
       unawaited(_syncThreadPresence(fetched));
-      unawaited(
-        _writeList(
-          _scopedStorageKey(_threadsKey, syncUserId),
-          fetched.map((item) => item.toJson()),
-        ).catchError((Object error) {
-          debugPrint('Chat cache write error: $error');
-        }),
-      );
+      // Full message bodies and signed URLs are never persisted here. Only the
+      // small pending/failed outbox is stored by ChatLocalCache.
     } catch (error, stackTrace) {
       if (currentUserId == syncUserId) {
         _isThreadSyncPending = false;
@@ -2444,6 +2460,199 @@ class AppRepository extends ChangeNotifier {
     return _chatThreadSync.runNow(_syncThreadsFromSupabase);
   }
 
+  List<ChatMessage> _outboxMessagesForThread(String threadId) {
+    final repository = _chatRepository;
+    if (repository == null) return const <ChatMessage>[];
+    return repository.outbox
+        .forThread(threadId)
+        .map(
+          (record) => record.message.copyWith(
+            isMine: true,
+            senderId: record.message.senderId.isEmpty
+                ? currentUserId
+                : record.message.senderId,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @visibleForTesting
+  static List<ChatMessage> mergeChatMessages(
+    Iterable<ChatMessage> remote,
+    Iterable<ChatMessage> local, {
+    Iterable<ChatMessage> outbox = const <ChatMessage>[],
+  }) {
+    final byId = <String, ChatMessage>{};
+    final idByClientId = <String, String>{};
+
+    void add(ChatMessage message, {required bool serverAuthoritative}) {
+      final clientId = message.idempotencyKey.trim();
+      final priorId = clientId.isEmpty ? null : idByClientId[clientId];
+      final prior = priorId == null ? byId[message.id] : byId[priorId];
+      if (prior != null) {
+        if (serverAuthoritative ||
+            (prior.isPending && !message.isPending) ||
+            (prior.hasError && !message.hasError)) {
+          byId.remove(prior.id);
+          byId[message.id] = message;
+          if (clientId.isNotEmpty) idByClientId[clientId] = message.id;
+        }
+        return;
+      }
+      byId[message.id] = message;
+      if (clientId.isNotEmpty) idByClientId[clientId] = message.id;
+    }
+
+    for (final message in local) {
+      add(message, serverAuthoritative: false);
+    }
+    for (final message in outbox) {
+      add(message, serverAuthoritative: false);
+    }
+    for (final message in remote) {
+      add(message, serverAuthoritative: true);
+    }
+
+    return byId.values.toList(growable: false)..sort((left, right) {
+      final byTime = left.createdAt.toUtc().compareTo(right.createdAt.toUtc());
+      return byTime != 0 ? byTime : left.id.compareTo(right.id);
+    });
+  }
+
+  List<ChatMessage> _mergeChatMessages(
+    Iterable<ChatMessage> remote,
+    Iterable<ChatMessage> local, {
+    Iterable<ChatMessage> outbox = const <ChatMessage>[],
+  }) => mergeChatMessages(remote, local, outbox: outbox);
+
+  Future<void> loadLatestChatMessages(String threadId) async {
+    if (!_hasSupabase ||
+        currentUserId.isEmpty ||
+        threadId.isEmpty ||
+        _chatPageLoads.contains(threadId)) {
+      return;
+    }
+    final repository = _chatRepository;
+    final thread = threadById(threadId);
+    if (repository == null || thread == null) return;
+    _chatPageLoads.add(threadId);
+    try {
+      final result = await repository.loadLatest(
+        threadId,
+        limit: _chatMessagePageSize,
+      );
+      final page = result.valueOrNull;
+      if (page == null) return;
+      final parsed = <ChatMessage>[];
+      for (final row in page.rows) {
+        parsed.add(
+          await _resolveChatMessageMedia(
+            ChatMessage.fromJson(row, currentUserId: currentUserId),
+          ),
+        );
+      }
+      final liveThread = threadById(threadId);
+      if (liveThread == null) return;
+      final messages = _mergeChatMessages(
+        parsed,
+        liveThread.messages,
+        outbox: _outboxMessagesForThread(threadId),
+      );
+      _chatHasOlderMessages[threadId] = page.hasMore;
+      _upsertLocalThread(liveThread.copyWith(messages: messages));
+      notifyListeners();
+    } finally {
+      _chatPageLoads.remove(threadId);
+    }
+  }
+
+  Future<bool> loadOlderChatMessages(String threadId) async {
+    if (!_hasSupabase ||
+        currentUserId.isEmpty ||
+        threadId.isEmpty ||
+        _chatPageLoads.contains(threadId) ||
+        !hasOlderChatMessages(threadId)) {
+      return false;
+    }
+    final repository = _chatRepository;
+    final thread = threadById(threadId);
+    if (repository == null || thread == null || thread.messages.isEmpty) {
+      return false;
+    }
+    final firstServerMessage = thread.messages.firstWhere(
+      (message) => !message.isPending && !message.hasError,
+      orElse: () => thread.messages.first,
+    );
+    _chatPageLoads.add(threadId);
+    try {
+      final result = await repository.loadOlder(
+        threadId,
+        before: ChatCursor(
+          createdAt: firstServerMessage.createdAt,
+          id: firstServerMessage.id,
+        ),
+        limit: _chatMessagePageSize,
+      );
+      final page = result.valueOrNull;
+      if (page == null) return false;
+      final parsed = <ChatMessage>[];
+      for (final row in page.rows) {
+        parsed.add(
+          await _resolveChatMessageMedia(
+            ChatMessage.fromJson(row, currentUserId: currentUserId),
+          ),
+        );
+      }
+      final liveThread = threadById(threadId);
+      if (liveThread == null) return false;
+      _chatHasOlderMessages[threadId] = page.hasMore;
+      _upsertLocalThread(
+        liveThread.copyWith(
+          messages: _mergeChatMessages(
+            parsed,
+            liveThread.messages,
+            outbox: _outboxMessagesForThread(threadId),
+          ),
+        ),
+      );
+      notifyListeners();
+      return parsed.isNotEmpty;
+    } finally {
+      _chatPageLoads.remove(threadId);
+    }
+  }
+
+  Future<void> _syncChatGaps() async {
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+    final repository = _chatRepository;
+    if (repository == null) return;
+    final syncUserId = currentUserId;
+    for (final snapshot in List<MessageThread>.from(_threads)) {
+      if (currentUserId != syncUserId) return;
+      final serverMessages = snapshot.messages
+          .where((message) => !message.isPending && !message.hasError)
+          .toList(growable: false);
+      if (serverMessages.isEmpty) {
+        if (snapshot.id == _activeThreadId) {
+          await loadLatestChatMessages(snapshot.id);
+        }
+        continue;
+      }
+      final last = serverMessages.last;
+      final result = await repository.loadAfter(
+        snapshot.id,
+        after: ChatCursor(createdAt: last.createdAt, id: last.id),
+      );
+      final rows = result.valueOrNull;
+      if (rows == null || rows.isEmpty) continue;
+      for (final row in rows) {
+        if (currentUserId != syncUserId) return;
+        await _applyRealtimeChatMessage(row);
+      }
+    }
+    unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
+  }
+
   @visibleForTesting
   static List<MessageThread> mergeChatOutgoingState(
     List<MessageThread> remoteThreads,
@@ -2456,6 +2665,11 @@ class AppRepository extends ChangeNotifier {
           final localById = {
             for (final message in localThread.messages) message.id: message,
           };
+          final localByClientId = {
+            for (final message in localThread.messages)
+              if (message.clientMessageId.isNotEmpty)
+                message.clientMessageId: message,
+          };
           var reconciledLocalState = false;
           final reconciledRemoteMessages = remoteThread.messages
               .map((message) {
@@ -2463,7 +2677,9 @@ class AppRepository extends ChangeNotifier {
                 // flags therefore identify a local-only row carried by an
                 // earlier merge while another local state change completed.
                 if (!message.isPending && !message.hasError) return message;
-                final localMessage = localById[message.id];
+                final localMessage =
+                    localById[message.id] ??
+                    localByClientId[message.clientMessageId];
                 if (localMessage == null) return message;
                 reconciledLocalState = true;
                 return localMessage;
@@ -2472,8 +2688,15 @@ class AppRepository extends ChangeNotifier {
           final remoteIds = reconciledRemoteMessages
               .map((message) => message.id)
               .toSet();
+          final remoteClientIds = reconciledRemoteMessages
+              .map((message) => message.clientMessageId)
+              .where((id) => id.isNotEmpty)
+              .toSet();
           final localOnly = localThread.messages.where(
-            (message) => message.isMine && !remoteIds.contains(message.id),
+            (message) =>
+                !remoteIds.contains(message.id) &&
+                (message.clientMessageId.isEmpty ||
+                    !remoteClientIds.contains(message.clientMessageId)),
           );
           if (localOnly.isEmpty && !reconciledLocalState) return remoteThread;
 
@@ -4936,6 +5159,66 @@ class AppRepository extends ChangeNotifier {
         : null;
     if (_hasSupabase && user == null) return null;
 
+    if (_hasSupabase) {
+      final repository = _chatRepository;
+      if (repository == null || product.id.trim().isEmpty) {
+        _setChatFailureMessage(
+          const ChatFailure(
+            code: ChatFailureCode.schemaMismatch,
+            operation: 'create_product_thread',
+          ),
+        );
+        return null;
+      }
+      const firstText = 'Здравствуйте! Вещь ещё доступна?';
+      final clientId = _uuid.v4();
+      final pending = ChatMessage(
+        id: clientId,
+        clientMessageId: clientId,
+        text: firstText,
+        createdAt: DateTime.now().toUtc(),
+        isMine: true,
+        senderId: user!.id,
+        senderName: _profile.name,
+        senderAvatar: _currentAvatarUrl(),
+        isPending: true,
+        status: ChatMessageDeliveryStatus.sending,
+      );
+      // This RPC obtains the seller from the product row, creates/gets the
+      // thread, and inserts the initial message in one Postgres transaction.
+      final result = await repository.sendProductChatMessage(
+        productId: product.id,
+        message: pending,
+      );
+      final opened = result.valueOrNull;
+      if (opened == null) {
+        _setChatFailureMessage(result.failureOrNull);
+        return null;
+      }
+      var thread = await _materializeRemoteThread(
+        opened.threadRow,
+        fallbackProduct: product,
+      );
+      if (imageOnly) {
+        thread = thread.copyWith(productTitle: '', productImage: product.image);
+      }
+      _upsertLocalThread(thread);
+      notifyListeners();
+      await loadLatestChatMessages(thread.id);
+      final messageRow = opened.messageRow;
+      if (messageRow != null) {
+        final delivered = await _resolveChatMessageMedia(
+          ChatMessage.fromJson(messageRow, currentUserId: currentUserId),
+        );
+        await _replaceLocalMessageByIdentity(thread.id, delivered);
+        if (opened.createdMessage) {
+          final latest = threadById(thread.id) ?? thread;
+          unawaited(_notifyMessageRecipient(latest, delivered));
+        }
+      }
+      return threadById(thread.id) ?? thread;
+    }
+
     final buyerId = user?.id ?? currentUserId;
     final sellerId = product.ownerId;
     if (_hasSupabase && sellerId.isEmpty) {
@@ -5110,6 +5393,25 @@ class AppRepository extends ChangeNotifier {
     if (_hasSupabase && user == null) return null;
     if (recipient.id.isEmpty || recipient.id == currentUserId) return null;
 
+    if (_hasSupabase) {
+      final repository = _chatRepository;
+      if (repository == null) return null;
+      final result = await repository.createDirectThread(recipient.id);
+      final creation = result.valueOrNull;
+      if (creation == null) {
+        _setChatFailureMessage(result.failureOrNull);
+        return null;
+      }
+      final thread = await _materializeRemoteThread(
+        creation.row,
+        fallbackRecipient: recipient,
+      );
+      _upsertLocalThread(thread);
+      notifyListeners();
+      await loadLatestChatMessages(thread.id);
+      return threadById(thread.id) ?? thread;
+    }
+
     final senderId = user?.id ?? currentUserId;
     final threadId = _directThreadId(senderId, recipient.id);
     final existing = threadById(threadId);
@@ -5189,6 +5491,36 @@ class AppRepository extends ChangeNotifier {
     if (uniqueRecipients.isEmpty) return null;
     if (uniqueRecipients.length == 1) {
       return startDirectChat(uniqueRecipients.single);
+    }
+
+    if (_hasSupabase) {
+      final repository = _chatRepository;
+      if (repository == null) return null;
+      final clientThreadId = _uuid.v4();
+      final cleanTitle = title.trim();
+      final fallbackTitle = uniqueRecipients
+          .map((recipient) => recipient.name.trim())
+          .where((name) => name.isNotEmpty)
+          .take(3)
+          .join(', ');
+      final result = await repository.createGroupThread(
+        memberIds: uniqueRecipients.map((item) => item.id).toList(),
+        title: cleanTitle.isEmpty ? fallbackTitle : cleanTitle,
+        clientThreadId: clientThreadId,
+      );
+      final creation = result.valueOrNull;
+      if (creation == null) {
+        _setChatFailureMessage(result.failureOrNull);
+        return null;
+      }
+      final thread = await _materializeRemoteThread(
+        creation.row,
+        fallbackRecipients: uniqueRecipients,
+      );
+      _upsertLocalThread(thread);
+      notifyListeners();
+      await loadLatestChatMessages(thread.id);
+      return threadById(thread.id) ?? thread;
     }
 
     final now = DateTime.now();
@@ -5435,28 +5767,7 @@ class AppRepository extends ChangeNotifier {
       isPending: _hasSupabase,
       hasError: false,
     );
-    if (existingIndex == -1) {
-      thread = thread.copyWith(
-        lastMessage: retrying.previewText,
-        updatedAt: retrying.createdAt,
-        messages: [...thread.messages, retrying],
-      );
-      _upsertLocalThread(thread);
-      await _saveThreadsLocal();
-      notifyListeners();
-    } else {
-      await _replaceLocalMessage(threadId, retrying, updateLastPreview: true);
-      thread = threadById(threadId) ?? thread;
-    }
-
-    final saved = await _upsertThread(thread, newMessages: [retrying]);
-    if (_hasSupabase) {
-      await _replaceLocalMessage(
-        threadId,
-        retrying.copyWith(isPending: false, hasError: !saved),
-        updateLastPreview: true,
-      );
-    }
+    final saved = await _appendOutgoingMessage(thread, retrying);
     if (saved) {
       final latestThread = threadById(threadId) ?? thread;
       unawaited(_notifyMessageRecipient(latestThread, retrying));
@@ -5534,7 +5845,7 @@ class AppRepository extends ChangeNotifier {
     final kind = candidate.isVideo ? ChatMediaKind.video : ChatMediaKind.image;
     ChatMessage? retryingMessage;
     final sent = await _chatMediaSendCoordinator.send(
-      ensureRemoteThread: () => _upsertThread(thread),
+      ensureRemoteThread: () async => true,
       upload: () => _uploadChatMedia(
         threadId: threadId,
         actorId: actorId,
@@ -5564,27 +5875,7 @@ class AppRepository extends ChangeNotifier {
           hasError: false,
         );
         retryingMessage = retrying;
-        await _replaceLocalMessage(threadId, retrying, updateLastPreview: true);
-        final threadToSave = threadById(threadId);
-        if (threadToSave == null) return false;
-        final saved = await _upsertThread(
-          threadToSave,
-          newMessages: [retrying],
-        );
-        if (saved) {
-          final delivered = retrying.copyWith(
-            isPending: false,
-            hasError: false,
-          );
-          await _replaceLocalMessage(
-            threadId,
-            delivered,
-            updateLastPreview: true,
-          );
-          final deliveredThread = threadById(threadId) ?? threadToSave;
-          unawaited(_notifyMessageRecipient(deliveredThread, delivered));
-        }
-        return saved;
+        return _appendOutgoingMessage(latestThread, retrying);
       },
       markFailed: (uploaded) async {
         final localAttachment = _chatMediaSendCoordinator
@@ -5595,11 +5886,7 @@ class AppRepository extends ChangeNotifier {
           actorId: actorId,
         );
       },
-      cleanup: (uploaded) => _removeRemoteChatMedia(
-        uploaded.bucket,
-        uploaded.storagePath,
-        logContext: 'Failed retried chat media cleanup',
-      ),
+      cleanup: (uploaded) => _cleanupUnreferencedChatMedia(threadId, uploaded),
     );
     if (!sent) {
       _authError = 'Не удалось повторно отправить вложение.';
@@ -5700,7 +5987,7 @@ class AppRepository extends ChangeNotifier {
     ChatMessage? outgoingMessage;
     return _chatMediaSendCoordinator.send(
       ensureRemoteThread: () async {
-        final ready = await _upsertThread(initialThread);
+        final ready = initialThread.containsUser(actorId);
         if (!ready) {
           _authError = 'Не удалось подготовить чат. Проверьте подключение.';
           notifyListeners();
@@ -5768,12 +6055,38 @@ class AppRepository extends ChangeNotifier {
           actorId: actorId,
         );
       },
-      cleanup: (attachment) => _removeRemoteChatMedia(
-        attachment.bucket,
-        attachment.storagePath,
-        logContext: 'Failed chat media cleanup',
-      ),
+      cleanup: (attachment) =>
+          _cleanupUnreferencedChatMedia(threadId, attachment),
     );
+  }
+
+  Future<void> _cleanupUnreferencedChatMedia(
+    String threadId,
+    ChatAttachment attachment,
+  ) async {
+    if (!_hasSupabase ||
+        attachment.bucket != _chatMediaBucketName ||
+        attachment.storagePath.isEmpty) {
+      return;
+    }
+    try {
+      await _client.functions.invoke(
+        'cleanup-chat-media',
+        body: {'thread_id': threadId, 'storage_path': attachment.storagePath},
+      );
+    } catch (error, stackTrace) {
+      // If the message commit won the race, the endpoint refuses deletion.
+      // Other cleanup failures also remain non-destructive and retryable.
+      logChatFailure(
+        ChatFailure.from(
+          error,
+          stackTrace,
+          operation: 'cleanup_chat_media',
+          threadId: threadId,
+        ),
+        userId: currentUserId,
+      );
+    }
   }
 
   Future<ChatAttachment?> _uploadChatMedia({
@@ -6263,25 +6576,75 @@ class AppRepository extends ChangeNotifier {
     MessageThread thread,
     ChatMessage message,
   ) async {
+    final clientId = message.idempotencyKey.trim().isEmpty
+        ? _uuid.v4()
+        : message.idempotencyKey.trim();
+    final optimistic = message.copyWith(
+      id: message.id.isEmpty ? clientId : message.id,
+      clientMessageId: clientId,
+      isPending: _hasSupabase,
+      hasError: false,
+      status: _hasSupabase
+          ? ChatMessageDeliveryStatus.sending
+          : ChatMessageDeliveryStatus.sent,
+    );
+    if (_hasSupabase) {
+      final repository = _chatRepository;
+      if (repository == null) {
+        _setChatFailureMessage(
+          const ChatFailure(
+            code: ChatFailureCode.schemaMismatch,
+            operation: 'send_message',
+          ),
+        );
+        return false;
+      }
+      _insertOptimisticMessage(thread.id, optimistic);
+      final result = await repository.sendMessage(
+        threadId: thread.id,
+        message: optimistic,
+      );
+      final row = result.valueOrNull;
+      if (row == null) {
+        await _replaceLocalMessageByIdentity(
+          thread.id,
+          optimistic.copyWith(
+            isPending: false,
+            hasError: true,
+            status: ChatMessageDeliveryStatus.failed,
+          ),
+        );
+        _setChatFailureMessage(result.failureOrNull);
+        return false;
+      }
+      final delivered = await _resolveChatMessageMedia(
+        ChatMessage.fromJson(row, currentUserId: currentUserId),
+      );
+      await _replaceLocalMessageByIdentity(thread.id, delivered);
+      final latestThread = threadById(thread.id) ?? thread;
+      unawaited(_notifyMessageRecipient(latestThread, delivered));
+      return true;
+    }
+
     final updated = thread.copyWith(
-      lastMessage: message.previewText,
-      updatedAt: message.createdAt,
-      messages: [...thread.messages, message],
+      lastMessage: optimistic.previewText,
+      updatedAt: optimistic.createdAt,
+      messages: [...thread.messages, optimistic],
       draft: '',
     );
     _upsertLocalThread(updated);
     await _saveThreadsLocal();
     notifyListeners();
 
-    final saved = await _upsertThread(updated, newMessages: [message]);
+    final saved = await _upsertThread(updated, newMessages: [optimistic]);
     if (_hasSupabase) {
       await _replaceLocalMessage(
         thread.id,
-        message.copyWith(isPending: false, hasError: !saved),
+        optimistic.copyWith(isPending: false, hasError: !saved),
       );
     }
     final latestThread = threadById(thread.id) ?? updated;
-    if (saved) unawaited(_notifyMessageRecipient(latestThread, message));
+    if (saved) unawaited(_notifyMessageRecipient(latestThread, optimistic));
     if (!saved) {
       _authError = 'Не удалось доставить сообщение. Проверьте интернет.';
       notifyListeners();
@@ -6374,6 +6737,164 @@ class AppRepository extends ChangeNotifier {
     _sortThreads();
   }
 
+  void _setChatFailureMessage(ChatFailure? failure) {
+    _authError =
+        (failure ??
+                const ChatFailure(
+                  code: ChatFailureCode.unknown,
+                  operation: 'chat',
+                ))
+            .userMessage;
+    notifyListeners();
+  }
+
+  Future<MessageThread> _materializeRemoteThread(
+    Map<String, dynamic> row, {
+    AppUserProfile? fallbackRecipient,
+    List<AppUserProfile> fallbackRecipients = const <AppUserProfile>[],
+    Product? fallbackProduct,
+  }) async {
+    var thread = MessageThread.fromSupabase(row, currentUserId: currentUserId);
+    final recipients = <AppUserProfile>[
+      ?fallbackRecipient,
+      ...fallbackRecipients,
+    ];
+    final remoteMembers = thread.members;
+    final memberIds = <String>{
+      ...thread.memberIds,
+      if (currentUserId.isNotEmpty) currentUserId,
+      ...recipients.map((item) => item.id),
+      if (fallbackProduct != null && fallbackProduct.ownerId.isNotEmpty)
+        fallbackProduct.ownerId,
+    };
+    final profiles = <String, AppUserProfile>{
+      for (final profile in recipients) profile.id: profile,
+    };
+    final members = memberIds
+        .map((id) {
+          final existing = remoteMembers
+              .where((member) => member.id == id)
+              .firstOrNull;
+          final profile = profiles[id];
+          if (id == currentUserId) return _currentConversationMember(id);
+          return ConversationMember(
+            id: id,
+            name:
+                existing?.name ??
+                profile?.name ??
+                (id == fallbackProduct?.ownerId
+                    ? fallbackProduct!.sellerName
+                    : ''),
+            handle:
+                existing?.handle ??
+                profile?.handle ??
+                (id == fallbackProduct?.ownerId
+                    ? fallbackProduct!.sellerHandle
+                    : ''),
+            avatarUrl: existing?.avatarUrl ?? profile?.avatarUrl ?? '',
+          );
+        })
+        .toList(growable: false);
+
+    var buyerId = thread.buyerId;
+    var sellerId = thread.sellerId;
+    if (buyerId.isEmpty) buyerId = currentUserId;
+    if (sellerId.isEmpty) {
+      sellerId =
+          fallbackRecipient?.id ??
+          fallbackProduct?.ownerId ??
+          (recipients.isEmpty ? '' : recipients.first.id);
+    }
+    final recipient = profiles[sellerId];
+    thread = thread.copyWith(
+      buyerId: buyerId,
+      sellerId: sellerId,
+      buyerName:
+          thread.buyerName.trim().isEmpty || thread.buyerName == 'Покупатель'
+          ? _profile.name
+          : thread.buyerName,
+      sellerName:
+          recipient?.name ??
+          (fallbackProduct?.sellerName.trim().isNotEmpty == true
+              ? fallbackProduct!.sellerName
+              : thread.sellerName),
+      buyerHandle: thread.buyerHandle.isEmpty
+          ? _profile.handle
+          : thread.buyerHandle,
+      sellerHandle:
+          recipient?.handle ??
+          (fallbackProduct?.sellerHandle.trim().isNotEmpty == true
+              ? fallbackProduct!.sellerHandle
+              : thread.sellerHandle),
+      buyerAvatar: thread.buyerAvatar.isEmpty
+          ? _currentAvatarUrl()
+          : thread.buyerAvatar,
+      sellerAvatar: recipient?.avatarUrl ?? thread.sellerAvatar,
+      productId: thread.productId.isEmpty
+          ? fallbackProduct?.id ?? ''
+          : thread.productId,
+      productTitle: thread.productTitle.isEmpty
+          ? fallbackProduct?.title ?? ''
+          : thread.productTitle,
+      productImage: thread.productImage.isEmpty
+          ? fallbackProduct?.image ?? ''
+          : thread.productImage,
+      members: members,
+      isGroup:
+          thread.isGroup || recipients.length > 1 || thread.type == 'group',
+    );
+    var hydrated = await _hydrateThreadProfiles(<MessageThread>[thread]);
+    hydrated = await _hydrateThreadMemberState(hydrated);
+    _knownRemoteThreadIds.add(thread.id);
+    return hydrated.first;
+  }
+
+  void _insertOptimisticMessage(String threadId, ChatMessage message) {
+    final index = _threads.indexWhere((thread) => thread.id == threadId);
+    if (index == -1) return;
+    final thread = _threads[index];
+    final messages = _mergeChatMessages(
+      const <ChatMessage>[],
+      thread.messages,
+      outbox: <ChatMessage>[message],
+    );
+    _threads[index] = thread.copyWith(
+      messages: messages,
+      lastMessage: message.previewText,
+      updatedAt: message.createdAt,
+      draft: '',
+    );
+    _sortThreads();
+    notifyListeners();
+  }
+
+  Future<void> _replaceLocalMessageByIdentity(
+    String threadId,
+    ChatMessage replacement,
+  ) async {
+    final index = _threads.indexWhere((thread) => thread.id == threadId);
+    if (index == -1) return;
+    final thread = _threads[index];
+    final messages = _mergeChatMessages(
+      <ChatMessage>[replacement],
+      thread.messages,
+      outbox: _outboxMessagesForThread(threadId),
+    );
+    _threads[index] = thread.copyWith(
+      messages: messages,
+      lastMessage: messages.isEmpty
+          ? thread.lastMessage
+          : messages.last.previewText,
+      lastMessageId: replacement.id,
+      updatedAt: replacement.createdAt.isAfter(thread.updatedAt)
+          ? replacement.createdAt
+          : thread.updatedAt,
+    );
+    await _chatRepository?.outbox.remove(replacement.idempotencyKey);
+    _sortThreads();
+    notifyListeners();
+  }
+
   Future<MessageThread?> _fetchThreadFromSupabase(String threadId) async {
     if (!_hasSupabase || currentUserId.isEmpty) return null;
 
@@ -6437,57 +6958,15 @@ class AppRepository extends ChangeNotifier {
     bool ensureThreadFirst = false,
   }) async {
     if (!_hasSupabase) return true;
-
-    final result = await _chatRemoteWriteCoordinator.persist(
-      hasMessages: newMessages.isNotEmpty,
-      threadKnownRemote: _knownRemoteThreadIds.contains(thread.id),
-      ensureThreadFirst: ensureThreadFirst,
-      ensureThread: () async {
-        final payload = thread.toSupabaseJson()
-          ..remove('messages')
-          ..remove('is_pinned')
-          ..remove('is_muted')
-          ..remove('is_archived')
-          ..remove('draft')
-          ..remove('last_read_at')
-          ..remove('unread_count');
-        await _client
-            .from('message_threads')
-            .upsert(payload, onConflict: 'id', ignoreDuplicates: true);
-      },
-      persistMessages: () async {
-        if (newMessages.isEmpty) return;
-        await _client
-            .from('chat_messages')
-            .upsert(
-              newMessages
-                  .map(
-                    (message) => {
-                      ...message.toSupabaseJson(),
-                      'thread_id': thread.id,
-                    },
-                  )
-                  .toList(),
-              onConflict: 'id',
-              ignoreDuplicates: true,
-            );
-      },
+    logChatFailure(
+      ChatFailure(
+        code: ChatFailureCode.schemaMismatch,
+        operation: 'legacy_direct_chat_write_blocked',
+        threadId: thread.id,
+        details: 'messages=${newMessages.length},ensure=$ensureThreadFirst',
+      ),
+      userId: currentUserId,
     );
-    if (result.threadConfirmed) {
-      _knownRemoteThreadIds.add(thread.id);
-    }
-    if (result.succeeded) return true;
-
-    final failure = result.failure!;
-    final stage = switch (failure.stage) {
-      ChatRemoteWriteStage.ensureThread => 'ensure thread',
-      ChatRemoteWriteStage.persistMessages => 'persist messages',
-    };
-    debugPrint(
-      'Chat remote write error ($stage, thread=${thread.id}): '
-      '${_describeChatRemoteError(failure.error)}',
-    );
-    debugPrintStack(stackTrace: failure.stackTrace);
     return false;
   }
 
@@ -6983,11 +7462,10 @@ class AppRepository extends ChangeNotifier {
     _syncTimer?.cancel();
     _chatMediaUrlCache.clear();
     _chatThreadSync.dispose();
-    _messageSubscriptionGeneration++;
     _authSubscription?.cancel();
     _pushTokenSubscription?.cancel();
-    final messagesChannel = _messagesChannel;
-    if (messagesChannel != null) unawaited(messagesChannel.unsubscribe());
+    _chatRepository?.removeListener(_handleChatDiagnosticsChanged);
+    _chatRepository?.dispose();
     super.dispose();
   }
 }

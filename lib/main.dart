@@ -198,6 +198,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     updateThread: _repository.updateThreadPreferences,
     saveDraft: _repository.saveThreadDraft,
     markRead: _repository.markThreadRead,
+    loadOlder: _repository.loadOlderChatMessages,
     setVisibility: _repository.setChatThreadVisibility,
   );
 

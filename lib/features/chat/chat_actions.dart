@@ -56,6 +56,7 @@ typedef SaveDraftCallback =
     Future<void> Function(String threadId, String draft);
 
 typedef MarkThreadReadCallback = Future<void> Function(String threadId);
+typedef LoadOlderChatMessagesCallback = Future<bool> Function(String threadId);
 typedef SetChatVisibilityCallback =
     void Function(String threadId, bool isVisible);
 
@@ -80,6 +81,7 @@ class ChatActions {
     this.updateThread,
     this.saveDraft,
     this.markRead,
+    this.loadOlder,
     this.setVisibility,
   });
 
@@ -97,5 +99,6 @@ class ChatActions {
   final UpdateThreadCallback? updateThread;
   final SaveDraftCallback? saveDraft;
   final MarkThreadReadCallback? markRead;
+  final LoadOlderChatMessagesCallback? loadOlder;
   final SetChatVisibilityCallback? setVisibility;
 }

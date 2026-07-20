@@ -2,6 +2,8 @@ const Object _chatUnset = Object();
 
 enum ChatMediaKind { image, video }
 
+enum ChatMessageDeliveryStatus { sending, sent, delivered, failed }
+
 class ChatAttachment {
   const ChatAttachment({
     required this.url,
@@ -139,6 +141,9 @@ class ChatMessage {
     this.deletedAt,
     this.readBy = const [],
     this.reactions = const {},
+    this.clientMessageId = '',
+    this.deliveredTo = const [],
+    this.status = ChatMessageDeliveryStatus.sent,
     this.isPending = false,
     this.hasError = false,
   });
@@ -160,8 +165,23 @@ class ChatMessage {
   final DateTime? deletedAt;
   final List<String> readBy;
   final Map<String, List<String>> reactions;
+  final String clientMessageId;
+  final List<String> deliveredTo;
+  final ChatMessageDeliveryStatus status;
   final bool isPending;
   final bool hasError;
+
+  String get idempotencyKey =>
+      clientMessageId.trim().isEmpty ? id : clientMessageId;
+  ChatMessageDeliveryStatus get effectiveStatus {
+    if (hasError) return ChatMessageDeliveryStatus.failed;
+    if (isPending) return ChatMessageDeliveryStatus.sending;
+    if (status == ChatMessageDeliveryStatus.delivered ||
+        deliveredTo.any((userId) => userId.isNotEmpty && userId != senderId)) {
+      return ChatMessageDeliveryStatus.delivered;
+    }
+    return ChatMessageDeliveryStatus.sent;
+  }
 
   bool get isProductShare => type == 'product' && sharedProduct != null;
   bool get isImage => type == 'image' && attachment?.isImage == true;
@@ -202,6 +222,9 @@ class ChatMessage {
         ? Map<String, dynamic>.from(rawReply)
         : const <String, dynamic>{};
     final rawReadBy = json['read_by'] ?? json['readBy'];
+    final rawDeliveredTo = json['delivered_to'] ?? json['deliveredTo'];
+    final isPending = json['isPending'] as bool? ?? false;
+    final hasError = json['hasError'] as bool? ?? false;
     return ChatMessage(
       id: json['id'] as String,
       text: json['text'] as String? ?? '',
@@ -246,8 +269,20 @@ class ChatMessage {
           ? rawReadBy.whereType<String>().toList(growable: false)
           : const [],
       reactions: _parseReactions(json['reactions']),
-      isPending: json['isPending'] as bool? ?? false,
-      hasError: json['hasError'] as bool? ?? false,
+      clientMessageId:
+          json['client_message_id'] as String? ??
+          json['clientMessageId'] as String? ??
+          json['id'] as String,
+      deliveredTo: rawDeliveredTo is List
+          ? rawDeliveredTo.whereType<String>().toList(growable: false)
+          : const [],
+      status: _parseDeliveryStatus(
+        json['delivery_status'] ?? json['status'],
+        isPending: isPending,
+        hasError: hasError,
+      ),
+      isPending: isPending,
+      hasError: hasError,
     );
   }
 
@@ -268,7 +303,24 @@ class ChatMessage {
     return parsed;
   }
 
+  static ChatMessageDeliveryStatus _parseDeliveryStatus(
+    dynamic value, {
+    required bool isPending,
+    required bool hasError,
+  }) {
+    if (hasError) return ChatMessageDeliveryStatus.failed;
+    if (isPending) return ChatMessageDeliveryStatus.sending;
+    final normalized = value?.toString().trim().toLowerCase() ?? '';
+    return switch (normalized) {
+      'sending' || 'pending' => ChatMessageDeliveryStatus.sending,
+      'delivered' => ChatMessageDeliveryStatus.delivered,
+      'failed' => ChatMessageDeliveryStatus.failed,
+      _ => ChatMessageDeliveryStatus.sent,
+    };
+  }
+
   ChatMessage copyWith({
+    String? id,
     String? text,
     DateTime? createdAt,
     bool? isMine,
@@ -285,11 +337,25 @@ class ChatMessage {
     Object? deletedAt = _chatUnset,
     List<String>? readBy,
     Map<String, List<String>>? reactions,
+    String? clientMessageId,
+    List<String>? deliveredTo,
+    ChatMessageDeliveryStatus? status,
     bool? isPending,
     bool? hasError,
   }) {
+    final nextPending = isPending ?? this.isPending;
+    final nextError = hasError ?? this.hasError;
+    final nextStatus =
+        status ??
+        (nextError
+            ? ChatMessageDeliveryStatus.failed
+            : nextPending
+            ? ChatMessageDeliveryStatus.sending
+            : this.status == ChatMessageDeliveryStatus.delivered
+            ? ChatMessageDeliveryStatus.delivered
+            : ChatMessageDeliveryStatus.sent);
     return ChatMessage(
-      id: id,
+      id: id ?? this.id,
       text: text ?? this.text,
       createdAt: createdAt ?? this.createdAt,
       isMine: isMine ?? this.isMine,
@@ -314,8 +380,11 @@ class ChatMessage {
           : deletedAt as DateTime?,
       readBy: readBy ?? this.readBy,
       reactions: reactions ?? this.reactions,
-      isPending: isPending ?? this.isPending,
-      hasError: hasError ?? this.hasError,
+      clientMessageId: clientMessageId ?? this.clientMessageId,
+      deliveredTo: deliveredTo ?? this.deliveredTo,
+      status: nextStatus,
+      isPending: nextPending,
+      hasError: nextError,
     );
   }
 
@@ -341,6 +410,9 @@ class ChatMessage {
       if (deletedAt != null) 'deletedAt': deletedAt!.toUtc().toIso8601String(),
       'readBy': readBy,
       'reactions': reactions,
+      'clientMessageId': clientMessageId,
+      'deliveredTo': deliveredTo,
+      'status': effectiveStatus.name,
       'isPending': isPending,
       'hasError': hasError,
     };
@@ -354,6 +426,7 @@ class ChatMessage {
       'sender_id': senderId,
       'sender_name': senderName,
       'sender_avatar': senderAvatar,
+      'client_message_id': idempotencyKey,
       'type': type,
       if (sharedProduct != null) 'product': sharedProduct!.toJson(),
       if (attachment != null) 'attachment': attachment!.toSupabaseJson(),
@@ -415,12 +488,23 @@ class ConversationMember {
   final String avatarUrl;
 
   factory ConversationMember.fromJson(Map<String, dynamic> json) {
+    final rawProfile = json['profile'] ?? json['profiles'];
+    final profile = rawProfile is Map
+        ? Map<String, dynamic>.from(rawProfile)
+        : const <String, dynamic>{};
     return ConversationMember(
-      id: json['id'] as String? ?? '',
-      name: json['name'] as String? ?? '',
-      handle: json['handle'] as String? ?? '',
+      id:
+          json['id'] as String? ??
+          json['user_id'] as String? ??
+          profile['id'] as String? ??
+          '',
+      name: json['name'] as String? ?? profile['name'] as String? ?? '',
+      handle: json['handle'] as String? ?? profile['handle'] as String? ?? '',
       avatarUrl:
-          json['avatar_url'] as String? ?? json['avatarUrl'] as String? ?? '',
+          json['avatar_url'] as String? ??
+          json['avatarUrl'] as String? ??
+          profile['avatar_url'] as String? ??
+          '',
     );
   }
 
@@ -460,6 +544,8 @@ class MessageThread {
     this.isArchived = false,
     this.draft = '',
     this.lastReadAt,
+    this.type = '',
+    this.lastMessageId = '',
   });
 
   final String id;
@@ -488,6 +574,8 @@ class MessageThread {
   final bool isArchived;
   final String draft;
   final DateTime? lastReadAt;
+  final String type;
+  final String lastMessageId;
 
   factory MessageThread.fromJson(Map<String, dynamic> json) {
     return MessageThread(
@@ -523,6 +611,8 @@ class MessageThread {
       isArchived: json['isArchived'] as bool? ?? false,
       draft: json['draft'] as String? ?? '',
       lastReadAt: ChatMessage._parseOptionalDate(json['lastReadAt']),
+      type: json['type'] as String? ?? '',
+      lastMessageId: json['lastMessageId'] as String? ?? '',
     );
   }
 
@@ -535,7 +625,10 @@ class MessageThread {
       sellerName: json['seller_name'] as String? ?? 'Продавец',
       buyerName: json['buyer_name'] as String? ?? 'Покупатель',
       productTitle: json['product_title'] as String? ?? '',
-      lastMessage: json['last_message'] as String? ?? '',
+      lastMessage:
+          json['last_message_preview'] as String? ??
+          json['last_message'] as String? ??
+          '',
       updatedAt:
           DateTime.tryParse(json['updated_at'] as String? ?? '') ??
           DateTime.now(),
@@ -571,6 +664,8 @@ class MessageThread {
       isArchived: false,
       draft: '',
       lastReadAt: null,
+      type: json['type'] as String? ?? json['thread_type'] as String? ?? '',
+      lastMessageId: json['last_message_id'] as String? ?? '',
     );
   }
 
@@ -727,6 +822,8 @@ class MessageThread {
     bool? isArchived,
     String? draft,
     Object? lastReadAt = _chatUnset,
+    String? type,
+    String? lastMessageId,
   }) {
     return MessageThread(
       id: id,
@@ -757,6 +854,8 @@ class MessageThread {
       lastReadAt: identical(lastReadAt, _chatUnset)
           ? this.lastReadAt
           : lastReadAt as DateTime?,
+      type: type ?? this.type,
+      lastMessageId: lastMessageId ?? this.lastMessageId,
     );
   }
 
@@ -789,6 +888,8 @@ class MessageThread {
       'draft': draft,
       if (lastReadAt != null)
         'lastReadAt': lastReadAt!.toUtc().toIso8601String(),
+      'type': type,
+      'lastMessageId': lastMessageId,
     };
   }
 
@@ -807,6 +908,8 @@ class MessageThread {
       'buyer_avatar': buyerAvatar,
       'seller_avatar': sellerAvatar,
       'last_message': lastMessage,
+      'last_message_preview': lastMessage,
+      'last_message_id': lastMessageId.isEmpty ? null : lastMessageId,
       'updated_at': updatedAt.toUtc().toIso8601String(),
       'is_group': isGroup,
       'title': title,
@@ -814,6 +917,13 @@ class MessageThread {
       'created_by': createdBy.isEmpty ? null : createdBy,
       'member_ids': memberIds,
       'members': members.map((member) => member.toJson()).toList(),
+      'type': type.isEmpty
+          ? isGroup
+                ? 'group'
+                : productId.isNotEmpty
+                ? 'product'
+                : 'direct'
+          : type,
     };
   }
 }
