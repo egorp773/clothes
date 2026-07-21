@@ -1252,6 +1252,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final Set<String> _retryingMessageIds = <String>{};
   bool _isMarkingRead = false;
   bool _markReadAgain = false;
+  bool _isLoadingOlder = false;
   ChatMessage? _replyTo;
   ChatMessage? _editingMessage;
   bool _isChatSearching = false;
@@ -1270,6 +1271,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     _controller.text = _thread.draft;
     _controller.addListener(_saveDraftLater);
+    _scrollController.addListener(_loadOlderIfNeeded);
     widget.threadsListenable.addListener(_refreshThread);
     widget.actions?.setVisibility?.call(_thread.id, true);
     unawaited(_markCurrentThreadRead());
@@ -1318,6 +1320,37 @@ class _ChatScreenState extends State<ChatScreen> {
     return position.maxScrollExtent - position.pixels < 180;
   }
 
+  Future<void> _loadOlderIfNeeded() async {
+    final loadOlder = widget.actions?.loadOlder;
+    if (loadOlder == null ||
+        _isLoadingOlder ||
+        !_scrollController.hasClients ||
+        _scrollController.position.pixels > 120) {
+      return;
+    }
+    _isLoadingOlder = true;
+    final previousExtent = _scrollController.position.maxScrollExtent;
+    final previousOffset = _scrollController.position.pixels;
+    try {
+      final loaded = await loadOlder(_thread.id);
+      if (!loaded || !mounted) return;
+      await WidgetsBinding.instance.endOfFrame;
+      if (!_scrollController.hasClients) return;
+      final addedExtent =
+          _scrollController.position.maxScrollExtent - previousExtent;
+      _scrollController.jumpTo(
+        (previousOffset + addedExtent).clamp(
+          0.0,
+          _scrollController.position.maxScrollExtent,
+        ),
+      );
+    } catch (error, stackTrace) {
+      _logChatUiFailure('load older messages', error, stackTrace);
+    } finally {
+      _isLoadingOlder = false;
+    }
+  }
+
   bool _messagesChanged(MessageThread latest) {
     if (latest.messages.length != _thread.messages.length) return true;
     for (var index = 0; index < latest.messages.length; index++) {
@@ -1346,9 +1379,13 @@ class _ChatScreenState extends State<ChatScreen> {
         left.replyToSenderName == right.replyToSenderName &&
         left.editedAt == right.editedAt &&
         left.deletedAt == right.deletedAt &&
+        left.clientMessageId == right.clientMessageId &&
+        left.status == right.status &&
+        left.effectiveStatus == right.effectiveStatus &&
         left.isPending == right.isPending &&
         left.hasError == right.hasError &&
         listEquals(left.readBy, right.readBy) &&
+        listEquals(left.deliveredTo, right.deliveredTo) &&
         _sameReactions(left.reactions, right.reactions) &&
         leftAttachment?.url == rightAttachment?.url &&
         leftAttachment?.name == rightAttachment?.name &&
@@ -1435,6 +1472,7 @@ class _ChatScreenState extends State<ChatScreen> {
       unawaited(_saveDraftSafely(saveDraft, _controller.text));
     }
     _controller.removeListener(_saveDraftLater);
+    _scrollController.removeListener(_loadOlderIfNeeded);
     _controller.dispose();
     _chatSearchController.dispose();
     _composerFocusNode.dispose();
@@ -1500,7 +1538,11 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Удалить сообщение?'),
-        content: Text('Оно исчезнет у всех участников беседы.'),
+        content: const Text(
+          'Сообщение будет скрыто для участников. Оригинал и вложение могут '
+          'храниться ограниченный срок для споров, безопасности и модерации.',
+          key: Key('chat-delete-retention-notice'),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -1523,6 +1565,79 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     if (!mounted || removed) return;
     _showError('Не удалось удалить сообщение. Попробуйте ещё раз.');
+  }
+
+  Future<void> _reportChatMessage(ChatMessage message) async {
+    final report = widget.actions?.reportMessage;
+    if (report == null) return;
+    final reason = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(title: Text('Причина жалобы')),
+            for (final option in const <(String, String)>[
+              ('fraud', 'Мошенничество'),
+              ('prohibited_content', 'Подделка или запрещённый товар'),
+              ('harassment', 'Оскорбления или угрозы'),
+              ('personal_data', 'Разглашение персональных данных'),
+              ('other', 'Другое нарушение'),
+            ])
+              ListTile(
+                key: Key('message-report-reason-${option.$1}'),
+                title: Text(option.$2),
+                onTap: () => Navigator.pop(context, option.$1),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (reason == null || !mounted) return;
+    final submitted = await report(_thread.id, message.id, reason);
+    if (!mounted) return;
+    if (submitted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Жалоба отправлена на модерацию')),
+      );
+    } else {
+      _showError('Не удалось отправить жалобу. Попробуйте ещё раз.');
+    }
+  }
+
+  Future<void> _blockChatUser() async {
+    final block = widget.actions?.blockUser;
+    if (block == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Заблокировать пользователя?'),
+        content: const Text(
+          'Он не сможет писать вам или начинать новые сделки.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            key: const Key('chat-block-confirm'),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Заблокировать'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final blocked = await block(_thread.id);
+    if (!mounted) return;
+    if (blocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Пользователь заблокирован')),
+      );
+    } else {
+      _showError('Не удалось заблокировать пользователя.');
+    }
   }
 
   Future<void> _showMessageActions(ChatMessage message) async {
@@ -1594,6 +1709,26 @@ class _ChatScreenState extends State<ChatScreen> {
                     onTap: () {
                       Navigator.pop(sheetContext);
                       _deleteChatMessage(message);
+                    },
+                  ),
+                if (!message.isMine && widget.actions?.reportMessage != null)
+                  ListTile(
+                    key: const Key('message-action-report'),
+                    leading: const Icon(Icons.flag_outlined),
+                    title: const Text('Пожаловаться'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _reportChatMessage(message);
+                    },
+                  ),
+                if (!message.isMine && widget.actions?.blockUser != null)
+                  ListTile(
+                    key: const Key('message-action-block-user'),
+                    leading: const Icon(Icons.block_outlined),
+                    title: const Text('Заблокировать пользователя'),
+                    onTap: () {
+                      Navigator.pop(sheetContext);
+                      _blockChatUser();
                     },
                   ),
               ],
@@ -1873,10 +2008,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _retryMessage(ChatMessage message) async {
     final retry = message.type == 'text'
-        ? widget.actions?.retryText
+        ? widget.actions?.retryText ?? widget.actions?.retryMessage
         : message.isMedia
-        ? widget.actions?.retryMedia
-        : null;
+        ? widget.actions?.retryMedia ?? widget.actions?.retryMessage
+        : widget.actions?.retryMessage;
     if (retry == null ||
         !message.hasError ||
         _retryingMessageIds.contains(message.id)) {
@@ -2034,7 +2169,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                 onLongPress: () => _showMessageActions(message),
                                 onRetry:
                                     message.hasError &&
-                                        ((message.type == 'text' &&
+                                        (widget.actions?.retryMessage != null ||
+                                            (message.type == 'text' &&
                                                 widget.actions?.retryText !=
                                                     null) ||
                                             (message.isMedia &&

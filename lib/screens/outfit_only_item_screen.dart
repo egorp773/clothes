@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
@@ -12,12 +14,18 @@ class OutfitOnlyItemScreen extends StatefulWidget {
     required this.sidePadding,
     required this.onClose,
     required this.onAdd,
+    @Deprecated(
+      'Outfit-only media is staged locally and uploaded after draft creation.',
+    )
     this.onUploadImage,
   });
 
   final double sidePadding;
   final VoidCallback onClose;
   final Future<void> Function(Product product) onAdd;
+  @Deprecated(
+    'Outfit-only media is staged locally and uploaded after draft creation.',
+  )
   final Future<String?> Function(XFile imageFile, {String? folder})?
   onUploadImage;
 
@@ -80,46 +88,54 @@ class _OutfitOnlyItemScreenState extends State<OutfitOnlyItemScreen> {
     }
 
     setState(() => _isSaving = true);
-    final uploaded = await widget.onUploadImage?.call(
-      _photo!,
-      folder: 'outfits/items',
-    );
-    if (!mounted) return;
-
-    if (uploaded == null) {
-      setState(() => _isSaving = false);
+    try {
+      final bytes = await _photo!.readAsBytes();
+      if (bytes.isEmpty || bytes.length > 15 * 1024 * 1024) {
+        throw const FormatException('Outfit-only image size is invalid');
+      }
+      final lowerName = _photo!.name.toLowerCase();
+      final mimeType = lowerName.endsWith('.png')
+          ? 'image/png'
+          : lowerName.endsWith('.webp')
+          ? 'image/webp'
+          : 'image/jpeg';
+      // The asset stays device-local until publishOutfit has obtained an
+      // owned server draft id. It cannot escape into a caller-chosen bucket.
+      final stagedImage = 'data:$mimeType;base64,${base64Encode(bytes)}';
+      final title = _titleController.text.trim();
+      await widget.onAdd(
+        Product(
+          id: _uuid.v4(),
+          title: title,
+          detailTitle: title,
+          price: '',
+          detailPrice: '',
+          priceValue: 0,
+          image: stagedImage,
+          images: [stagedImage],
+          outfitImages: const [],
+          category: 'Образ',
+          brand: '',
+          size: '',
+          color: '',
+          condition: '',
+          dotsOnDark: false,
+          isLocal: true,
+          isHidden: true,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Не удалось загрузить фото'),
+          content: Text('Не удалось подготовить фото'),
           behavior: SnackBarBehavior.floating,
           duration: Duration(seconds: 2),
         ),
       );
-      return;
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
-
-    final title = _titleController.text.trim();
-    await widget.onAdd(
-      Product(
-        id: _uuid.v4(),
-        title: title,
-        detailTitle: title,
-        price: '',
-        detailPrice: '',
-        priceValue: 0,
-        image: uploaded,
-        images: [uploaded],
-        outfitImages: const [],
-        category: 'Образ',
-        brand: '',
-        size: '',
-        color: '',
-        condition: '',
-        dotsOnDark: false,
-        isLocal: false,
-        isHidden: true,
-      ),
-    );
   }
 
   @override

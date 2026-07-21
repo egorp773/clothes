@@ -4,12 +4,15 @@ import 'package:image_picker/image_picker.dart';
 import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
 import '../models/app_profile.dart';
+import '../models/account_deletion.dart';
 import '../models/created_outfit.dart';
+import '../models/order_dispute.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
 import '../widgets/app_glass_surface.dart';
 import 'edit_profile_screen.dart';
+import '../features/listing_edit/screens/listing_edit_screen.dart';
 import 'profile_feature_screens.dart';
 import 'reviews_screen.dart';
 
@@ -47,6 +50,7 @@ class ProfileScreen extends StatelessWidget {
     required this.onToggleOutfitLike,
     required this.onClearRecentlyViewed,
     required this.onDeleteProduct,
+    this.onEditProduct,
     required this.onProductTap,
     required this.onShareProduct,
     required this.onOutfitAuthorTap,
@@ -54,8 +58,12 @@ class ProfileScreen extends StatelessWidget {
     required this.onMarkAllNotificationsRead,
     required this.onNotificationTap,
     required this.onUpdateNotificationPreferences,
+    this.onWithdrawMarketingConsent,
     required this.onLoadReviews,
     required this.onOpenCatalog,
+    this.onRequestOrderTransition,
+    this.onOpenDispute,
+    this.onUploadDisputeEvidence,
     this.deliveryProfile = const DeliveryProfile(),
     this.onSaveDeliveryProfile,
     this.appearance = const AppAppearanceSettings(),
@@ -89,11 +97,12 @@ class ProfileScreen extends StatelessWidget {
   final Future<String?> Function(AppProfile profile, XFile? avatarFile)
   onSavePersonalProfile;
   final Future<String?> Function(String email) onConfirmEmail;
-  final Future<String?> Function() onDeleteAccount;
+  final Future<AccountDeletionResult> Function() onDeleteAccount;
   final Future<void> Function(String productId) onToggleProductLike;
   final Future<void> Function(String outfitId) onToggleOutfitLike;
   final Future<void> Function() onClearRecentlyViewed;
   final Future<void> Function(String productId) onDeleteProduct;
+  final Future<Product?> Function(Product product)? onEditProduct;
   final ValueChanged<Product> onProductTap;
   final ValueChanged<Product> onShareProduct;
   final ValueChanged<CreatedOutfit> onOutfitAuthorTap;
@@ -103,8 +112,19 @@ class ProfileScreen extends StatelessWidget {
   onNotificationTap;
   final Future<void> Function(NotificationPreferences preferences)
   onUpdateNotificationPreferences;
+  final Future<String?> Function()? onWithdrawMarketingConsent;
   final Future<List<SellerReview>> Function(String sellerId) onLoadReviews;
   final VoidCallback onOpenCatalog;
+  final OrderTransitionRequester? onRequestOrderTransition;
+  final Future<OrderDispute?> Function({
+    required String orderId,
+    required DisputeReason reason,
+    required String description,
+    required List<String> evidencePaths,
+  })?
+  onOpenDispute;
+  final Future<String?> Function(String disputeId, XFile evidence)?
+  onUploadDisputeEvidence;
   final DeliveryProfile deliveryProfile;
   final Future<void> Function(DeliveryProfile profile)? onSaveDeliveryProfile;
   final AppAppearanceSettings appearance;
@@ -121,7 +141,7 @@ class ProfileScreen extends StatelessWidget {
           : order.buyerId == currentUserId || order.sellerId == currentUserId;
       return belongsToCurrentUser &&
           order.status != AppOrderStatus.completed &&
-          order.status != AppOrderStatus.canceled;
+          order.status != AppOrderStatus.cancelled;
     }).toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     final topInset = MediaQuery.of(context).viewPadding.top;
     final profileOverview = _ProfileOverviewCard(
@@ -254,6 +274,13 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
+  Future<Product?> _openListingEditor(BuildContext context, Product product) =>
+      Navigator.of(context).push<Product>(
+        MaterialPageRoute<Product>(
+          builder: (_) => ListingEditScreen(product: product),
+        ),
+      );
+
   void _openEditProfile(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -382,6 +409,9 @@ class ProfileScreen extends StatelessWidget {
           emptyText: emptyText,
           products: products,
           onDeleteProduct: onDeleteProduct,
+          onEditProduct:
+              onEditProduct ??
+              (product) => _openListingEditor(context, product),
           onToggleLike: onToggleProductLike,
           onProductTap: onProductTap,
           onShareProduct: onShareProduct,
@@ -442,6 +472,7 @@ class ProfileScreen extends StatelessWidget {
         builder: (context) => NotificationSettingsScreen(
           preferences: notificationPreferences,
           onSave: onUpdateNotificationPreferences,
+          onWithdrawMarketingConsent: onWithdrawMarketingConsent,
         ),
       ),
     );
@@ -466,6 +497,9 @@ class ProfileScreen extends StatelessWidget {
           onShareProduct: onShareProduct,
           onToggleProductLike: onToggleProductLike,
           onOpenCatalog: () => _openCatalogFromFeature(context),
+          onRequestTransition: onRequestOrderTransition,
+          onOpenDispute: onOpenDispute,
+          onUploadDisputeEvidence: onUploadDisputeEvidence,
         ),
       ),
     );
@@ -1092,18 +1126,17 @@ class _ActiveOrderRow extends StatelessWidget {
 
 String _profileOrderStatus(AppOrderStatus status, {required bool isSeller}) {
   return switch (status) {
-    AppOrderStatus.pendingConfirmation =>
-      isSeller ? 'Подтвердите заказ' : 'Ждём подтверждения продавца',
-    AppOrderStatus.pendingShipment =>
+    AppOrderStatus.created => 'Заказ создан',
+    AppOrderStatus.paid =>
+      isSeller ? 'Подтвердите заказ' : 'Оплата подтверждена',
+    AppOrderStatus.sellerConfirmed =>
       isSeller ? 'Пора отправить заказ' : 'Продавец готовит отправку',
-    AppOrderStatus.inTransit => 'Заказ в пути',
-    AppOrderStatus.deliveredToPickup => 'Можно получать',
-    AppOrderStatus.awaitingPayment =>
-      isSeller ? 'Доступна выплата' : 'Ожидается оплата',
-    AppOrderStatus.returning => 'Оформляется возврат',
-    AppOrderStatus.disputed => 'Открыт спор',
+    AppOrderStatus.shipped => 'Заказ в пути',
+    AppOrderStatus.received => 'Получение подтверждено',
+    AppOrderStatus.inspection => 'Период проверки вещи',
     AppOrderStatus.completed => 'Заказ завершён',
-    AppOrderStatus.canceled => 'Заказ отменён',
+    AppOrderStatus.dispute => 'Открыт спор',
+    AppOrderStatus.cancelled => 'Заказ отменён',
   };
 }
 
@@ -1782,7 +1815,7 @@ class _ProductsGrid extends StatelessWidget {
     required this.onToggleLike,
     required this.onProductTap,
     required this.onShareProduct,
-    this.onDeleteProduct,
+    this.onProductMenu,
     this.deletingProductIds = const <String>{},
   });
 
@@ -1790,7 +1823,7 @@ class _ProductsGrid extends StatelessWidget {
   final Future<void> Function(String productId) onToggleLike;
   final ValueChanged<Product> onProductTap;
   final ValueChanged<Product> onShareProduct;
-  final Future<void> Function(String productId)? onDeleteProduct;
+  final ValueChanged<Product>? onProductMenu;
   final Set<String> deletingProductIds;
 
   @override
@@ -1810,10 +1843,10 @@ class _ProductsGrid extends StatelessWidget {
           product: products[index],
           onTap: () => onProductTap(products[index]),
           onMenu:
-              onDeleteProduct == null ||
+              onProductMenu == null ||
                   deletingProductIds.contains(products[index].id)
               ? null
-              : () => onDeleteProduct!(products[index].id),
+              : () => onProductMenu!(products[index]),
           onLike: () {
             onToggleLike(products[index].id);
           },
@@ -1856,6 +1889,8 @@ class _OutfitsList extends StatelessWidget {
   }
 }
 
+enum _ListingAction { edit, delete }
+
 class _AllProductsScreen extends StatefulWidget {
   const _AllProductsScreen({
     required this.title,
@@ -1863,6 +1898,7 @@ class _AllProductsScreen extends StatefulWidget {
     required this.products,
     required this.onToggleLike,
     required this.onDeleteProduct,
+    required this.onEditProduct,
     required this.onProductTap,
     required this.onShareProduct,
   });
@@ -1872,6 +1908,7 @@ class _AllProductsScreen extends StatefulWidget {
   final List<Product> products;
   final Future<void> Function(String productId) onToggleLike;
   final Future<void> Function(String productId) onDeleteProduct;
+  final Future<Product?> Function(Product product) onEditProduct;
   final ValueChanged<Product> onProductTap;
   final ValueChanged<Product> onShareProduct;
 
@@ -1882,6 +1919,7 @@ class _AllProductsScreen extends StatefulWidget {
 class _AllProductsScreenState extends State<_AllProductsScreen> {
   late List<Product> _products;
   final Set<String> _deletingProductIds = <String>{};
+  final Set<String> _editingProductIds = <String>{};
 
   @override
   void initState() {
@@ -1939,6 +1977,50 @@ class _AllProductsScreenState extends State<_AllProductsScreen> {
     }
   }
 
+  Future<void> _showProductActions(Product product) async {
+    if (_deletingProductIds.contains(product.id) ||
+        _editingProductIds.contains(product.id)) {
+      return;
+    }
+    final action = await showModalBottomSheet<_ListingAction>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              key: const Key('listing-action-edit'),
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Редактировать'),
+              subtitle: const Text('После изменений — повторная модерация'),
+              onTap: () => Navigator.pop(sheetContext, _ListingAction.edit),
+            ),
+            ListTile(
+              key: const Key('listing-action-delete'),
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('Удалить', style: TextStyle(color: Colors.red)),
+              onTap: () => Navigator.pop(sheetContext, _ListingAction.delete),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (action == _ListingAction.delete) {
+      await _deleteProduct(product.id);
+      return;
+    }
+    if (action != _ListingAction.edit) return;
+    setState(() => _editingProductIds.add(product.id));
+    try {
+      final edited = await widget.onEditProduct(product);
+      if (!mounted || edited == null) return;
+      final index = _products.indexWhere((item) => item.id == product.id);
+      if (index >= 0) setState(() => _products[index] = edited);
+    } finally {
+      if (mounted) setState(() => _editingProductIds.remove(product.id));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return _ProfileGridScaffold(
@@ -1948,7 +2030,7 @@ class _AllProductsScreenState extends State<_AllProductsScreen> {
       child: _ProductsGrid(
         products: _products,
         onToggleLike: widget.onToggleLike,
-        onDeleteProduct: _deleteProduct,
+        onProductMenu: _showProductActions,
         deletingProductIds: _deletingProductIds,
         onProductTap: widget.onProductTap,
         onShareProduct: widget.onShareProduct,
@@ -2566,7 +2648,13 @@ class _CatalogProductCard extends StatelessWidget {
               image: product.image,
               dotsOnDark: product.dotsOnDark,
               onMenu: onMenu,
-              actionIcon: Icons.delete_outline,
+              menuKey: ValueKey('listing-actions-${product.id}'),
+              actionIcon: Icons.more_horiz,
+              badgeText:
+                  product.status == 'pending_moderation' ||
+                      (product.status == 'ready' && product.isHidden)
+                  ? 'На модерации'
+                  : '',
             ),
             const SizedBox(height: 2),
             Padding(
@@ -2594,13 +2682,17 @@ class _CatalogImageCard extends StatelessWidget {
     required this.image,
     this.dotsOnDark = false,
     this.onMenu,
+    this.menuKey,
     this.actionIcon = Icons.more_horiz,
+    this.badgeText = '',
   });
 
   final String image;
   final bool dotsOnDark;
   final VoidCallback? onMenu;
+  final Key? menuKey;
   final IconData actionIcon;
+  final String badgeText;
 
   @override
   Widget build(BuildContext context) {
@@ -2628,11 +2720,37 @@ class _CatalogImageCard extends StatelessWidget {
                 ),
               ),
             ),
+            if (badgeText.isNotEmpty)
+              Positioned(
+                left: 8,
+                top: 8,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.72),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    child: Text(
+                      badgeText,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             if (onMenu != null)
               Positioned(
                 right: 12,
                 top: 12,
                 child: GestureDetector(
+                  key: menuKey,
                   behavior: HitTestBehavior.opaque,
                   onTap: onMenu,
                   child: Padding(

@@ -15,6 +15,24 @@ enum ListingPublishStep {
 
 enum ListingPhotoUploadStatus { pending, uploading, uploaded, failed }
 
+enum SellerDeclaration {
+  ownership('owns_item', 'Вещь принадлежит мне'),
+  rightToSell('has_right_to_sell', 'Я имею право продать эту вещь'),
+  inPossession('has_item_in_possession', 'Вещь находится у меня'),
+  photosOwned('owns_photos', 'Фотографии принадлежат мне'),
+  descriptionAccurate(
+    'description_is_accurate',
+    'Описание и сведения о состоянии достоверны',
+  ),
+  notCounterfeit('item_is_authentic', 'Товар не является подделкой'),
+  notProhibited('item_is_not_prohibited', 'Товар не запрещён к продаже');
+
+  const SellerDeclaration(this.wireName, this.label);
+
+  final String wireName;
+  final String label;
+}
+
 extension ListingStatusValue on ListingStatus {
   String get value => name;
 
@@ -57,8 +75,17 @@ class ListingPhoto {
   double? qualityScore;
   ListingPhotoUploadStatus uploadStatus;
 
-  String get displaySource => remoteUrl.isNotEmpty ? remoteUrl : localPath;
-  bool get isUploaded => remoteUrl.isNotEmpty;
+  /// Draft previews and analysis must keep using the device-local source.
+  /// [storagePath] is an upload receipt, not a URL that Flutter can display.
+  String get displaySource => localPath.isNotEmpty ? localPath : remoteUrl;
+  String get analysisSource => localPath.isNotEmpty ? localPath : remoteUrl;
+
+  /// A staged object is uploaded only after Storage returned its canonical
+  /// path. [remoteUrl] is kept as a compatibility fallback for published or
+  /// legacy photos that no longer have a draft object path.
+  bool get isUploaded =>
+      uploadStatus == ListingPhotoUploadStatus.uploaded &&
+      (storagePath.isNotEmpty || remoteUrl.isNotEmpty);
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -86,7 +113,8 @@ class ListingPhoto {
     uploadStatus: ListingPhotoUploadStatus.values.firstWhere(
       (value) => value.name == json['upload_status'],
       orElse: () =>
-          ((json['original_url'] as String? ?? '').isNotEmpty ||
+          ((json['storage_path'] as String? ?? '').isNotEmpty ||
+              (json['original_url'] as String? ?? '').isNotEmpty ||
               (json['remote_url'] as String? ?? '').isNotEmpty)
           ? ListingPhotoUploadStatus.uploaded
           : ListingPhotoUploadStatus.pending,
@@ -253,6 +281,18 @@ class ListingDraft {
   final List<String> deliveryMethods = [];
 
   final Map<String, ListingFieldPrediction> predictions = {};
+  static const currentSellerConfirmationVersion = 'private-individual-v1';
+  String sellerConfirmationVersion = currentSellerConfirmationVersion;
+  final Set<SellerDeclaration> sellerDeclarations = {};
+
+  bool get hasAllSellerDeclarations =>
+      sellerConfirmationVersion.trim().isNotEmpty &&
+      SellerDeclaration.values.every(sellerDeclarations.contains);
+
+  Map<String, bool> get sellerConfirmationsPayload => {
+    for (final declaration in SellerDeclaration.values)
+      declaration.wireName: sellerDeclarations.contains(declaration),
+  };
 
   List<String> get uploadedImageUrls => photos
       .where((photo) => photo.remoteUrl.isNotEmpty)
@@ -355,8 +395,11 @@ class ListingDraft {
 
   String? validateForPublish() {
     if (photos.isEmpty) return 'Добавьте хотя бы одну фотографию';
-    if (uploadedImageUrls.length != photos.length) {
+    if (photos.any((photo) => !photo.isUploaded)) {
       return 'Дождитесь загрузки всех фотографий';
+    }
+    if (!hasAllSellerDeclarations) {
+      return 'Подтвердите все декларации продавца';
     }
     return validateBasics() ?? validateAttributes() ?? validateDelivery();
   }
@@ -408,6 +451,10 @@ class ListingDraft {
     'predictions': predictions.map(
       (key, value) => MapEntry(key, value.toJson()),
     ),
+    'seller_confirmation_version': sellerConfirmationVersion,
+    'seller_declarations': [
+      for (final declaration in sellerDeclarations) declaration.wireName,
+    ],
     'created_at': createdAt.toIso8601String(),
     'updated_at': updatedAt.toIso8601String(),
   };
@@ -505,6 +552,18 @@ class ListingDraft {
         }
       }
     }
+    draft.sellerConfirmationVersion =
+        json['seller_confirmation_version'] as String? ??
+        currentSellerConfirmationVersion;
+    final declarationNames =
+        (json['seller_declarations'] as List<dynamic>? ?? const [])
+            .map((value) => value.toString())
+            .toSet();
+    draft.sellerDeclarations.addAll(
+      SellerDeclaration.values.where(
+        (declaration) => declarationNames.contains(declaration.wireName),
+      ),
+    );
     if (draft.mainPhotoId.isEmpty && draft.photos.isNotEmpty) {
       draft.mainPhotoId = draft.photos.first.id;
     }

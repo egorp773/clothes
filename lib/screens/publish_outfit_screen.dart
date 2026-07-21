@@ -16,6 +16,9 @@ class PublishOutfitScreen extends StatefulWidget {
     required this.onAddItem,
     required this.products,
     required this.currentUserId,
+    @Deprecated(
+      'Outfit media is uploaded by onPublish after a server draft exists.',
+    )
     this.onUploadImage,
   });
 
@@ -25,6 +28,9 @@ class PublishOutfitScreen extends StatefulWidget {
   final VoidCallback onAddItem;
   final List<Product> products;
   final String currentUserId;
+  @Deprecated(
+    'Outfit media is uploaded by onPublish after a server draft exists.',
+  )
   final Future<String?> Function(XFile imageFile, {String? folder})?
   onUploadImage;
 
@@ -35,7 +41,6 @@ class PublishOutfitScreen extends StatefulWidget {
 class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
   final ImagePicker _picker = ImagePicker();
   final List<XFile?> _photos = List<XFile?>.filled(10, null);
-  final Map<int, String> _uploadedPhotos = {};
   final Set<String> _selectedIds = {};
   final Uuid _uuid = const Uuid();
   bool _isPublishing = false;
@@ -100,7 +105,7 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
   }
 
   String? _photoPath(int index) {
-    return _uploadedPhotos[index] ?? _photos[index]?.path;
+    return _photos[index]?.path;
   }
 
   int? get _firstEmptyPhotoIndex {
@@ -133,14 +138,12 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
     if (picked == null || !mounted) return;
     setState(() {
       _photos[index] = picked;
-      _uploadedPhotos.remove(index);
     });
   }
 
   void _removePhoto(int index) {
     setState(() {
       _photos[index] = null;
-      _uploadedPhotos.remove(index);
     });
   }
 
@@ -188,32 +191,6 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
     }
 
     setState(() => _isPublishing = true);
-    final uploadedPhotos = <String>[];
-
-    for (var index = 0; index < _photos.length; index++) {
-      final photo = _photos[index];
-      if (photo == null) continue;
-
-      final uploaded =
-          _uploadedPhotos[index] ??
-          await widget.onUploadImage?.call(photo, folder: 'outfits/photos');
-      if (uploaded == null) {
-        if (!mounted) return;
-        setState(() => _isPublishing = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Не удалось загрузить фото образа'),
-            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 2),
-          ),
-        );
-        return;
-      }
-
-      _uploadedPhotos[index] = uploaded;
-      uploadedPhotos.add(uploaded);
-    }
-
     final preparedItems = await _prepareSelectedItems();
     if (preparedItems == null) {
       if (!mounted) return;
@@ -228,16 +205,28 @@ class _PublishOutfitScreenState extends State<PublishOutfitScreen> {
       return;
     }
 
-    await widget.onPublish(
-      CreatedOutfit(
-        id: _uuid.v4(),
-        photos: uploadedPhotos,
-        items: preparedItems,
-      ),
-    );
-
-    if (mounted) {
-      setState(() => _isPublishing = false);
+    final photoFiles = _photos.whereType<XFile>().toList(growable: false);
+    try {
+      await widget.onPublish(
+        CreatedOutfit(
+          id: _uuid.v4(),
+          photos: photoFiles.map((photo) => photo.path).toList(growable: false),
+          items: preparedItems,
+          pendingPhotoFiles: photoFiles,
+        ),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Не удалось опубликовать образ'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isPublishing = false);
     }
   }
 

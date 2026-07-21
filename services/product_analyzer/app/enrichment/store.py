@@ -8,6 +8,7 @@ import httpx
 import numpy as np
 
 from app.config import Settings
+from app.security.remote_fetch import download_limited, parse_allowed_hosts
 
 
 class EnrichmentStoreError(RuntimeError):
@@ -29,9 +30,16 @@ class SupabaseEnrichmentStore:
         self.settings = settings
         self._url = settings.supabase_url.rstrip("/") if settings.supabase_url else None
         self._key = settings.supabase_service_role_key
+        self._remote_image_hosts = parse_allowed_hosts(
+            settings.remote_image_allowed_hosts,
+            supabase_url=settings.supabase_url,
+        )
         self._client = httpx.Client(
-            follow_redirects=True,
-            timeout=httpx.Timeout(20.0, connect=3.0),
+            follow_redirects=False,
+            timeout=httpx.Timeout(
+                settings.remote_fetch_timeout_seconds,
+                connect=settings.remote_fetch_connect_timeout_seconds,
+            ),
         )
 
     @property
@@ -191,24 +199,19 @@ class SupabaseEnrichmentStore:
         return [dict(row) for row in response.json()]
 
     def download_image(self, url: str, max_bytes: int) -> tuple[bytes, str]:
-        if not url.startswith(("https://", "http://")):
-            raise EnrichmentStoreError("Product image URL must use HTTP(S)")
-        with self._client.stream("GET", url, headers={"Accept": "image/*"}) as response:
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").split(";", 1)[0]
-            if content_type not in {"image/jpeg", "image/png", "image/webp"}:
-                raise EnrichmentStoreError(f"Unsupported image MIME: {content_type}")
-            advertised = int(response.headers.get("content-length") or 0)
-            if advertised > max_bytes:
-                raise EnrichmentStoreError("Product image is too large")
-            chunks: list[bytes] = []
-            size = 0
-            for chunk in response.iter_bytes():
-                size += len(chunk)
-                if size > max_bytes:
-                    raise EnrichmentStoreError("Product image is too large")
-                chunks.append(chunk)
-        return b"".join(chunks), content_type
+        try:
+            payload, content_type, _ = download_limited(
+                self._client,
+                url,
+                max_bytes=max_bytes,
+                accepted_content_types={"image/jpeg", "image/png", "image/webp"},
+                allowed_hosts=self._remote_image_hosts or None,
+                allow_http=self.settings.allow_http_remote_images,
+                max_redirects=self.settings.remote_fetch_max_redirects,
+            )
+            return payload, content_type
+        except (ValueError, httpx.HTTPError) as error:
+            raise EnrichmentStoreError(str(error)) from error
 
     def upload_cutout(self, product_id: str, image_id: str, png: bytes) -> str:
         path = f"enrichment/{product_id}/{image_id}.png"

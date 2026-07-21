@@ -130,7 +130,7 @@ class LoginScreen extends StatelessWidget {
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  'При входе и регистрации вы соглашаетесь с политикой\nобработки персональных данных.',
+                  'Выбранные ранее согласия будут зафиксированы сервером только после подтверждения входа.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 10.5,

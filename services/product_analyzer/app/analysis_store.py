@@ -111,6 +111,28 @@ class SupabaseAnalysisStore:
         context = self.get_context(analysis_id)
         return context[1] if context else None
 
+    def get_listing_id(self, analysis_id: str) -> str | None:
+        if not self.enabled:
+            return None
+        try:
+            response = self._request(
+                "GET",
+                f"{self._url}/rest/v1/listing_analysis_jobs",
+                params={
+                    "id": f"eq.{analysis_id}",
+                    "select": "listing_id",
+                    "limit": "1",
+                },
+                headers=self._headers,
+            )
+            rows = response.json()
+            if not rows or not rows[0].get("listing_id"):
+                return None
+            return str(rows[0]["listing_id"])
+        except Exception:
+            LOGGER.exception("Unable to load analysis owner context %s", analysis_id)
+            return None
+
     def get_context(self, analysis_id: str) -> tuple[str, AnalysisResponse] | None:
         if not self.enabled:
             return None

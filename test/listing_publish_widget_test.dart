@@ -20,7 +20,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(320, 568));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = ListingPublishController(
-      repository: ListingPublishRepository(
+      repository: _WidgetRepository(
         sellerName: 'Seller',
         sellerHandle: '@seller',
         fallbackCity: 'Москва',
@@ -54,7 +54,10 @@ void main() {
       find.byType(SingleChildScrollView).first,
       const Offset(0, -700),
     );
-    await tester.pumpAndSettle();
+    // Dragging across a text field can leave its blinking caret focused. A
+    // bounded pump advances scrolling without waiting on recurring cursor
+    // frames.
+    await tester.pump(const Duration(milliseconds: 300));
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -68,7 +71,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(320, 568));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = ListingPublishController(
-      repository: ListingPublishRepository(
+      repository: _WidgetRepository(
         sellerName: 'Seller',
         sellerHandle: '@seller',
         fallbackCity: 'Москва',
@@ -119,7 +122,7 @@ void main() {
   ) async {
     SharedPreferences.setMockInitialValues({});
     final controller = ListingPublishController(
-      repository: ListingPublishRepository(
+      repository: _WidgetRepository(
         sellerName: 'Seller',
         sellerHandle: '@seller',
         fallbackCity: 'Москва',
@@ -201,7 +204,7 @@ void main() {
   ) async {
     SharedPreferences.setMockInitialValues({});
     final controller = ListingPublishController(
-      repository: ListingPublishRepository(
+      repository: _WidgetRepository(
         sellerName: 'Seller',
         sellerHandle: '@seller',
         fallbackCity: 'Москва',
@@ -257,7 +260,7 @@ void main() {
   ) async {
     SharedPreferences.setMockInitialValues({});
     final controller = ListingPublishController(
-      repository: ListingPublishRepository(
+      repository: _WidgetRepository(
         sellerName: 'Seller',
         sellerHandle: '@seller',
         fallbackCity: 'Москва',
@@ -376,6 +379,30 @@ class _UnusedAnalyzer implements ProductImageAnalyzer {
   Future<ProductAnalysisResult?> getAnalysis(String analysisId) async => null;
 }
 
+class _WidgetRepository extends ListingPublishRepository {
+  _WidgetRepository({
+    required super.sellerName,
+    required super.sellerHandle,
+    required super.fallbackCity,
+  });
+
+  @override
+  String get sellerId => 'seller';
+
+  @override
+  Future<ListingDeliveryDefaults> loadDeliveryDefaults() async =>
+      const ListingDeliveryDefaults();
+
+  @override
+  Future<List<ListingDraft>> loadLocalDrafts() async => const [];
+
+  @override
+  Future<void> saveLocalDraft(ListingDraft draft) async {}
+
+  @override
+  Future<void> syncRemoteDraft(ListingDraft draft) async {}
+}
+
 ListingDraft _readyToPublishDraft() {
   final draft = ListingDraft.empty(sellerId: 'seller')
     ..title = 'Худи'
@@ -394,6 +421,7 @@ ListingDraft _readyToPublishDraft() {
     ..city = 'Москва'
     ..shippingAddress = 'Тверская, 1';
   draft.deliveryMethods.add('cdek');
+  draft.sellerDeclarations.addAll(SellerDeclaration.values);
   draft.photos.add(
     ListingPhoto(
       id: 'photo',
@@ -430,8 +458,9 @@ class _FlowRepository extends ListingPublishRepository {
   Future<void> syncRemoteDraft(ListingDraft draft) async {}
 
   @override
-  Future<void> publish(ListingDraft draft) async {
+  Future<ListingPublishResult> publish(ListingDraft draft) async {
     publishCalls += 1;
     draft.status = ListingStatus.published;
+    return const ListingPublishResult(ListingPublicationDisposition.published);
   }
 }

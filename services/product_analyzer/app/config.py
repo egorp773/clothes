@@ -40,9 +40,18 @@ class Settings(BaseSettings):
     inference_max_concurrency: int = 1
     inference_queue_size: int = 4
     inference_queue_timeout_seconds: float = 20.0
-    require_analysis_auth: bool = False
+    # Analysis and mutation endpoints are authenticated by default. Public
+    # catalog discovery has its own explicitly anonymous, rate-limited path.
+    require_analysis_auth: bool = True
+    analyzer_service_secret: str | None = None
+    analyzer_service_secret_previous: str | None = None
     supabase_url: str | None = None
     supabase_service_role_key: str | None = None
+    remote_image_allowed_hosts: str = ""
+    remote_fetch_timeout_seconds: float = 6.0
+    remote_fetch_connect_timeout_seconds: float = 2.5
+    remote_fetch_max_redirects: int = 2
+    allow_http_remote_images: bool = False
     max_images: int = 8
     max_image_bytes: int = 15 * 1024 * 1024
     max_decoded_image_pixels: int = 40_000_000
@@ -81,6 +90,9 @@ class Settings(BaseSettings):
     visual_search_strong_rerank_score: float = 0.58
     visual_search_similar_result_count: int = 12
     visual_search_download_timeout_seconds: float = 6.0
+    # Storage URLs are used only for the bounded indexing download. Durable
+    # embeddings keep their canonical storage:// reference instead.
+    visual_search_signed_url_seconds: int = 5 * 60
     # u2net_cloth_seg is useful on a roomy worker, but its CPU inference arena
     # is too large for the 4 GB production container. The fast geometric
     # upper/lower fallback is the safe default; larger deployments can opt in.
@@ -104,9 +116,9 @@ class Settings(BaseSettings):
     rerank_popularity_weight: float = 0.02
     # Character classes avoid double-escaping when this value is transported
     # through Docker Compose, .env files, or remote deployment APIs.
-    cors_origin_regex: str = (
-        r"^https?://(localhost|127[.]0[.]0[.]1)(:[0-9]+)?$|^https://.+$"
-    )
+    # Browser access is denied unless operators configure an exact origin
+    # expression. Mobile Edge-to-service calls do not require CORS.
+    cors_origin_regex: str = r"(?!)"
 
     model_root: Path = SERVICE_ROOT / "models"
     grounded_sam_repo: Path = SERVICE_ROOT / "vendor" / "Grounded-SAM-2"
@@ -196,6 +208,25 @@ class Settings(BaseSettings):
             raise ValueError("At least one visual-search fusion weight must be positive")
         self.visual_search_foreground_weight = foreground / total
         self.visual_search_context_weight = context / total
+        if self.remote_fetch_timeout_seconds <= 0:
+            raise ValueError("Remote fetch timeout must be positive")
+        if self.remote_fetch_connect_timeout_seconds <= 0:
+            raise ValueError("Remote fetch connect timeout must be positive")
+        if not 0 <= self.remote_fetch_max_redirects <= 5:
+            raise ValueError("Remote fetch redirect limit must be between 0 and 5")
+        if not 60 <= self.visual_search_signed_url_seconds <= 60 * 60:
+            raise ValueError(
+                "Visual-search signed URL lifetime must be between 60 and 3600 seconds"
+            )
+        if self.analyzer_service_secret and len(self.analyzer_service_secret) < 32:
+            raise ValueError("Analyzer service secret must be at least 32 characters")
+        if (
+            self.analyzer_service_secret_previous
+            and len(self.analyzer_service_secret_previous) < 32
+        ):
+            raise ValueError(
+                "Previous analyzer service secret must be at least 32 characters"
+            )
         return self
 
     @property

@@ -11,7 +11,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/supabase_config.dart';
-import 'listing_catalogs.dart';
 import '../models/listing_draft.dart';
 
 class ListingPublishException implements Exception {
@@ -34,21 +33,35 @@ class ListingDeliveryDefaults {
   final List<String> deliveryMethods;
 }
 
+enum ListingPublicationDisposition { published, heldForReview }
+
+class ListingPublishResult {
+  const ListingPublishResult(this.disposition);
+
+  final ListingPublicationDisposition disposition;
+
+  bool get isPublished =>
+      disposition == ListingPublicationDisposition.published;
+}
+
 class ListingPublishRepository {
   ListingPublishRepository({
     required this.sellerName,
     required this.sellerHandle,
     required this.fallbackCity,
+    this.assertCanPublish,
   });
 
   static const _draftsKeyPrefix = 'listing_publish_drafts_v1';
   static const _addressesKeyPrefix = 'listing_publish_addresses_v1';
   static const _deliveryKeyPrefix = 'listing_publish_delivery_v1';
-  static const _bucketName = 'product-images';
+  static const _bucketName = 'listing-drafts';
+  static const _maxImageBytes = 15 * 1024 * 1024;
 
   final String sellerName;
   final String sellerHandle;
   final String fallbackCity;
+  final Future<String?> Function()? assertCanPublish;
 
   SharedPreferences? _preferences;
 
@@ -57,61 +70,25 @@ class ListingPublishRepository {
 
   String get sellerId => _client?.auth.currentUser?.id ?? '';
 
-  String get _ownerKey => sellerId.isEmpty ? 'local' : sellerId;
-  String get _draftsKey => '${_draftsKeyPrefix}_$_ownerKey';
-  String get _addressesKey => '${_addressesKeyPrefix}_$_ownerKey';
-  String get _deliveryKey => '${_deliveryKeyPrefix}_$_ownerKey';
-
   Future<SharedPreferences> get _prefs async =>
       _preferences ??= await SharedPreferences.getInstance();
 
   Future<List<ListingDraft>> loadLocalDrafts() async {
-    try {
-      final encoded = (await _prefs).getString(_draftsKey);
-      if (encoded == null || encoded.isEmpty) return [];
-      final raw = jsonDecode(encoded);
-      if (raw is! List) return [];
-      final drafts = raw
-          .whereType<Map>()
-          .map((item) => ListingDraft.fromJson(Map<String, dynamic>.from(item)))
-          .where(
-            (draft) =>
-                draft.status != ListingStatus.published &&
-                draft.status != ListingStatus.archived &&
-                draft.status != ListingStatus.sold,
-          )
-          .toList();
-      drafts.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      return drafts;
-    } catch (error, stackTrace) {
-      debugPrint('Listing drafts read error: $error\n$stackTrace');
-      return [];
-    }
+    // Drafts contain photos, declarations and delivery data. SharedPreferences
+    // is not an appropriate persistence boundary for that material. Until an
+    // encrypted draft store is introduced, recovery is deliberately disabled.
+    await _purgeLegacySensitivePreferences();
+    await _purgeLegacyDraftDirectories();
+    return const [];
   }
 
   Future<void> saveLocalDraft(ListingDraft draft) async {
-    if (draft.status == ListingStatus.published ||
-        draft.status == ListingStatus.archived ||
-        draft.status == ListingStatus.sold) {
-      await removeLocalDraft(draft.id);
-      return;
-    }
+    await _purgeLegacySensitivePreferences();
     draft.updatedAt = DateTime.now().toUtc();
-    final drafts = await loadLocalDrafts();
-    drafts.removeWhere((item) => item.id == draft.id);
-    drafts.insert(0, draft);
-    final payload = drafts.take(20).map((item) => item.toJson()).toList();
-    await (await _prefs).setString(_draftsKey, jsonEncode(payload));
   }
 
-  Future<void> removeLocalDraft(String draftId) async {
-    final drafts = await loadLocalDrafts();
-    drafts.removeWhere((item) => item.id == draftId);
-    await (await _prefs).setString(
-      _draftsKey,
-      jsonEncode(drafts.map((item) => item.toJson()).toList()),
-    );
-  }
+  Future<void> removeLocalDraft(String draftId) =>
+      _purgeLegacySensitivePreferences();
 
   Future<ListingPhoto> stagePhoto({
     required ListingDraft draft,
@@ -119,9 +96,15 @@ class ListingPublishRepository {
   }) async {
     final id = const Uuid().v4();
     try {
+      final bytes = await source.readAsBytes();
+      if (bytes.isEmpty || bytes.length > _maxImageBytes) {
+        throw const ListingPublishException(
+          'Фотография должна быть не больше 15 МБ',
+        );
+      }
+      final extension = supportedImageExtension(bytes);
+      final mime = _mimeTypeForExtension(extension);
       if (kIsWeb) {
-        final bytes = await source.readAsBytes();
-        final mime = _mimeType(source.name, source.path);
         return ListingPhoto(
           id: id,
           localPath: 'data:$mime;base64,${base64Encode(bytes)}',
@@ -133,15 +116,11 @@ class ListingPublishRepository {
         path.join(support.path, 'listing_drafts', draft.id),
       );
       await directory.create(recursive: true);
-      final extension = _extension(source.name, source.path);
       final targetPath = path.join(directory.path, '$id$extension');
-      final sourceFile = File(source.path);
-      if (source.path.isNotEmpty && await sourceFile.exists()) {
-        await sourceFile.copy(targetPath);
-      } else {
-        await File(targetPath).writeAsBytes(await source.readAsBytes());
-      }
+      await File(targetPath).writeAsBytes(bytes, flush: true);
       return ListingPhoto(id: id, localPath: targetPath);
+    } on ListingPublishException {
+      rethrow;
     } catch (error, stackTrace) {
       debugPrint('Listing photo staging error: $error\n$stackTrace');
       throw ListingPublishException(
@@ -152,30 +131,55 @@ class ListingPublishRepository {
   }
 
   Future<void> ensureRemoteDraft(ListingDraft draft) async {
-    final client = _client;
-    final user = client?.auth.currentUser;
-    if (client == null || user == null) return;
-    try {
-      await client
-          .from('products')
-          .upsert(_remotePayload(draft, user.id), onConflict: 'id');
-    } catch (error, stackTrace) {
-      debugPrint('Remote listing draft create error: $error\n$stackTrace');
-    }
+    await _saveRemoteDraft(draft);
   }
+
+  @visibleForTesting
+  static String canonicalDraftStoragePath({
+    required String userId,
+    required String listingId,
+    required String fileName,
+  }) {
+    final normalizedUserId = userId.trim();
+    final normalizedListingId = listingId.trim();
+    final normalizedFileName = fileName.trim();
+    if (normalizedUserId.isEmpty ||
+        normalizedListingId.isEmpty ||
+        normalizedFileName.isEmpty ||
+        normalizedUserId.contains('/') ||
+        normalizedListingId.contains('/') ||
+        normalizedFileName.contains('/') ||
+        normalizedFileName.contains('\\') ||
+        normalizedFileName == '.' ||
+        normalizedFileName == '..') {
+      throw ArgumentError('Invalid canonical listing draft path');
+    }
+    return '$normalizedUserId/$normalizedListingId/$normalizedFileName';
+  }
+
+  static bool isOwnedDraftStoragePath({
+    required String storagePath,
+    required String userId,
+    required String listingId,
+  }) =>
+      storagePath.startsWith('${userId.trim()}/${listingId.trim()}/') &&
+      storagePath.split('/').length == 3;
 
   Future<bool> uploadPhoto(ListingDraft draft, ListingPhoto photo) async {
     final client = _client;
     final user = client?.auth.currentUser;
     if (client == null || user == null) return false;
-    if (photo.remoteUrl.isNotEmpty) return true;
+    if (photo.isUploaded) return true;
 
     photo.uploadStatus = ListingPhotoUploadStatus.uploading;
     try {
       final bytes = await _readPhotoBytes(photo.localPath);
-      final extension = _extension(photo.localPath, photo.localPath);
-      final storagePath =
-          'users/${user.id}/listings/${draft.id}/${photo.id}$extension';
+      final extension = supportedImageExtension(bytes);
+      final storagePath = canonicalDraftStoragePath(
+        userId: user.id,
+        listingId: draft.id,
+        fileName: '${photo.id}$extension',
+      );
       await client.storage
           .from(_bucketName)
           .uploadBinary(
@@ -184,9 +188,8 @@ class ListingPublishRepository {
             fileOptions: const FileOptions(cacheControl: '3600', upsert: false),
           );
       photo.storagePath = storagePath;
-      photo.remoteUrl = client.storage
-          .from(_bucketName)
-          .getPublicUrl(storagePath);
+      // A private object path is an upload receipt, not a display URL. The
+      // publish Edge function promotes/copies it and returns display URLs.
       photo.uploadStatus = ListingPhotoUploadStatus.uploaded;
       await syncRemoteDraft(draft);
       debugPrint('Listing photo uploaded: ${photo.id}');
@@ -201,7 +204,14 @@ class ListingPublishRepository {
   Future<void> deletePhoto(ListingDraft draft, ListingPhoto photo) async {
     if (draft.status == ListingStatus.published) return;
     final client = _client;
-    if (client != null && photo.storagePath.isNotEmpty) {
+    final userId = client?.auth.currentUser?.id ?? '';
+    if (client != null &&
+        photo.storagePath.isNotEmpty &&
+        isOwnedDraftStoragePath(
+          storagePath: photo.storagePath,
+          userId: userId,
+          listingId: draft.id,
+        )) {
       try {
         await client.storage.from(_bucketName).remove([photo.storagePath]);
       } catch (error, stackTrace) {
@@ -212,60 +222,38 @@ class ListingPublishRepository {
   }
 
   Future<void> syncRemoteDraft(ListingDraft draft) async {
+    await _saveRemoteDraft(draft);
+  }
+
+  Future<void> _saveRemoteDraft(ListingDraft draft) async {
     final client = _client;
     final user = client?.auth.currentUser;
-    if (client == null || user == null) return;
+    if (client == null || user == null) {
+      throw const ListingPublishException(
+        'Для сохранения черновика требуется защищённое подключение',
+      );
+    }
     try {
-      await client
-          .from('products')
-          .upsert(_remotePayload(draft, user.id), onConflict: 'id');
-      if (draft.predictions.isNotEmpty) {
-        final analysisRows = draft.predictions.values
-            .map(
-              (entry) => {
-                'listing_id': draft.id,
-                'field_name': entry.fieldName,
-                'predicted_value': entry.predictedValue,
-                'confirmed_value': entry.confirmedValue,
-                'confidence': entry.confidence,
-                'source': entry.source,
-                'was_edited': entry.wasEdited,
-                'user_confirmed': entry.userConfirmed,
-                'model_version': entry.modelVersion,
-              },
-            )
-            .toList();
-        await client
-            .from('listing_analysis')
-            .upsert(analysisRows, onConflict: 'listing_id,field_name');
-      }
-      final attributes = _confirmedProductAttributes(draft);
-      await Future.wait(
-        attributes.map(
-          (attribute) => client.rpc(
-            'set_product_attribute',
-            params: {
-              'p_product_id': draft.id,
-              'p_attribute_key': attribute.key,
-              'p_value': attribute.value,
-              'p_confirmed': true,
-              'p_source': 'manual',
-              'p_confidence': 1.0,
-              'p_model_version': 'seller-publication-v1',
-            },
-          ),
-        ),
+      await client.rpc(
+        'save_listing_draft',
+        params: {
+          'p_listing_id': draft.id,
+          'p_payload': _publishableListingPayload(draft),
+        },
       );
     } catch (error, stackTrace) {
-      // The local copy remains authoritative while offline or before migration.
-      debugPrint('Listing draft sync error: $error\n$stackTrace');
+      debugPrint('Safe listing draft sync error: $error\n$stackTrace');
+      throw ListingPublishException(
+        'Не удалось безопасно сохранить черновик',
+        error,
+      );
     }
   }
 
   Future<ListingDeliveryDefaults> loadDeliveryDefaults() async {
-    final localAddresses = await _loadLocalAddresses();
-    final localDelivery =
-        (await _prefs).getStringList(_deliveryKey) ?? const <String>[];
+    await _purgeLegacySensitivePreferences();
+    const localAddresses = <ListingAddress>[];
+    const localDelivery = <String>[];
     final client = _client;
     final user = client?.auth.currentUser;
     if (client == null || user == null) {
@@ -299,8 +287,10 @@ class ListingPublishRepository {
                 .whereType<String>()
                 .toList()
           : localDelivery;
+      // Delivery details must not be copied into SharedPreferences. The
+      // server-owned rows above are the only persistence boundary until an
+      // encrypted local store is introduced.
       await _saveLocalAddresses(addresses);
-      await (await _prefs).setStringList(_deliveryKey, methods);
       return ListingDeliveryDefaults(
         addresses: addresses.isEmpty ? localAddresses : addresses,
         deliveryMethods: methods,
@@ -338,7 +328,6 @@ class ListingPublishRepository {
     addresses.removeWhere((item) => item.id == address.id);
     addresses.insert(0, address);
     await _saveLocalAddresses(addresses);
-    await (await _prefs).setStringList(_deliveryKey, draft.deliveryMethods);
 
     final client = _client;
     final user = client?.auth.currentUser;
@@ -368,44 +357,29 @@ class ListingPublishRepository {
 
   Future<void> deleteDraft(ListingDraft draft) async {
     if (draft.status == ListingStatus.published) return;
-    final client = _client;
-    final user = client?.auth.currentUser;
-    var remoteIsPublished = false;
-    if (client != null && user != null) {
-      try {
-        final row = await client
-            .from('products')
-            .select('status')
-            .eq('id', draft.id)
-            .eq('seller_id', user.id)
-            .maybeSingle();
-        remoteIsPublished = row?['status'] == 'published';
-      } catch (_) {
-        // Continue local cleanup; storage deletion is still gated below.
-      }
+    for (final photo in List<ListingPhoto>.of(draft.photos)) {
+      await deletePhoto(draft, photo);
     }
-    if (!remoteIsPublished) {
-      for (final photo in List<ListingPhoto>.of(draft.photos)) {
-        await deletePhoto(draft, photo);
-      }
-      if (client != null && user != null) {
-        try {
-          await client
-              .from('products')
-              .delete()
-              .eq('id', draft.id)
-              .eq('seller_id', user.id)
-              .neq('status', 'published');
-        } catch (error, stackTrace) {
-          debugPrint('Remote listing draft delete error: $error\n$stackTrace');
-        }
+    final client = _client;
+    if (client != null && client.auth.currentUser != null) {
+      try {
+        await client.rpc(
+          'archive_own_listing',
+          params: {'p_listing_id': draft.id},
+        );
+      } catch (error, stackTrace) {
+        debugPrint('Listing draft archive error: $error\n$stackTrace');
+        throw ListingPublishException(
+          'Не удалось удалить серверный черновик',
+          error,
+        );
       }
     }
     await removeLocalDraft(draft.id);
     await _deleteDraftDirectory(draft.id);
   }
 
-  Future<void> publish(ListingDraft draft) async {
+  Future<ListingPublishResult> publish(ListingDraft draft) async {
     final validationError = draft.validateForPublish();
     if (validationError != null) {
       throw ListingPublishException(validationError);
@@ -417,21 +391,81 @@ class ListingPublishRepository {
         'Для публикации нужно подключение к интернету',
       );
     }
+    final eligibilityError = await assertCanPublish?.call();
+    if (assertCanPublish == null || eligibilityError != null) {
+      throw ListingPublishException(
+        eligibilityError ?? 'Не удалось проверить право продавца на публикацию',
+      );
+    }
 
     final savedAddress = await saveAddress(draft: draft);
     draft.shippingAddressId = savedAddress.id;
-    await syncRemoteDraft(draft);
+    await _saveRemoteDraft(draft);
+    var disposition = ListingPublicationDisposition.published;
     try {
-      await client.rpc('publish_listing', params: {'p_listing_id': draft.id});
+      final response = await client.functions.invoke(
+        'publish-listing',
+        body: buildPublishRequestBody(draft),
+      );
+      final data = response.data;
+      final published =
+          response.status >= 200 &&
+          response.status < 300 &&
+          data is Map &&
+          (data['published'] == true || data['status'] == 'published');
+      final heldForReview =
+          response.status >= 200 &&
+          response.status < 300 &&
+          data is Map &&
+          data['held_for_review'] == true &&
+          data['published'] != true;
+      if (!published && !heldForReview) {
+        throw StateError('Publication was not confirmed by the server');
+      }
+      disposition = heldForReview
+          ? ListingPublicationDisposition.heldForReview
+          : ListingPublicationDisposition.published;
+      final publishedImages =
+          (data['images'] as List<dynamic>? ??
+                  (data['listing'] is Map
+                      ? (data['listing'] as Map)['images'] as List<dynamic>?
+                      : null) ??
+                  (data['result'] is Map &&
+                          (data['result'] as Map)['media'] is List
+                      ? ((data['result'] as Map)['media'] as List)
+                            .whereType<Map>()
+                            .map(
+                              (item) =>
+                                  'storage://product-images/'
+                                  '${item['final_path'] ?? ''}',
+                            )
+                            .where(
+                              (value) => value != 'storage://product-images/',
+                            )
+                            .toList()
+                      : null) ??
+                  const [])
+              .whereType<String>()
+              .toList(growable: false);
+      final displayImages = await Future.wait(
+        publishedImages.map(_resolvePublishedImage),
+      );
+      if (displayImages.length == draft.photos.length) {
+        for (var index = 0; index < draft.photos.length; index++) {
+          draft.photos[index].remoteUrl = displayImages[index];
+        }
+      }
     } catch (error, stackTrace) {
-      debugPrint('publish_listing RPC error: $error\n$stackTrace');
+      debugPrint('publish-listing Edge error: $error\n$stackTrace');
       throw ListingPublishException(
         'Не удалось опубликовать объявление. Черновик сохранён',
         error,
       );
     }
 
-    draft.status = ListingStatus.published;
+    draft.status = disposition == ListingPublicationDisposition.published
+        ? ListingStatus.published
+        : ListingStatus.ready;
     draft.updatedAt = DateTime.now().toUtc();
     try {
       await removeLocalDraft(draft.id);
@@ -440,8 +474,11 @@ class ListingPublishRepository {
       // not turn that success into a second publish attempt.
       debugPrint('Published listing cleanup error: $error\n$stackTrace');
     }
-    unawaited(_preparePublishedProduct(draft.id));
+    if (disposition == ListingPublicationDisposition.published) {
+      unawaited(_preparePublishedProduct(draft.id));
+    }
     debugPrint('Listing published: ${draft.id}');
+    return ListingPublishResult(disposition);
   }
 
   Future<void> _preparePublishedProduct(String productId) async {
@@ -461,14 +498,16 @@ class ListingPublishRepository {
     }
   }
 
-  Map<String, dynamic> _remotePayload(ListingDraft draft, String userId) => {
-    'id': draft.id,
-    'seller_id': userId,
-    'seller_name': sellerName,
-    'seller_handle': sellerHandle,
-    'status': draft.status == ListingStatus.published
-        ? ListingStatus.published.value
-        : ListingStatus.draft.value,
+  @visibleForTesting
+  static Map<String, dynamic> buildPublishRequestBody(ListingDraft draft) => {
+    'listing_id': draft.id,
+    'confirmation_version': draft.sellerConfirmationVersion,
+    'confirmations': draft.sellerConfirmationsPayload,
+  };
+
+  static Map<String, dynamic> _publishableListingPayload(
+    ListingDraft draft,
+  ) => {
     'title': draft.title.trim(),
     // Public product columns are a seller-confirmed projection. Pending ML
     // proposals remain exclusively in `listing_analysis`.
@@ -480,14 +519,12 @@ class ListingPublishRepository {
     'category': draft.category,
     'subcategory': draft.subcategory,
     'item_type': draft.itemType,
-    'normalized_category': draft.normalizedCategory,
     'gender': draft.gender,
     'audience': draft.gender,
     'primary_color': draft.primaryColor,
     'secondary_colors': draft.confirmedSecondaryColors,
     'color': draft.primaryColor,
     'brand': draft.brand,
-    'normalized_brand': draft.brand,
     'material': draft.confirmedValue('material', draft.material),
     'pattern': draft.confirmedValue('pattern', draft.pattern),
     'season': draft.confirmedValue('season', draft.season),
@@ -505,64 +542,60 @@ class ListingPublishRepository {
     'shipping_address_id': draft.shippingAddressId.isEmpty
         ? null
         : draft.shippingAddressId,
-    'shipping_address': draft.shippingAddress.trim(),
     'delivery_methods': draft.deliveryMethods,
-    'images': draft.uploadedImageUrls,
-    'main_image': draft.mainPhoto?.remoteUrl ?? '',
-    'original_image': draft.mainPhoto?.remoteUrl ?? '',
-    'analysis_status': draft.analysisStatus.value,
-    'enrichment_status': 'enrichment_pending',
-    'analysis_job_id': draft.analysisId.isEmpty ? null : draft.analysisId,
-    'analysis_completed_at':
-        draft.analysisStatus == ListingAnalysisStatus.completed
-        ? DateTime.now().toUtc().toIso8601String()
-        : null,
-    'draft_step': draft.currentStep.name,
-    'is_hidden': draft.status != ListingStatus.published,
-    'updated_at': DateTime.now().toUtc().toIso8601String(),
   };
 
-  List<MapEntry<String, String>> _confirmedProductAttributes(
-    ListingDraft draft,
-  ) {
-    final result = <MapEntry<String, String>>[];
-    for (final definition in ListingCatalogs.attributesFor(
-      draft.normalizedCategory,
-    )) {
-      final value = draft.categoryAttributes[definition.id] ?? '';
-      final prediction = draft.predictions[definition.id];
-      if (prediction?.userConfirmed != true && prediction?.wasEdited != true) {
-        continue;
-      }
-      result.add(MapEntry(definition.id, value));
+  Future<String> _resolvePublishedImage(String reference) async {
+    const prefix = 'storage://product-images/';
+    if (!reference.startsWith(prefix)) return reference;
+    final objectPath = reference.substring(prefix.length);
+    if (objectPath.isEmpty) return '';
+    try {
+      return await _client!.storage
+          .from('product-images')
+          .createSignedUrl(objectPath, 60 * 60);
+    } catch (error, stackTrace) {
+      // Publication is already committed. A transient display URL failure
+      // must never invite the user to publish the same listing again.
+      debugPrint('Published image URL resolution error: $error\n$stackTrace');
+      return reference;
     }
-    return result;
   }
 
   Future<List<ListingAddress>> _loadLocalAddresses() async {
-    try {
-      final encoded = (await _prefs).getString(_addressesKey);
-      if (encoded == null || encoded.isEmpty) return [];
-      final raw = jsonDecode(encoded);
-      if (raw is! List) return [];
-      return raw
-          .whereType<Map>()
-          .map(
-            (item) => ListingAddress.fromJson(Map<String, dynamic>.from(item)),
-          )
-          .toList();
-    } catch (_) {
-      return [];
-    }
+    await _purgeLegacySensitivePreferences();
+    return const [];
   }
 
   Future<void> _saveLocalAddresses(List<ListingAddress> addresses) =>
-      _prefs.then(
-        (preferences) => preferences.setString(
-          _addressesKey,
-          jsonEncode(addresses.map((item) => item.toJson()).toList()),
-        ),
-      );
+      _purgeLegacySensitivePreferences();
+
+  Future<void> _purgeLegacySensitivePreferences() async {
+    final preferences = await _prefs;
+    final keys = preferences
+        .getKeys()
+        .where(
+          (key) =>
+              key.startsWith(_draftsKeyPrefix) ||
+              key.startsWith(_addressesKeyPrefix) ||
+              key.startsWith(_deliveryKeyPrefix),
+        )
+        .toList(growable: false);
+    for (final key in keys) {
+      await preferences.remove(key);
+    }
+  }
+
+  Future<void> _purgeLegacyDraftDirectories() async {
+    if (kIsWeb) return;
+    try {
+      final support = await getApplicationSupportDirectory();
+      final directory = Directory(path.join(support.path, 'listing_drafts'));
+      if (await directory.exists()) await directory.delete(recursive: true);
+    } catch (error, stackTrace) {
+      debugPrint('Legacy listing draft purge error: $error\n$stackTrace');
+    }
+  }
 
   Future<Uint8List> _readPhotoBytes(String source) async {
     if (source.startsWith('data:image/')) {
@@ -590,32 +623,53 @@ class ListingPublishRepository {
     } catch (_) {}
   }
 
-  String _extension(String name, String fallbackPath) {
-    final candidate = path.extension(name).isNotEmpty
-        ? path.extension(name)
-        : path.extension(fallbackPath);
-    final normalized = candidate.toLowerCase();
-    return const {
-          '.jpg',
-          '.jpeg',
-          '.png',
-          '.webp',
-          '.heic',
-        }.contains(normalized)
-        ? normalized
-        : '.jpg';
-  }
-
-  String _mimeType(String name, String fallbackPath) {
-    switch (_extension(name, fallbackPath)) {
+  static String _mimeTypeForExtension(String extension) {
+    switch (extension) {
       case '.png':
         return 'image/png';
       case '.webp':
         return 'image/webp';
-      case '.heic':
-        return 'image/heic';
       default:
         return 'image/jpeg';
     }
+  }
+
+  /// Storage and the authoritative publication function accept exactly these
+  /// three formats. Checking magic bytes prevents HEIC (or another format)
+  /// from being renamed to .jpg and failing later as a misleading upload error.
+  @visibleForTesting
+  static String supportedImageExtension(Uint8List bytes) {
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xff &&
+        bytes[1] == 0xd8 &&
+        bytes[2] == 0xff) {
+      return '.jpg';
+    }
+    const pngSignature = <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    if (bytes.length >= pngSignature.length) {
+      var isPng = true;
+      for (var index = 0; index < pngSignature.length; index++) {
+        if (bytes[index] != pngSignature[index]) {
+          isPng = false;
+          break;
+        }
+      }
+      if (isPng) return '.png';
+    }
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      return '.webp';
+    }
+    throw const ListingPublishException(
+      'Поддерживаются только JPEG, PNG и WebP. '
+      'Конвертируйте HEIC перед загрузкой.',
+    );
   }
 }

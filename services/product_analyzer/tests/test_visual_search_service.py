@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 from PIL import Image
 
@@ -12,6 +14,7 @@ from app.config import Settings
 from app.model_manager import ModelManager
 from app.visual_search.schemas import VisualSearchFilters
 from app.visual_search.service import VisualSearchService
+from app.visual_search.store import SupabaseVisualSearchStore
 
 
 class _Store:
@@ -60,6 +63,7 @@ class _SearchStore:
 class _Classification:
     def __init__(self, candidates):
         self.candidates = candidates
+        self.embedding_dimension = 768
 
     def embed_and_classify(self, image, top_k):
         return FashionEmbeddingResult(
@@ -245,6 +249,63 @@ def test_product_image_order_uses_cutout_context_and_three_extra_views():
         "https://example.com/back.jpg",
         "https://example.com/detail.jpg",
     ]
+
+
+def test_private_storage_reference_is_signed_only_for_download_and_stays_canonical():
+    canonical = "storage://product-images/seller/listing/main.jpg"
+
+    class _IndexStore:
+        def __init__(self):
+            self.resolved: list[str] = []
+            self.rows: list[dict] = []
+
+        def get_product(self, product_id):
+            assert product_id == "private-product"
+            return {
+                "id": product_id,
+                "main_image": canonical,
+                "image": canonical,
+                "images": [canonical],
+            }
+
+        def resolve_media_download_url(self, reference):
+            self.resolved.append(reference)
+            return (
+                "https://project.supabase.co/storage/v1/object/sign/"
+                "product-images/seller/listing/main.jpg?token=fresh"
+            )
+
+        def vector_literal(self, embedding):
+            return SupabaseVisualSearchStore.vector_literal(embedding)
+
+        def replace_embeddings(self, product_id, model_version, rows):
+            self.rows = rows
+            return False
+
+    store = _IndexStore()
+    service = VisualSearchService(
+        Settings(_env_file=None),
+        _SearchModels([]),  # type: ignore[arg-type]
+        store,  # type: ignore[arg-type]
+    )
+    downloaded: list[str] = []
+    service._download_image = lambda url: (
+        downloaded.append(url) or b"private-image",
+        Image.new("RGB", (32, 32)),
+    )
+    service.preprocessor.prepare = lambda image: SimpleNamespace(image=image)
+    try:
+        response = service.index_product("private-product")
+    finally:
+        service.close()
+
+    assert response.indexed_images == 1
+    assert store.resolved == [canonical]
+    assert downloaded == [
+        "https://project.supabase.co/storage/v1/object/sign/"
+        "product-images/seller/listing/main.jpg?token=fresh"
+    ]
+    assert store.rows[0]["image_url"] == canonical
 
 
 def test_foreground_similarity_dominates_context_background():

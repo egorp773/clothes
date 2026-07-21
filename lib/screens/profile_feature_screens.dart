@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
 import '../models/product.dart';
+import '../models/order_dispute.dart';
 import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
 import '../widgets/app_theme_picker_sheet.dart';
@@ -226,10 +228,12 @@ class NotificationSettingsScreen extends StatefulWidget {
     super.key,
     required this.preferences,
     required this.onSave,
+    this.onWithdrawMarketingConsent,
   });
 
   final NotificationPreferences preferences;
   final Future<void> Function(NotificationPreferences preferences) onSave;
+  final Future<String?> Function()? onWithdrawMarketingConsent;
 
   @override
   State<NotificationSettingsScreen> createState() =>
@@ -240,6 +244,7 @@ class _NotificationSettingsScreenState
     extends State<NotificationSettingsScreen> {
   late NotificationPreferences _preferences = widget.preferences;
   bool _isSaving = false;
+  bool _isWithdrawingMarketing = false;
 
   Future<void> _save() async {
     setState(() => _isSaving = true);
@@ -325,7 +330,7 @@ class _NotificationSettingsScreenState
           ),
           _PreferenceRow(
             title: 'Скидки и новости',
-            subtitle: 'Редкие полезные предложения',
+            subtitle: 'Канал рассылки; не заменяет юридическое согласие',
             icon: Icons.local_offer_outlined,
             value: _preferences.pushEnabled && _preferences.promotionsEnabled,
             enabled: _preferences.pushEnabled,
@@ -335,6 +340,28 @@ class _NotificationSettingsScreenState
               });
             },
           ),
+          if (widget.onWithdrawMarketingConsent != null) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                key: const Key('withdraw-marketing-consent'),
+                onPressed: _isWithdrawingMarketing
+                    ? null
+                    : _withdrawMarketingConsent,
+                icon: const Icon(Icons.unsubscribe_outlined),
+                label: Text(
+                  _isWithdrawingMarketing
+                      ? 'ОТЗЫВАЕМ СОГЛАСИЕ'
+                      : 'ОТОЗВАТЬ СОГЛАСИЕ НА МАРКЕТИНГ',
+                ),
+              ),
+            ),
+            Text(
+              'Отзыв не влияет на заказы, сервисные сообщения и доступ к аккаунту.',
+              style: _featureSmallStyle.copyWith(color: _muted),
+            ),
+          ],
           const SizedBox(height: 20),
           const Text('как присылать', style: _featureTitleStyle),
           const SizedBox(height: 10),
@@ -379,6 +406,45 @@ class _NotificationSettingsScreenState
           const SizedBox(height: 10),
         ],
       ),
+    );
+  }
+
+  Future<void> _withdrawMarketingConsent() async {
+    final callback = widget.onWithdrawMarketingConsent;
+    if (callback == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Отозвать маркетинговое согласие?'),
+        content: const Text(
+          'Мы прекратим маркетинговые сообщения. Уведомления по заказам, '
+          'безопасности и обращениям поддержки останутся доступны.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Отозвать'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _isWithdrawingMarketing = true);
+    final error = await callback();
+    if (!mounted) return;
+    if (error == null) {
+      final next = _preferences.copyWith(promotionsEnabled: false);
+      setState(() => _preferences = next);
+      await widget.onSave(next);
+    }
+    if (!mounted) return;
+    setState(() => _isWithdrawingMarketing = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(error ?? 'Маркетинговое согласие отозвано')),
     );
   }
 }
@@ -1483,6 +1549,13 @@ class _ProfileAddressField extends StatelessWidget {
   }
 }
 
+typedef OrderTransitionRequester =
+    Future<AppOrder?> Function(
+      String orderId,
+      AppOrderStatus target, {
+      required Map<String, dynamic> payload,
+    });
+
 class ProfileOrdersScreen extends StatefulWidget {
   const ProfileOrdersScreen({
     super.key,
@@ -1493,6 +1566,9 @@ class ProfileOrdersScreen extends StatefulWidget {
     required this.onShareProduct,
     required this.onToggleProductLike,
     required this.onOpenCatalog,
+    this.onRequestTransition,
+    this.onOpenDispute,
+    this.onUploadDisputeEvidence,
   });
 
   final List<AppOrder> orders;
@@ -1502,6 +1578,16 @@ class ProfileOrdersScreen extends StatefulWidget {
   final ValueChanged<Product> onShareProduct;
   final Future<void> Function(String productId) onToggleProductLike;
   final VoidCallback onOpenCatalog;
+  final OrderTransitionRequester? onRequestTransition;
+  final Future<OrderDispute?> Function({
+    required String orderId,
+    required DisputeReason reason,
+    required String description,
+    required List<String> evidencePaths,
+  })?
+  onOpenDispute;
+  final Future<String?> Function(String disputeId, XFile evidence)?
+  onUploadDisputeEvidence;
 
   @override
   State<ProfileOrdersScreen> createState() => _ProfileOrdersScreenState();
@@ -1596,8 +1682,13 @@ class _ProfileOrdersScreenState extends State<ProfileOrdersScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black.withValues(alpha: 0.28),
-      builder: (context) =>
-          _OrderDetailsSheet(order: order, currentUserId: widget.currentUserId),
+      builder: (context) => _OrderDetailsSheet(
+        order: order,
+        currentUserId: widget.currentUserId,
+        onRequestTransition: widget.onRequestTransition,
+        onOpenDispute: widget.onOpenDispute,
+        onUploadDisputeEvidence: widget.onUploadDisputeEvidence,
+      ),
     );
   }
 
@@ -2659,10 +2750,26 @@ class _OrderStatusBadge extends StatelessWidget {
 }
 
 class _OrderDetailsSheet extends StatelessWidget {
-  const _OrderDetailsSheet({required this.order, required this.currentUserId});
+  const _OrderDetailsSheet({
+    required this.order,
+    required this.currentUserId,
+    this.onRequestTransition,
+    this.onOpenDispute,
+    this.onUploadDisputeEvidence,
+  });
 
   final AppOrder order;
   final String currentUserId;
+  final OrderTransitionRequester? onRequestTransition;
+  final Future<OrderDispute?> Function({
+    required String orderId,
+    required DisputeReason reason,
+    required String description,
+    required List<String> evidencePaths,
+  })?
+  onOpenDispute;
+  final Future<String?> Function(String disputeId, XFile evidence)?
+  onUploadDisputeEvidence;
 
   @override
   Widget build(BuildContext context) {
@@ -2814,12 +2921,431 @@ class _OrderDetailsSheet extends StatelessWidget {
                     ],
                   ),
                 ),
+              if (onRequestTransition != null || onOpenDispute != null)
+                _OrderCommandActions(
+                  order: order,
+                  currentUserId: currentUserId,
+                  onRequestTransition: onRequestTransition,
+                  onOpenDispute: onOpenDispute,
+                  onUploadDisputeEvidence: onUploadDisputeEvidence,
+                ),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+class _OrderCommandActions extends StatefulWidget {
+  const _OrderCommandActions({
+    required this.order,
+    required this.currentUserId,
+    this.onRequestTransition,
+    this.onOpenDispute,
+    this.onUploadDisputeEvidence,
+  });
+
+  final AppOrder order;
+  final String currentUserId;
+  final OrderTransitionRequester? onRequestTransition;
+  final Future<OrderDispute?> Function({
+    required String orderId,
+    required DisputeReason reason,
+    required String description,
+    required List<String> evidencePaths,
+  })?
+  onOpenDispute;
+  final Future<String?> Function(String disputeId, XFile evidence)?
+  onUploadDisputeEvidence;
+
+  @override
+  State<_OrderCommandActions> createState() => _OrderCommandActionsState();
+}
+
+class _OrderCommandActionsState extends State<_OrderCommandActions> {
+  bool _loading = false;
+
+  AppOrderStatus? get _nextStatus {
+    final order = widget.order;
+    final isBuyer = order.buyerId == widget.currentUserId;
+    final isSeller = order.sellerId == widget.currentUserId;
+    return switch (order.status) {
+      AppOrderStatus.paid when isSeller => AppOrderStatus.sellerConfirmed,
+      AppOrderStatus.sellerConfirmed when isSeller => AppOrderStatus.shipped,
+      AppOrderStatus.shipped when isBuyer => AppOrderStatus.received,
+      AppOrderStatus.received when isBuyer => AppOrderStatus.inspection,
+      AppOrderStatus.inspection when isBuyer => AppOrderStatus.completed,
+      _ => null,
+    };
+  }
+
+  bool get _canCancel =>
+      widget.order.status == AppOrderStatus.created &&
+      widget.order.buyerId == widget.currentUserId;
+
+  bool get _canOpenDispute =>
+      widget.onOpenDispute != null &&
+      (widget.order.buyerId == widget.currentUserId ||
+          widget.order.sellerId == widget.currentUserId) &&
+      const {
+        AppOrderStatus.paid,
+        AppOrderStatus.sellerConfirmed,
+        AppOrderStatus.shipped,
+        AppOrderStatus.received,
+        AppOrderStatus.inspection,
+        AppOrderStatus.completed,
+      }.contains(widget.order.status);
+
+  @override
+  Widget build(BuildContext context) {
+    final next = _nextStatus;
+    if (next == null && !_canCancel && !_canOpenDispute) {
+      return const SizedBox.shrink();
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        const Divider(),
+        const SizedBox(height: 8),
+        if (next != null)
+          FilledButton(
+            key: Key('order-transition-${next.wireName}'),
+            onPressed: _loading
+                ? null
+                : next == AppOrderStatus.shipped
+                ? _transitionToShipped
+                : () => _transition(next),
+            child: Text(_transitionLabel(next)),
+          ),
+        if (_canOpenDispute)
+          OutlinedButton.icon(
+            key: const Key('order-open-dispute'),
+            onPressed: _loading ? null : _openDispute,
+            icon: const Icon(Icons.gavel_outlined),
+            label: const Text('Открыть спор'),
+          ),
+        if (_canCancel)
+          TextButton(
+            key: const Key('order-transition-cancelled'),
+            onPressed: _loading
+                ? null
+                : () => _transition(AppOrderStatus.cancelled),
+            child: const Text('Отменить заказ'),
+          ),
+        if (_loading)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.all(6),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _transitionToShipped() async {
+    final trackingNumber = await showDialog<String>(
+      context: context,
+      builder: (context) => const _TrackingNumberDialog(),
+    );
+    if (!mounted || trackingNumber == null) return;
+    await _transition(
+      AppOrderStatus.shipped,
+      payload: {'tracking_number': trackingNumber},
+    );
+  }
+
+  Future<void> _transition(
+    AppOrderStatus target, {
+    Map<String, dynamic> payload = const {},
+  }) async {
+    final request = widget.onRequestTransition;
+    if (request == null) return;
+    setState(() => _loading = true);
+    final updated = await request(widget.order.id, target, payload: payload);
+    if (!mounted) return;
+    setState(() => _loading = false);
+    if (updated != null) {
+      Navigator.pop(context);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Сервер не подтвердил переход статуса')),
+    );
+  }
+
+  Future<void> _openDispute() async {
+    final open = widget.onOpenDispute;
+    if (open == null) return;
+    final result = await showDialog<_OpenDisputeResult>(
+      context: context,
+      builder: (context) => _OpenDisputeDialog(
+        order: widget.order,
+        onOpen: open,
+        onUploadEvidence: widget.onUploadDisputeEvidence,
+      ),
+    );
+    if (!mounted || result == null) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    Navigator.pop(context);
+    if (result.evidenceUploadFailed) {
+      messenger?.showSnackBar(
+        const SnackBar(
+          content: Text('Спор открыт, но доказательство не загрузилось.'),
+        ),
+      );
+    }
+  }
+
+  String _transitionLabel(AppOrderStatus status) => switch (status) {
+    AppOrderStatus.sellerConfirmed => 'Подтвердить заказ',
+    AppOrderStatus.shipped => 'Подтвердить отправку',
+    AppOrderStatus.received => 'Подтвердить получение',
+    AppOrderStatus.inspection => 'Начать проверку вещи',
+    AppOrderStatus.completed => 'Завершить после проверки',
+    _ => 'Продолжить',
+  };
+}
+
+class _TrackingNumberDialog extends StatefulWidget {
+  const _TrackingNumberDialog();
+
+  @override
+  State<_TrackingNumberDialog> createState() => _TrackingNumberDialogState();
+}
+
+class _TrackingNumberDialogState extends State<_TrackingNumberDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Подтвердить отправку'),
+      content: Form(
+        key: _formKey,
+        child: TextFormField(
+          key: const Key('order-shipping-tracking-input'),
+          controller: _controller,
+          autofocus: true,
+          maxLength: 100,
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: 'Трек-номер',
+            hintText: 'Например, 12345678901234',
+          ),
+          validator: (value) {
+            final trackingNumber = value?.trim() ?? '';
+            if (trackingNumber.isEmpty) return 'Укажите трек-номер';
+            if (!RegExp(r'^[A-Za-z0-9._ -]{5,100}$').hasMatch(trackingNumber)) {
+              return 'Проверьте формат трек-номера';
+            }
+            return null;
+          },
+          onFieldSubmitted: (_) => _submit(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          key: const Key('order-shipping-tracking-submit'),
+          onPressed: _submit,
+          child: const Text('Подтвердить'),
+        ),
+      ],
+    );
+  }
+
+  void _submit() {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    Navigator.pop(context, _controller.text.trim());
+  }
+}
+
+class _OpenDisputeResult {
+  const _OpenDisputeResult({required this.evidenceUploadFailed});
+
+  final bool evidenceUploadFailed;
+}
+
+class _OpenDisputeDialog extends StatefulWidget {
+  const _OpenDisputeDialog({
+    required this.order,
+    required this.onOpen,
+    this.onUploadEvidence,
+  });
+
+  final AppOrder order;
+  final Future<OrderDispute?> Function({
+    required String orderId,
+    required DisputeReason reason,
+    required String description,
+    required List<String> evidencePaths,
+  })
+  onOpen;
+  final Future<String?> Function(String disputeId, XFile evidence)?
+  onUploadEvidence;
+
+  @override
+  State<_OpenDisputeDialog> createState() => _OpenDisputeDialogState();
+}
+
+class _OpenDisputeDialogState extends State<_OpenDisputeDialog> {
+  final TextEditingController _description = TextEditingController();
+  DisputeReason _reason = DisputeReason.descriptionMismatch;
+  XFile? _evidence;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _description.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Открыть спор'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<DisputeReason>(
+              key: const Key('dispute-reason'),
+              initialValue: _reason,
+              decoration: const InputDecoration(labelText: 'Причина'),
+              items: [
+                for (final reason in DisputeReason.values)
+                  DropdownMenuItem(
+                    value: reason,
+                    child: Text(_disputeReasonTitle(reason)),
+                  ),
+              ],
+              onChanged: _loading
+                  ? null
+                  : (value) =>
+                        setState(() => _reason = value ?? DisputeReason.other),
+            ),
+            TextField(
+              key: const Key('dispute-description'),
+              controller: _description,
+              minLines: 3,
+              maxLines: 6,
+              maxLength: 4000,
+              decoration: const InputDecoration(
+                labelText: 'Что произошло',
+                hintText: 'Не менее 10 символов',
+              ),
+            ),
+            if (widget.onUploadEvidence != null)
+              OutlinedButton.icon(
+                key: const Key('dispute-add-evidence'),
+                onPressed: _loading ? null : _pickEvidence,
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                label: Text(
+                  _evidence == null
+                      ? 'Добавить доказательство'
+                      : _evidence!.name,
+                ),
+              ),
+            if (_error != null)
+              Text(
+                _error!,
+                key: const Key('dispute-error'),
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.pop(context),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          key: const Key('dispute-submit'),
+          onPressed: _loading ? null : _submit,
+          child: _loading
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Отправить'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pickEvidence() async {
+    final picked = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 2000,
+      maxHeight: 2000,
+    );
+    if (picked != null && mounted) setState(() => _evidence = picked);
+  }
+
+  Future<void> _submit() async {
+    final description = _description.text.trim();
+    if (description.length < 10) {
+      setState(() => _error = 'Опишите проблему подробнее');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final dispute = await widget.onOpen(
+      orderId: widget.order.id,
+      reason: _reason,
+      description: description,
+      evidencePaths: const [],
+    );
+    if (!mounted) return;
+    if (dispute == null) {
+      setState(() {
+        _loading = false;
+        _error = 'Сервер не подтвердил открытие спора';
+      });
+      return;
+    }
+    var evidenceUploadFailed = false;
+    if (_evidence != null && widget.onUploadEvidence != null) {
+      try {
+        final path = await widget.onUploadEvidence!(dispute.id, _evidence!);
+        evidenceUploadFailed = path == null;
+      } catch (_) {
+        evidenceUploadFailed = true;
+      }
+    }
+    if (!mounted) return;
+    Navigator.pop(
+      context,
+      _OpenDisputeResult(evidenceUploadFailed: evidenceUploadFailed),
+    );
+  }
+
+  String _disputeReasonTitle(DisputeReason reason) => switch (reason) {
+    DisputeReason.notReceived => 'Товар не получен',
+    DisputeReason.wrongItem => 'Получен другой товар',
+    DisputeReason.fake => 'Подозрение на подделку',
+    DisputeReason.hiddenDamage => 'Скрытые повреждения',
+    DisputeReason.descriptionMismatch => 'Не соответствует описанию',
+    DisputeReason.other => 'Другая причина',
+  };
 }
 
 class _OrderDetailValue extends StatelessWidget {
@@ -3176,40 +3702,42 @@ Color _notificationKindColor(String kind) {
 }
 
 bool _isOrderActive(AppOrderStatus status) =>
-    status != AppOrderStatus.completed && status != AppOrderStatus.canceled;
+    status != AppOrderStatus.completed && status != AppOrderStatus.cancelled;
 
 String _orderStatusTitle(AppOrderStatus status) => switch (status) {
-  AppOrderStatus.pendingConfirmation => 'Ждёт подтверждения',
-  AppOrderStatus.pendingShipment => 'Ждёт отправки',
-  AppOrderStatus.inTransit => 'В пути',
-  AppOrderStatus.deliveredToPickup => 'Можно забирать',
-  AppOrderStatus.awaitingPayment => 'Ожидается выплата',
-  AppOrderStatus.returning => 'Возврат',
-  AppOrderStatus.disputed => 'Открыт спор',
+  AppOrderStatus.created => 'Создан',
+  AppOrderStatus.paid => 'Оплачен',
+  AppOrderStatus.sellerConfirmed => 'Подтверждён продавцом',
+  AppOrderStatus.shipped => 'Отправлен',
+  AppOrderStatus.received => 'Получен',
+  AppOrderStatus.inspection => 'Проверка вещи',
   AppOrderStatus.completed => 'Завершён',
-  AppOrderStatus.canceled => 'Отменён',
+  AppOrderStatus.dispute => 'Открыт спор',
+  AppOrderStatus.cancelled => 'Отменён',
 };
 
 ({Color background, Color foreground}) _orderStatusColors(
   AppOrderStatus status,
 ) => switch (status) {
-  AppOrderStatus.pendingConfirmation || AppOrderStatus.pendingShipment => (
+  AppOrderStatus.created ||
+  AppOrderStatus.paid ||
+  AppOrderStatus.sellerConfirmed => (
     background: const Color(0xFFFFF1D6),
     foreground: const Color(0xFF8A5700),
   ),
-  AppOrderStatus.inTransit || AppOrderStatus.deliveredToPickup => (
+  AppOrderStatus.shipped || AppOrderStatus.received => (
     background: const Color(0xFFE8F1FF),
     foreground: const Color(0xFF245EA8),
   ),
-  AppOrderStatus.awaitingPayment || AppOrderStatus.completed => (
+  AppOrderStatus.inspection || AppOrderStatus.completed => (
     background: const Color(0xFFE9F7E8),
     foreground: const Color(0xFF28752D),
   ),
-  AppOrderStatus.returning || AppOrderStatus.disputed => (
+  AppOrderStatus.dispute => (
     background: const Color(0xFFFFECEA),
     foreground: const Color(0xFFA9342C),
   ),
-  AppOrderStatus.canceled => (
+  AppOrderStatus.cancelled => (
     background: const Color(0xFFF0F0F2),
     foreground: const Color(0xFF66666C),
   ),
@@ -3267,23 +3795,23 @@ void _copyTrackingNumber(BuildContext context, String value) {
 
 String _statusFilterTitle(AppOrderStatus status) {
   switch (status) {
-    case AppOrderStatus.pendingConfirmation:
+    case AppOrderStatus.created:
       return 'ждут подтверждения';
-    case AppOrderStatus.pendingShipment:
+    case AppOrderStatus.paid:
       return 'ждут отправки';
-    case AppOrderStatus.inTransit:
+    case AppOrderStatus.sellerConfirmed:
       return 'в пути';
-    case AppOrderStatus.deliveredToPickup:
+    case AppOrderStatus.shipped:
       return 'доставлен в пункт выдачи';
-    case AppOrderStatus.awaitingPayment:
+    case AppOrderStatus.received:
       return 'можно получить оплату';
-    case AppOrderStatus.returning:
+    case AppOrderStatus.inspection:
       return 'на возврате';
-    case AppOrderStatus.disputed:
+    case AppOrderStatus.dispute:
       return 'спорные';
     case AppOrderStatus.completed:
       return 'завершенные';
-    case AppOrderStatus.canceled:
+    case AppOrderStatus.cancelled:
       return 'отмененные';
   }
 }

@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import logging
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -186,21 +187,20 @@ async def ready() -> dict[str, object]:
 
 @app.post("/v1/enrichment/wakeup", status_code=202)
 async def wake_enrichment_worker(
-    authorization: str | None = Header(default=None),
+    x_analyzer_service_token: str | None = Header(default=None),
 ) -> dict[str, bool]:
     # The durable DB row is created before this hint. If this request is lost,
     # polling still claims it; waking only removes the normal poll delay.
-    await _authenticated_user(authorization)
+    _require_service_token(x_analyzer_service_token)
     enrichment_worker.wake()
     return {"accepted": True}
 
 
 @app.post("/warmup")
 async def warmup(
-    authorization: str | None = Header(default=None),
+    x_analyzer_service_token: str | None = Header(default=None),
 ) -> dict[str, object]:
-    if settings.require_analysis_auth:
-        await _authenticated_user(authorization)
+    _require_service_token(x_analyzer_service_token)
     await _initialize_models()
     return {"ok": True, "components": models.health()}
 
@@ -217,6 +217,47 @@ async def _authenticated_user(
     if not rate_limiter.allow(user.id):
         raise HTTPException(429, "Visual search rate limit exceeded")
     return user
+
+
+async def _analysis_user(authorization: str | None):
+    if not settings.require_analysis_auth:
+        return None
+    return await _authenticated_user(authorization)
+
+
+def _require_service_token(value: str | None) -> None:
+    expected = [
+        secret
+        for secret in (
+            settings.analyzer_service_secret,
+            settings.analyzer_service_secret_previous,
+        )
+        if secret and len(secret) >= 32
+    ]
+    if not expected:
+        raise HTTPException(503, "Analyzer service authentication is not configured")
+    if not value or not any(
+        secrets.compare_digest(value, candidate) for candidate in expected
+    ):
+        raise HTTPException(401, "Invalid analyzer service token")
+
+
+async def _require_listing_owner(listing_id: str, user_id: str) -> dict[str, object]:
+    product = await asyncio.to_thread(visual_store.get_product, listing_id)
+    if product is None:
+        raise HTTPException(404, "Listing not found")
+    if str(product.get("seller_id") or "") != user_id:
+        raise HTTPException(403, "Only the listing owner can analyze its images")
+    return product
+
+
+async def _authorize_analysis_context(analysis_id: str, user_id: str | None) -> None:
+    listing_id = await asyncio.to_thread(analysis_store.get_listing_id, analysis_id)
+    if listing_id is None:
+        return
+    if user_id is None:
+        raise HTTPException(401, "Authentication required for durable analysis")
+    await _require_listing_owner(listing_id, user_id)
 
 
 async def _authorize_visual_search(
@@ -278,9 +319,11 @@ def _remove_background_png(image: Image.Image) -> bytes:
 @app.post("/v1/remove-background")
 async def remove_image_background(
     file: UploadFile = File(...),
-    authorization: str | None = Header(default=None),
+    x_analyzer_service_token: str | None = Header(default=None),
 ) -> Response:
-    await _authenticated_user(authorization, background_rate_limiter)
+    _require_service_token(x_analyzer_service_token)
+    if not background_rate_limiter.allow("edge-service"):
+        raise HTTPException(429, "Background removal rate limit exceeded")
     allowed_mime = {"image/jpeg", "image/png", "image/webp"}
     if file.content_type not in allowed_mime:
         raise HTTPException(415, f"Unsupported content type: {file.content_type}")
@@ -476,9 +519,11 @@ async def get_analysis(
     authorization: str | None = Header(default=None),
 ) -> AnalysisResponse:
     # Durable analysis results are user data, unlike public catalog search.
-    # Auth is optional only for local/test deployments.
-    if settings.require_analysis_auth:
-        await _authenticated_user(authorization)
+    user = await _analysis_user(authorization)
+    await _authorize_analysis_context(
+        image_hash,
+        user.id if user is not None else None,
+    )
     result = pipeline.get_cached(image_hash)
     if result is None:
         context = await asyncio.to_thread(analysis_store.get_context, image_hash)
@@ -500,8 +545,11 @@ async def enrich(
     files: list[UploadFile] = File(...),
     authorization: str | None = Header(default=None),
 ) -> dict[str, object]:
-    if settings.require_analysis_auth:
-        await _authenticated_user(authorization)
+    user = await _analysis_user(authorization)
+    await _authorize_analysis_context(
+        analysis_id,
+        user.id if user is not None else None,
+    )
     image_hash = analysis_id
     if pipeline.get_cached(image_hash) is None:
         context = await asyncio.to_thread(analysis_store.get_context, analysis_id)
@@ -539,8 +587,12 @@ async def analyze(
     main_image_url: str | None = Form(default=None),
     authorization: str | None = Header(default=None),
 ) -> AnalysisResponse:
-    if settings.require_analysis_auth:
-        await _authenticated_user(authorization)
+    user = await _analysis_user(authorization)
+    listing: dict[str, object] | None = None
+    if listing_id:
+        if user is None:
+            raise HTTPException(401, "Authentication required for durable analysis")
+        listing = await _require_listing_owner(listing_id, user.id)
     if not files or len(files) > settings.max_images:
         raise HTTPException(400, f"Provide 1..{settings.max_images} images")
     # The publication path deliberately consumes only the main image. Sending
@@ -562,12 +614,18 @@ async def analyze(
     )
     durable_job = bool(listing_id and analysis_store.enabled)
     if durable_job:
+        resolved_main_image_url = str(
+            (listing or {}).get("main_image")
+            or (listing or {}).get("original_image")
+            or (listing or {}).get("image")
+            or ""
+        ).strip() or None
         durable_job_id = await asyncio.to_thread(
             analysis_store.create_pending,
             job_id,
             listing_id,
             image_hash,
-            main_image_url,
+            resolved_main_image_url,
         )
         durable_job = durable_job_id is not None
         if durable_job_id is not None:

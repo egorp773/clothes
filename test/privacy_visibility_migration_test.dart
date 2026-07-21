@@ -28,7 +28,7 @@ void main() {
       );
       expect(
         schema,
-        contains("status = 'published' and not coalesce(is_hidden, false)"),
+        contains('RETIRED: this file is intentionally non-executable'),
       );
       expect(
         'not coalesce(product.is_hidden, false)'.allMatches(catalog),
@@ -91,8 +91,7 @@ void main() {
         'delivery_methods',
       ),
     );
-    expect(schema, contains('shipping_address_privacy_preflight_failed'));
-    expect(schema, contains('shipping_address_private_source_required'));
+    expect(schema, isNot(contains('create table')));
   });
 
   test('orphan view cleanup is followed by authoritative recounts', () {
@@ -130,8 +129,7 @@ void main() {
       outfitAuthors,
       contains('new.author_avatar_url := old.author_avatar_url;'),
     );
-    expect(schema, contains(protectedTrigger));
-    expect(schema, contains('author_avatar_url text not null default'));
+    expect(outfitAuthors, contains('author_avatar_url text not null default'));
     expect(
       outfitAuthors,
       contains(
@@ -139,7 +137,7 @@ void main() {
         '  where profile.id = outfit.owner_id',
       ),
     );
-    expect(schema, contains("author_name = 'Автор'"));
-    expect(schema, contains("author_handle = '@user'"));
+    expect(outfitAuthors, contains("author_name = 'Автор'"));
+    expect(outfitAuthors, contains("author_handle = '@user'"));
   });
 }

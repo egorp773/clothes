@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import subprocess
 import sys
@@ -274,7 +275,11 @@ def _smoke(
     return report
 
 
-def _verify_public_files(api: HfApi, repo_id: str, service_key: str) -> int:
+def _verify_public_files(
+    api: HfApi,
+    repo_id: str,
+    secret_values: tuple[str, ...],
+) -> int:
     info = api.space_info(repo_id=repo_id, files_metadata=True)
     checked = 0
     for sibling in info.siblings or []:
@@ -283,15 +288,32 @@ def _verify_public_files(api: HfApi, repo_id: str, service_key: str) -> int:
             continue
         path = hf_hub_download(repo_id, filename, repo_type="space")
         payload = Path(path).read_bytes()
-        if service_key.encode() in payload:
-            raise RuntimeError(f"Service-role key found in public file {filename}")
+        if any(secret.encode() in payload for secret in secret_values):
+            raise RuntimeError(f"Deployment secret found in public file {filename}")
         checked += 1
     return checked
+
+
+def _set_edge_secret(name: str, value: str) -> None:
+    process = subprocess.run(
+        ["supabase", "secrets", "set", f"{name}={value}"],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if process.returncode:
+        raise RuntimeError(f"Could not synchronize Supabase secret {name}")
 
 
 def main() -> None:
     started = time.perf_counter()
     supabase_url, service_key, anon_key = _supabase_credentials()
+    analyzer_service_secret = os.environ.get("ANALYZER_SERVICE_SECRET", "").strip()
+    if len(analyzer_service_secret) < 32:
+        raise RuntimeError(
+            "Set ANALYZER_SERVICE_SECRET to at least 32 random characters"
+        )
     api = HfApi()
     account = str(api.whoami()["name"])
     repo_id = f"{account}/{SPACE_NAME}"
@@ -306,6 +328,12 @@ def main() -> None:
     )
     api.add_space_secret(repo_id, "SUPABASE_URL", supabase_url)
     api.add_space_secret(repo_id, "SUPABASE_SERVICE_ROLE_KEY", service_key)
+    api.add_space_secret(
+        repo_id,
+        "ANALYZER_SERVICE_SECRET",
+        analyzer_service_secret,
+    )
+    _set_edge_secret("PRODUCT_ANALYZER_SHARED_SECRET", analyzer_service_secret)
     variables = {
         "PORT": "7860",
         "ENABLE_QWEN": "false",
@@ -315,14 +343,14 @@ def main() -> None:
         "REQUIRE_ANALYSIS_AUTH": "true",
         "INFERENCE_MAX_CONCURRENCY": "1",
         "INFERENCE_QUEUE_SIZE": "4",
-        "CORS_ORIGIN_REGEX": r"^https?://(localhost|127[.]0[.]0[.]1)(:[0-9]+)?$|^https://.+$",
+        "CORS_ORIGIN_REGEX": r"(?!)",
     }
     for key, value in variables.items():
         api.add_space_variable(repo_id, key, value)
     api.create_commit(
         repo_id=repo_id,
         repo_type="space",
-        operations=_operations((service_key, anon_key)),
+        operations=_operations((service_key, anon_key, analyzer_service_secret)),
         commit_message="Deploy CPU FastAPI analyzer and visual search",
     )
     try:
@@ -335,7 +363,11 @@ def main() -> None:
     build_stage = _wait_for_runtime(api, repo_id)
     readiness_ms = _wait_until_ready(base_url)
     smoke = _smoke(base_url, supabase_url, service_key, anon_key)
-    public_file_count = _verify_public_files(api, repo_id, service_key)
+    public_file_count = _verify_public_files(
+        api,
+        repo_id,
+        (service_key, anon_key, analyzer_service_secret),
+    )
     report = {
         "repo_id": repo_id,
         "space_url": base_url,

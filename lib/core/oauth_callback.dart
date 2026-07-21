@@ -1,11 +1,8 @@
-class OAuthSessionTokens {
-  const OAuthSessionTokens({
-    required this.accessToken,
-    required this.refreshToken,
-  });
+class OAuthExchangeCode {
+  const OAuthExchangeCode({required this.code, required this.provider});
 
-  final String accessToken;
-  final String refreshToken;
+  final String code;
+  final String provider;
 }
 
 class OAuthCallbackException implements Exception {
@@ -17,38 +14,31 @@ class OAuthCallbackException implements Exception {
   String toString() => message;
 }
 
-OAuthSessionTokens parseOAuthCallback(
+OAuthExchangeCode parseOAuthExchangeCallback(
   Uri callback, {
   required Uri expectedRedirect,
+  required String expectedProvider,
 }) {
   if (!_matchesRedirect(callback, expectedRedirect)) {
-    throw const OAuthCallbackException(
-      'Приложение получило неверный адрес возврата',
-    );
+    throw const OAuthCallbackException('Unexpected OAuth redirect URI');
   }
-
-  final parameters = <String, String>{
-    ...callback.queryParameters,
-    ..._fragmentParameters(callback.fragment),
-  };
-  final error = parameters['error']?.trim();
-  final errorDescription = parameters['error_description']?.trim();
-  if ((error?.isNotEmpty ?? false) || (errorDescription?.isNotEmpty ?? false)) {
-    throw OAuthCallbackException(
-      errorDescription?.isNotEmpty == true ? errorDescription! : error!,
-    );
+  final error =
+      callback.queryParameters['error_description']?.trim() ??
+      callback.queryParameters['oauth_error']?.trim() ??
+      callback.queryParameters['error']?.trim();
+  if (error?.isNotEmpty == true) {
+    throw OAuthCallbackException(error!);
   }
-
-  final accessToken = parameters['access_token']?.trim() ?? '';
-  final refreshToken = parameters['refresh_token']?.trim() ?? '';
-  if (accessToken.isEmpty || refreshToken.isEmpty) {
-    throw const OAuthCallbackException('Сервис входа не вернул сессию');
+  final code = callback.queryParameters['oauth_code']?.trim() ?? '';
+  final provider =
+      callback.queryParameters['oauth_provider']?.trim().toLowerCase() ?? '';
+  if (code.isEmpty) {
+    throw const OAuthCallbackException('OAuth exchange code is missing');
   }
-
-  return OAuthSessionTokens(
-    accessToken: accessToken,
-    refreshToken: refreshToken,
-  );
+  if (provider != expectedProvider.trim().toLowerCase()) {
+    throw const OAuthCallbackException('Unexpected OAuth provider');
+  }
+  return OAuthExchangeCode(code: code, provider: provider);
 }
 
 bool _matchesRedirect(Uri callback, Uri expectedRedirect) {
@@ -61,15 +51,4 @@ bool _matchesRedirect(Uri callback, Uri expectedRedirect) {
 String _normalizedPath(String path) {
   if (path.isEmpty) return '/';
   return path.endsWith('/') ? path : '$path/';
-}
-
-Map<String, String> _fragmentParameters(String fragment) {
-  if (fragment.isEmpty) return const {};
-  try {
-    return Uri.splitQueryString(fragment);
-  } on FormatException {
-    throw const OAuthCallbackException(
-      'Сервис входа вернул некорректный ответ',
-    );
-  }
 }

@@ -3,27 +3,35 @@ import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/oauth_callback.dart';
+import '../core/app_config.dart';
+import '../core/pkce.dart';
 import '../core/supabase_config.dart';
 import '../features/chat/chat_media_send_coordinator.dart';
 import '../features/chat/chat_media_url_cache.dart';
-import '../features/chat/chat_remote_write_coordinator.dart';
 import '../features/chat/chat_sync_coordinator.dart';
+import '../features/chat/chat_errors.dart';
+import '../features/chat/chat_repository.dart';
+import '../features/chat/chat_remote_data_source.dart';
 import '../models/app_profile.dart';
+import '../models/account_deletion.dart';
 import '../models/created_outfit.dart';
 import '../models/message_thread.dart';
+import '../models/order_dispute.dart';
 import '../models/outfit_accessory.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
+import '../models/user_entitlements.dart';
 import '../services/push_notification_service.dart';
 
 class MessageNotification {
@@ -59,6 +67,7 @@ class AppRepository extends ChangeNotifier {
   static const _deliveryProfileKey = 'delivery_profile_v1';
   static const _ordersKey = 'orders_v1';
   static const _checkoutAttemptKeyPrefix = 'checkout_attempt_v1';
+  static const _accountDeletionAttemptKeyPrefix = 'account_deletion_attempt_v1';
   static const _sellerReviewsKey = 'seller_reviews_v1';
   static const _scopedStorageMigrationKey = 'user_storage_scoped_v1';
   static const _scopedUserStorageKeys = <String>[
@@ -73,15 +82,25 @@ class AppRepository extends ChangeNotifier {
     _notificationPreferencesKey,
     _deliveryProfileKey,
     _ordersKey,
+    _accountDeletionAttemptKeyPrefix,
     _sellerReviewsKey,
   ];
-  static const _bucketName = 'product-images';
+  static const _profileImagesBucketName = 'profile-images';
+  static const _outfitImagesBucketName = 'outfit-images';
+  static const _accessoryImagesBucketName = 'accessory-images';
+  static const _productImagesBucketName = 'product-images';
   static const _chatMediaBucketName = 'chat-media';
   static const _maxChatImageBytes = 20 * 1024 * 1024;
   static const _maxChatVideoBytes = 100 * 1024 * 1024;
   static const _chatMediaSignedUrlSeconds = 60 * 60;
   static const _chatHydrationBatchSize = 40;
-  static const _chatHydrationPageSize = 500;
+  static const _chatMessagePageSize = 50;
+  static const _chatThreadSummaryColumns =
+      'id,kind,buyer_id,seller_id,product_id,seller_name,buyer_name,'
+      'product_title,product_image,buyer_handle,seller_handle,buyer_avatar,'
+      'seller_avatar,last_message_preview,updated_at,is_group,title,'
+      'group_avatar,created_by,member_ids,last_message_id';
+  static const _nonListingMediaSignedUrlSeconds = 60 * 60;
 
   @visibleForTesting
   static List<AppOrder> mergeOrdersForParticipant({
@@ -183,6 +202,15 @@ class AppRepository extends ChangeNotifier {
   User? _currentUser;
   bool _isSigningIn = false;
   String? _authError;
+  UserEntitlements _entitlements = UserEntitlements.unavailable();
+  bool _entitlementsLoading = false;
+  String? _entitlementsError;
+  List<LegalDocumentRequirement> _registrationDocuments = const [];
+  bool _registrationDocumentsLoading = false;
+  String? _registrationDocumentsError;
+  RegistrationIntent? _pendingRegistrationIntent;
+  bool _existingAccountLogin = false;
+  Future<bool>? _registrationCompletionInFlight;
   MessageNotification? _latestMessageNotification;
   NotificationPreferences _notificationPreferences =
       const NotificationPreferences();
@@ -202,19 +230,21 @@ class AppRepository extends ChangeNotifier {
   );
   Timer? _syncTimer;
   StreamSubscription<AuthState>? _authSubscription;
+  Future<void> _authTransitionTail = Future<void>.value();
+  int _authTransitionGeneration = 0;
   Future<User?>? _sessionRefreshInFlight;
   StreamSubscription<String>? _pushTokenSubscription;
-  RealtimeChannel? _messagesChannel;
-  int _messageSubscriptionGeneration = 0;
   final ChatMediaUrlCache _chatMediaUrlCache = ChatMediaUrlCache(
     timeToLive: const Duration(seconds: _chatMediaSignedUrlSeconds),
   );
   final ChatMediaSendCoordinator _chatMediaSendCoordinator =
       const ChatMediaSendCoordinator();
-  final ChatRemoteWriteCoordinator _chatRemoteWriteCoordinator =
-      const ChatRemoteWriteCoordinator();
   final ChatSyncCoordinator _chatThreadSync = ChatSyncCoordinator();
   final Set<String> _knownRemoteThreadIds = <String>{};
+  ChatRepository? _chatRepository;
+  final Map<String, bool> _chatHasOlderMessages = <String, bool>{};
+  final Set<String> _chatPageLoads = <String>{};
+  bool _isAppForeground = true;
   String? _registeredPushToken;
 
   bool get isReady => _isReady;
@@ -223,7 +253,9 @@ class AppRepository extends ChangeNotifier {
   List<Product> get products => List.unmodifiable(
     _products.where(
       (product) =>
-          product.ownerId.isEmpty || !_blockedUserIds.contains(product.ownerId),
+          !product.isHidden &&
+          (product.ownerId.isEmpty ||
+              !_blockedUserIds.contains(product.ownerId)),
     ),
   );
   List<Product> get likedProducts {
@@ -327,9 +359,10 @@ class AppRepository extends ChangeNotifier {
   }
 
   List<MessageThread> get threads {
-    if (!_hasSupabase || currentUserId.isEmpty) {
+    if (!_hasSupabase) {
       return List.unmodifiable(_threads);
     }
+    if (currentUserId.isEmpty) return const <MessageThread>[];
     return List.unmodifiable(
       _threads.where(
         (thread) =>
@@ -371,9 +404,31 @@ class AppRepository extends ChangeNotifier {
   bool get isSignedIn => _currentUser != null;
   bool get isSigningIn => _isSigningIn;
   String? get authError => _authError;
+  UserEntitlements get entitlements => _entitlements;
+  bool get entitlementsLoading => _entitlementsLoading;
+  String? get entitlementsError => _entitlementsError;
+  List<LegalDocumentRequirement> get registrationDocuments =>
+      List.unmodifiable(_registrationDocuments);
+  bool get registrationDocumentsLoading => _registrationDocumentsLoading;
+  String? get registrationDocumentsError => _registrationDocumentsError;
+  RegistrationIntent? get pendingRegistrationIntent =>
+      _pendingRegistrationIntent;
+  bool get canUseMarketplace =>
+      (_hasSupabase && isSignedIn && _entitlements.canUseMarketplace) ||
+      AppConfig.allowUnsafeLocalDemo;
+  bool get canBuy =>
+      (_hasSupabase && isSignedIn && _entitlements.canBuy) ||
+      AppConfig.allowUnsafeLocalDemo;
+  bool get canSell =>
+      (_hasSupabase && isSignedIn && _entitlements.canSell) ||
+      AppConfig.allowUnsafeLocalDemo;
   MessageNotification? get latestMessageNotification =>
       _latestMessageNotification;
-  bool isChatThreadVisible(String threadId) => _activeThreadId == threadId;
+  bool isChatThreadVisible(String threadId) =>
+      _isAppForeground && _activeThreadId == threadId;
+  ChatDiagnostics? get chatDiagnostics => _chatRepository?.diagnostics;
+  bool hasOlderChatMessages(String threadId) =>
+      _chatHasOlderMessages[threadId] ?? false;
   String get currentUserId => _currentUser?.id ?? '';
   DateTime? lastSeenForUser(String userId) => _lastSeenByUserId[userId];
 
@@ -383,11 +438,22 @@ class AppRepository extends ChangeNotifier {
     } else if (_activeThreadId == threadId) {
       _activeThreadId = null;
     }
+    if (isVisible) unawaited(loadLatestChatMessages(threadId));
+  }
+
+  Future<void> setAppForeground(bool isForeground) async {
+    _isAppForeground = isForeground;
+    if (isForeground && _hasSupabase && currentUserId.isNotEmpty) {
+      await _chatRepository?.onForeground();
+      await _syncChatGaps();
+    }
   }
 
   Future<void> refreshCurrentProfile() async {
     final user = _currentUser;
-    if (user != null) await _applyUserProfile(user);
+    if (user == null) return;
+    await refreshUserEntitlements();
+    if (_entitlements.canUseMarketplace) await _applyUserProfile(user);
   }
 
   DeliveryProfile _deliveryProfileWithFallbacks() {
@@ -409,11 +475,10 @@ class AppRepository extends ChangeNotifier {
   }
 
   MessageThread? threadById(String threadId) {
+    if (_hasSupabase && currentUserId.isEmpty) return null;
     for (final thread in _threads) {
       if (thread.id != threadId) continue;
-      if (_hasSupabase &&
-          currentUserId.isNotEmpty &&
-          !thread.containsUser(currentUserId)) {
+      if (_hasSupabase && !thread.containsUser(currentUserId)) {
         return null;
       }
       return thread;
@@ -425,14 +490,17 @@ class AppRepository extends ChangeNotifier {
     if (currentUserId.isEmpty) return [];
     return _products
         .where(
-          (product) => product.ownerId == currentUserId && !product.isHidden,
+          (product) =>
+              product.ownerId == currentUserId && product.status != 'archived',
         )
         .toList();
   }
 
   List<Product> productsBySellerId(String sellerId) {
     if (sellerId.isEmpty || _blockedUserIds.contains(sellerId)) return const [];
-    return _products.where((product) => product.ownerId == sellerId).toList();
+    return _products
+        .where((product) => product.ownerId == sellerId && !product.isHidden)
+        .toList();
   }
 
   bool isUserBlocked(String userId) => _blockedUserIds.contains(userId);
@@ -493,7 +561,8 @@ class AppRepository extends ChangeNotifier {
       final productRows = await _attachPublicAttributes(
         (response as List<dynamic>).whereType<Map>().toList(),
       );
-      final remoteProducts = productRows
+      final hydratedRows = await _hydrateProductMediaRows(productRows);
+      final remoteProducts = hydratedRows
           .map(Product.fromSupabase)
           .where((product) => product.status == 'published')
           .toList();
@@ -570,59 +639,58 @@ class AppRepository extends ChangeNotifier {
     }
 
     try {
-      final eligible = await _hasRemoteCompletedOrderForReview(
+      final orderId = await _completedOrderIdForReview(
         buyerId: buyerId,
         sellerId: normalizedSellerId,
         productId: normalizedProductId,
       );
-      if (!eligible) {
+      if (orderId == null) {
         throw const SellerReviewSubmissionException(
           'Отзыв можно оставить только после завершённой сделки',
         );
       }
+      final response = await _client.rpc(
+        'submit_order_review',
+        params: {
+          'p_order_id': orderId,
+          'p_rating': rating.clamp(1, 5),
+          'p_text': text.trim(),
+          'p_evidence': {'has_photo': hasPhoto},
+        },
+      );
+      final reviewId = response?.toString().trim() ?? '';
+      if (reviewId.isEmpty) {
+        throw const FormatException('Review command returned no id');
+      }
+      final rows = await _client
+          .from('seller_reviews')
+          .select()
+          .eq('id', reviewId)
+          .limit(1);
+      if (rows.isEmpty) {
+        throw const FormatException('Saved review is not readable');
+      }
+      final review = SellerReview.fromJson(
+        Map<String, dynamic>.from(rows.first),
+      );
+      _sellerReviews.removeWhere(
+        (item) =>
+            item.buyerId == buyerId && item.productId == normalizedProductId,
+      );
+      _sellerReviews.insert(0, review);
+      await _saveSellerReviewsLocal();
+      notifyListeners();
     } on SellerReviewSubmissionException {
       rethrow;
     } catch (error) {
-      debugPrint('Seller review eligibility check error: $error');
+      debugPrint('Seller review command error: $error');
       throw const SellerReviewSubmissionException(
-        'Не удалось проверить завершение сделки. Попробуйте ещё раз',
+        'Не удалось сохранить отзыв. Проверьте завершение сделки и попробуйте ещё раз',
       );
     }
-
-    final draft = SellerReview(
-      id: '',
-      sellerId: normalizedSellerId,
-      buyerId: buyerId,
-      buyerName: _profile.name,
-      buyerAvatar: _currentAvatarUrl(),
-      productId: normalizedProductId,
-      productTitle: productTitle,
-      productImage: productImage,
-      rating: rating.clamp(1, 5),
-      text: text.trim(),
-      hasPhoto: hasPhoto,
-      createdAt: DateTime.now().toUtc(),
-    );
-    late final SellerReview review;
-    try {
-      review = await _upsertSellerReviewToSupabase(draft);
-    } catch (error) {
-      debugPrint('Seller review save error: $error');
-      throw const SellerReviewSubmissionException(
-        'Не удалось сохранить отзыв. Попробуйте ещё раз',
-      );
-    }
-
-    _sellerReviews.removeWhere(
-      (item) =>
-          item.buyerId == buyerId && item.productId == normalizedProductId,
-    );
-    _sellerReviews.insert(0, review);
-    await _saveSellerReviewsLocal();
-    notifyListeners();
   }
 
-  Future<bool> _hasRemoteCompletedOrderForReview({
+  Future<String?> _completedOrderIdForReview({
     required String buyerId,
     required String sellerId,
     required String productId,
@@ -635,30 +703,8 @@ class AppRepository extends ChangeNotifier {
         .eq('product_id', productId)
         .eq('status', AppOrderStatus.completed.name)
         .limit(1);
-    return response.isNotEmpty;
-  }
-
-  Future<SellerReview> _upsertSellerReviewToSupabase(
-    SellerReview review,
-  ) async {
-    final response = await _client
-        .from('seller_reviews')
-        .upsert({
-          'seller_id': review.sellerId,
-          'buyer_id': review.buyerId,
-          'buyer_name': review.buyerName,
-          'buyer_avatar': review.buyerAvatar,
-          'product_id': review.productId,
-          'product_title': review.productTitle,
-          'product_image': review.productImage,
-          'rating': review.rating,
-          'text': review.text,
-          'has_photo': review.hasPhoto,
-          'deal_completed': true,
-        }, onConflict: 'buyer_id,product_id')
-        .select()
-        .single();
-    return SellerReview.fromJson(response);
+    if (response.isEmpty) return null;
+    return response.first['id']?.toString();
   }
 
   List<CreatedOutfit> get myOutfits {
@@ -688,8 +734,8 @@ class AppRepository extends ChangeNotifier {
     final returns = sellerOrders
         .where(
           (order) =>
-              order.status == AppOrderStatus.returning ||
-              order.status == AppOrderStatus.canceled,
+              order.status == AppOrderStatus.dispute ||
+              order.status == AppOrderStatus.cancelled,
         )
         .length;
     final average = completed.isEmpty
@@ -717,9 +763,301 @@ class AppRepository extends ChangeNotifier {
   SupabaseClient get _client => SupabaseConfig.client;
   bool get _hasSupabase => SupabaseConfig.isInitialized;
 
+  Future<void> refreshRegistrationDocuments({bool notify = true}) async {
+    if (!_hasSupabase) {
+      _registrationDocuments = const [];
+      _registrationDocumentsError =
+          'Юридические документы недоступны: сервис не настроен';
+      if (notify) notifyListeners();
+      return;
+    }
+    if (_registrationDocumentsLoading) return;
+    _registrationDocumentsLoading = true;
+    _registrationDocumentsError = null;
+    if (notify) notifyListeners();
+    try {
+      final response = await _client.rpc('get_active_legal_documents');
+      final rows = response is List
+          ? response
+          : response is Map && response['documents'] is List
+          ? response['documents'] as List<dynamic>
+          : const <dynamic>[];
+      final byType = <LegalDocumentType, LegalDocumentRequirement>{};
+      for (final raw in rows.whereType<Map>()) {
+        try {
+          final document = LegalDocumentRequirement.fromJson(
+            Map<String, dynamic>.from(raw),
+          );
+          byType[document.type] = document;
+        } on FormatException {
+          // Unknown server document codes never broaden registration access.
+        }
+      }
+      final missingMandatory = LegalDocumentType.values
+          .where((type) => type.isMandatory)
+          .where((type) => byType[type]?.isUsable != true)
+          .toList(growable: false);
+      if (missingMandatory.isNotEmpty) {
+        throw StateError('Mandatory legal document versions are incomplete');
+      }
+      _registrationDocuments = List.unmodifiable([
+        for (final type in LegalDocumentType.values)
+          if (byType[type] != null) byType[type]!,
+      ]);
+    } catch (error, stackTrace) {
+      debugPrint('Legal documents fetch error: $error\n$stackTrace');
+      _registrationDocuments = const [];
+      _registrationDocumentsError =
+          'Не удалось получить действующие версии документов';
+    } finally {
+      _registrationDocumentsLoading = false;
+      if (notify) notifyListeners();
+    }
+  }
+
+  void setPendingRegistrationIntent(RegistrationIntent intent) {
+    if (!intent.isValid) {
+      throw ArgumentError('Registration intent is incomplete or under age');
+    }
+    _pendingRegistrationIntent = intent;
+    _existingAccountLogin = false;
+    _authError = null;
+    notifyListeners();
+  }
+
+  void clearPendingRegistrationIntent() {
+    _pendingRegistrationIntent = null;
+    notifyListeners();
+  }
+
+  void beginExistingAccountLogin() {
+    _pendingRegistrationIntent = null;
+    _existingAccountLogin = true;
+    _authError = null;
+    notifyListeners();
+  }
+
+  Future<String?> completeRegistration(RegistrationIntent intent) async {
+    if (!intent.isValid) {
+      return 'Для регистрации нужны все обязательные согласия и возраст 18+';
+    }
+    _pendingRegistrationIntent = intent;
+    final completed = await _completePendingRegistration();
+    return completed
+        ? null
+        : (_entitlementsError ??
+              'Не удалось завершить регистрацию. Доступ закрыт');
+  }
+
+  Future<bool> _completePendingRegistration() {
+    final inFlight = _registrationCompletionInFlight;
+    if (inFlight != null) return inFlight;
+    final future = _completePendingRegistrationOnce();
+    _registrationCompletionInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_registrationCompletionInFlight, future)) {
+        _registrationCompletionInFlight = null;
+      }
+    });
+  }
+
+  Future<bool> _completePendingRegistrationOnce() async {
+    final intent = _pendingRegistrationIntent;
+    final user =
+        _currentUser ?? (_hasSupabase ? _client.auth.currentUser : null);
+    if (!_hasSupabase || user == null || intent == null || !intent.isValid) {
+      return false;
+    }
+    _entitlementsLoading = true;
+    _entitlementsError = null;
+    notifyListeners();
+    try {
+      final response = await _client.functions.invoke(
+        'complete-registration',
+        body: intent.toRequestBody(),
+      );
+      final data = response.data;
+      if (response.status < 200 ||
+          response.status >= 300 ||
+          data is! Map ||
+          (data['completed'] != true &&
+              data['legal_onboarding_complete'] != true &&
+              data['success'] != true)) {
+        throw StateError('Registration completion was not confirmed');
+      }
+      _entitlementsLoading = false;
+      await refreshUserEntitlements(notify: false);
+      if (!_entitlements.canUseMarketplace) {
+        throw StateError('Server entitlements remain incomplete');
+      }
+      _pendingRegistrationIntent = null;
+      _authError = null;
+      await _applyUserProfile(user, notify: false);
+      await _activateAuthorizedSession(user);
+      return true;
+    } catch (error, stackTrace) {
+      debugPrint('Registration completion error: $error\n$stackTrace');
+      _entitlements = UserEntitlements.unavailable();
+      _entitlementsError =
+          'Согласия или возраст не подтверждены сервером. Доступ закрыт';
+      _authError = _entitlementsError;
+      return false;
+    } finally {
+      _entitlementsLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> refreshUserEntitlements({bool notify = true}) async {
+    if (!_hasSupabase || _currentUser == null) {
+      _entitlements = UserEntitlements.unavailable();
+      _entitlementsError = null;
+      if (notify) notifyListeners();
+      return;
+    }
+    if (_entitlementsLoading) return;
+    _entitlementsLoading = true;
+    _entitlementsError = null;
+    if (notify) notifyListeners();
+    try {
+      if (_registrationDocuments.isEmpty) {
+        await refreshRegistrationDocuments(notify: false);
+      }
+      if (_registrationDocuments.isEmpty) {
+        throw StateError('Active mandatory documents are unavailable');
+      }
+      final response = await _client.rpc('get_user_entitlements');
+      final raw = response is Map
+          ? Map<String, dynamic>.from(response)
+          : response is List && response.isNotEmpty && response.first is Map
+          ? Map<String, dynamic>.from(response.first as Map)
+          : throw const FormatException('Invalid entitlements response');
+      final missing =
+          (raw['missing_required_documents'] as List<dynamic>? ?? const [])
+              .map((value) => value.toString().trim().toLowerCase())
+              .toSet();
+      bool isMissing(LegalDocumentType type) {
+        final aliases = switch (type) {
+          LegalDocumentType.terms => const {'terms', 'user_agreement'},
+          LegalDocumentType.privacy => const {'privacy', 'privacy_policy'},
+          LegalDocumentType.personalData => const {
+            'personal_data',
+            'personal_data_consent',
+          },
+          LegalDocumentType.marketing => const {'marketing'},
+        };
+        return aliases.any(missing.contains);
+      }
+
+      final legalComplete = raw['legal_onboarding_complete'] == true;
+      raw['documents'] = [
+        for (final document in _registrationDocuments)
+          {
+            'document_type': document.type.wireName,
+            'version': document.version,
+            'title': document.title,
+            'url': document.url,
+            'accepted':
+                document.type.isMandatory &&
+                legalComplete &&
+                !isMissing(document.type),
+          },
+      ];
+      _entitlements = UserEntitlements.fromJson(raw);
+      if (!_entitlements.canUseMarketplace) {
+        _entitlementsError =
+            'Не завершены обязательные согласия или проверка возраста 18+';
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Entitlements fetch error: $error\n$stackTrace');
+      _entitlements = UserEntitlements.unavailable();
+      _entitlementsError =
+          'Не удалось проверить право доступа. Повторите попытку';
+    } finally {
+      _entitlementsLoading = false;
+      if (notify) notifyListeners();
+    }
+  }
+
+  Future<String?> requestPrivateSellerActivation() async {
+    await refreshUserEntitlements();
+    if (!_entitlements.canUseMarketplace) {
+      return 'Сначала завершите обязательную регистрацию и проверку 18+';
+    }
+    if (!_hasSupabase || _currentUser == null) {
+      return 'Войдите в аккаунт';
+    }
+    if (_entitlements.seller.type != null &&
+        _entitlements.seller.type != SellerType.privateIndividual) {
+      return 'Этот тип продавца пока не поддерживается';
+    }
+    try {
+      await _client.rpc('request_private_seller_activation');
+      await refreshUserEntitlements();
+      return null;
+    } catch (error, stackTrace) {
+      debugPrint('Seller activation error: $error\n$stackTrace');
+      return 'Не удалось отправить заявку продавца';
+    }
+  }
+
+  Future<String?> assertCanPublishListing() async {
+    await refreshUserEntitlements();
+    if (_entitlements.canSell) return null;
+    final seller = _entitlements.seller;
+    if (!_entitlements.canUseMarketplace) {
+      return 'Не завершены обязательные согласия или проверка возраста 18+';
+    }
+    if (seller.type == null) return 'Сначала активируйте профиль продавца';
+    if (seller.type != SellerType.privateIndividual) {
+      return 'В этой версии разрешены только частные продавцы';
+    }
+    if (seller.status == SellerAccountStatus.blocked ||
+        seller.moderationStatus == SellerModerationStatus.blocked ||
+        seller.salesBlocked) {
+      return 'Продажи заблокированы';
+    }
+    if (seller.verificationStatus == SellerVerificationStatus.reviewRequired) {
+      return 'Для публикации требуется дополнительная проверка';
+    }
+    return 'Профиль продавца ещё не подтверждён';
+  }
+
+  Future<void> _activateAuthorizedSession(User user) async {
+    if (!_entitlements.canUseMarketplace) return;
+    _chatRepository ??= ChatRepository(client: _client, preferences: _prefs)
+      ..addListener(_handleChatDiagnosticsChanged);
+    await _chatRepository!.activate(
+      userId: user.id,
+      onMessage: _applyRealtimeChatMessage,
+      onThreadInvalidated: () =>
+          _chatThreadSync.schedule(_syncThreadsFromSupabase),
+      onGapSync: _syncChatGaps,
+    );
+    unawaited(_registerPushToken(user.id));
+    unawaited(_updatePresence());
+    unawaited(_syncBlockedUsers());
+    unawaited(_syncUserCollectionsFromSupabase());
+    unawaited(_syncProfileFeaturesFromSupabase());
+    unawaited(
+      _chatThreadSync.runNow(_syncThreadsFromSupabase).then((_) async {
+        await _chatRepository?.reconcileOutbox();
+        // Re-merge records that reconciliation proved were never accepted by
+        // the server; they changed from "sending" to retryable "failed".
+        await _chatThreadSync.runNow(_syncThreadsFromSupabase);
+      }),
+    );
+  }
+
+  void _handleChatDiagnosticsChanged() {
+    if (!_isReady) return;
+    notifyListeners();
+  }
+
   Future<void> load() async {
     _prefs = await SharedPreferences.getInstance();
     if (_hasSupabase) _currentUser = _client.auth.currentUser;
+    await _purgeLegacySensitiveLocalStorage();
 
     // Load from local cache first for instant UI
     _products = _readList(_productsKey, Product.fromJson);
@@ -732,13 +1070,19 @@ class AppRepository extends ChangeNotifier {
     _accessories = _readList(_accessoriesKey, OutfitAccessory.fromJson);
     _outfits = _readList(_outfitsKey, CreatedOutfit.fromJson);
     await _migrateLegacyUserStorage();
+    await _purgeLegacySensitiveLocalStorage();
     _loadLocalUserState();
     if (_hasSupabase) {
       _activateBlockedUserIdentity(_currentUser?.id ?? '');
-      await _applyUserProfile(_currentUser, notify: false);
+      await refreshRegistrationDocuments(notify: false);
       if (_currentUser != null) {
-        unawaited(_registerPushToken(_currentUser!.id));
-        await _subscribeToMessages();
+        await refreshUserEntitlements(notify: false);
+      }
+      if (_currentUser != null && _entitlements.canUseMarketplace) {
+        await _applyUserProfile(_currentUser, notify: false);
+      }
+      if (_currentUser != null) {
+        await _activateAuthorizedSession(_currentUser!);
       }
       _authSubscription = _client.auth.onAuthStateChange.listen((state) {
         unawaited(_handleAuthState(state.session?.user));
@@ -757,22 +1101,27 @@ class AppRepository extends ChangeNotifier {
       _syncFromSupabase();
       _syncAccessoriesFromSupabase();
       _syncOutfitsFromSupabase();
-      _syncBlockedUsers();
-      _syncUserCollectionsFromSupabase();
-      _syncProfileFeaturesFromSupabase();
-      _updatePresence();
-      unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
+      if (_entitlements.canUseMarketplace) {
+        _syncBlockedUsers();
+        _syncUserCollectionsFromSupabase();
+        _syncProfileFeaturesFromSupabase();
+        _updatePresence();
+        unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
+      }
       _syncTimer ??= Timer.periodic(const Duration(seconds: 15), (timer) {
         if (timer.tick % 4 == 0) {
           _syncFromSupabase();
           _syncAccessoriesFromSupabase();
           _syncOutfitsFromSupabase();
-          _syncBlockedUsers();
-          _syncUserCollectionsFromSupabase();
-          _syncProfileFeaturesFromSupabase();
-          _updatePresence();
+          if (_entitlements.canUseMarketplace) {
+            _syncBlockedUsers();
+            _syncUserCollectionsFromSupabase();
+            _syncProfileFeaturesFromSupabase();
+            _updatePresence();
+          }
         }
-        unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
+        // Chat delivery is Realtime-first. Foreground/reconnect gap-sync is the
+        // recovery path; this timer must not become a polling transport.
       });
     }
   }
@@ -780,6 +1129,8 @@ class AppRepository extends ChangeNotifier {
   Future<void> signInWithYandex() {
     return _signInWithSocialOAuth(
       authUrl: SupabaseConfig.yandexAuthUrl,
+      functionName: 'yandex-auth',
+      provider: 'yandex',
       providerLabel: 'Яндекс ID',
     );
   }
@@ -787,11 +1138,16 @@ class AppRepository extends ChangeNotifier {
   Future<void> signInWithVk() {
     return _signInWithSocialOAuth(
       authUrl: SupabaseConfig.vkAuthUrl,
+      functionName: 'vk-auth',
+      provider: 'vk',
       providerLabel: 'VK ID',
     );
   }
 
   Future<String?> requestPhoneOtp(String phone) async {
+    if (!_existingAccountLogin && _pendingRegistrationIntent?.isValid != true) {
+      return 'Сначала укажите дату рождения и примите обязательные документы';
+    }
     final normalizedPhone = phone.replaceAll(RegExp(r'[^+\d]'), '');
     if (!RegExp(r'^\+7\d{10}$').hasMatch(normalizedPhone)) {
       return 'Введите номер телефона полностью';
@@ -873,8 +1229,16 @@ class AppRepository extends ChangeNotifier {
 
   Future<void> _signInWithSocialOAuth({
     required String authUrl,
+    required String functionName,
+    required String provider,
     required String providerLabel,
   }) async {
+    if (!_existingAccountLogin && _pendingRegistrationIntent?.isValid != true) {
+      _authError =
+          'Сначала укажите дату рождения и примите обязательные документы';
+      notifyListeners();
+      return;
+    }
     if (!_hasSupabase) {
       _authError = 'Supabase не настроен';
       notifyListeners();
@@ -885,38 +1249,68 @@ class AppRepository extends ChangeNotifier {
     _authError = null;
     notifyListeners();
 
-    final redirectTo = kIsWeb
-        ? Uri.base
-        : Uri.parse(SupabaseConfig.oauthRedirectUri);
-    final uri = Uri.parse(
-      authUrl,
-    ).replace(queryParameters: {'redirect_to': redirectTo.toString()});
-
     try {
       if (kIsWeb) {
-        final didOpen = await launchUrl(
-          uri,
-          mode: LaunchMode.platformDefault,
-          webOnlyWindowName: '_self',
-        );
-        if (!didOpen) {
-          _authError = 'Не удалось открыть вход через $providerLabel';
-        }
+        _authError =
+            'Вход через $providerLabel в web-версии недоступен до внедрения безопасного PKCE-хранилища';
         return;
       }
 
+      final redirectTo = Uri.parse(SupabaseConfig.oauthRedirectUri);
+      final verifier = generatePkceVerifier();
+      final challenge = createPkceChallenge(verifier);
+      final uri = Uri.parse(authUrl).replace(
+        queryParameters: {
+          'redirect_to': redirectTo.toString(),
+          'code_challenge': challenge,
+          'code_challenge_method': 'S256',
+        },
+      );
       final callback = await FlutterWebAuth2.authenticate(
         url: uri.toString(),
         callbackUrlScheme: redirectTo.scheme,
       );
-      final tokens = parseOAuthCallback(
+      final exchangeCode = parseOAuthExchangeCallback(
         Uri.parse(callback),
         expectedRedirect: redirectTo,
+        expectedProvider: provider,
       );
-      await _client.auth.setSession(
-        tokens.refreshToken,
-        accessToken: tokens.accessToken,
+      final exchange = await _client.functions.invoke(
+        functionName,
+        body: {
+          'action': 'exchange',
+          'exchange_code': exchangeCode.code,
+          'code_verifier': verifier,
+        },
       );
+      if (exchange.status < 200 || exchange.status >= 300) {
+        throw const OAuthCallbackException(
+          'Сервис входа отклонил одноразовый код',
+        );
+      }
+      final raw = exchange.data;
+      if (raw is! Map) {
+        throw const OAuthCallbackException('Сервис входа не вернул сессию');
+      }
+      final sessionRaw = raw['session'] is Map ? raw['session'] as Map : raw;
+      final accessToken = (sessionRaw['access_token'] ?? '').toString().trim();
+      final refreshToken = (sessionRaw['refresh_token'] ?? '')
+          .toString()
+          .trim();
+      if (accessToken.isEmpty || refreshToken.isEmpty) {
+        throw const OAuthCallbackException('Сервис входа не вернул сессию');
+      }
+      final authResponse = await _client.auth.setSession(
+        refreshToken,
+        accessToken: accessToken,
+      );
+      final user = authResponse.user ?? _client.auth.currentUser;
+      if (user == null) {
+        throw const OAuthCallbackException(
+          'Подлинность сессии не подтверждена',
+        );
+      }
+      await _handleAuthState(user);
     } on OAuthCallbackException catch (e) {
       _authError = 'Не удалось войти через $providerLabel: ${e.message}';
     } on PlatformException catch (e) {
@@ -934,47 +1328,21 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
-  Future<void> signInWithTelegram() async {
-    if (!_hasSupabase) {
-      _authError = 'Supabase не настроен';
-      notifyListeners();
-      return;
-    }
-
-    _isSigningIn = true;
-    _authError = null;
-    notifyListeners();
-
-    final redirectTo = kIsWeb
-        ? Uri.base.toString()
-        : SupabaseConfig.authRedirectUri;
-    final uri = Uri.parse(
-      SupabaseConfig.telegramAuthUrl,
-    ).replace(queryParameters: {'redirect_to': redirectTo});
-
-    try {
-      final didOpen = await launchUrl(
-        uri,
-        mode: kIsWeb
-            ? LaunchMode.platformDefault
-            : LaunchMode.externalApplication,
-        webOnlyWindowName: '_self',
-      );
-      if (!didOpen) {
-        _authError = 'Не удалось открыть вход через Telegram';
-      }
-    } catch (e) {
-      _authError = 'Не удалось начать вход через Telegram: $e';
-    } finally {
-      _isSigningIn = false;
-      notifyListeners();
-    }
+  Future<void> signInWithTelegram() {
+    return _signInWithSocialOAuth(
+      authUrl: SupabaseConfig.telegramAuthUrl,
+      functionName: 'telegram-auth',
+      provider: 'telegram',
+      providerLabel: 'Telegram',
+    );
   }
 
   Future<void> signOut() async {
     if (!_hasSupabase) return;
+    final signedOutUserId = currentUserId;
     await _removeCurrentPushToken();
     await _client.auth.signOut(scope: SignOutScope.local);
+    await _clearScopedUserStorage(signedOutUserId);
     await _handleAuthState(null);
   }
 
@@ -993,10 +1361,7 @@ class AppRepository extends ChangeNotifier {
     }
 
     _profile = _profile.copyWith(name: cleanName, handle: cleanHandle);
-    await _prefs.setString(
-      _scopedStorageKey(_profileKey),
-      jsonEncode(_profile.toJson()),
-    );
+    await _prefs.remove(_scopedStorageKey(_profileKey));
     notifyListeners();
 
     if (_hasSupabase && _client.auth.currentUser != null) {
@@ -1035,17 +1400,13 @@ class AppRepository extends ChangeNotifier {
     var avatarUrl = updatedProfile.avatarUrl;
     if (avatarFile != null) {
       avatarUrl = _hasSupabase
-          ? await uploadImage(avatarFile, folder: 'avatars/$currentUserId') ??
-                ''
+          ? await _uploadProfileAvatar(avatarFile) ?? ''
           : await _inlineImage(avatarFile) ?? '';
       if (avatarUrl.isEmpty) return 'Не удалось сохранить фото профиля';
     }
 
     _profile = updatedProfile.copyWith(avatarUrl: avatarUrl);
-    await _prefs.setString(
-      _scopedStorageKey(_profileKey),
-      jsonEncode(_profile.toJson()),
-    );
+    await _prefs.remove(_scopedStorageKey(_profileKey));
     notifyListeners();
 
     final user = _hasSupabase ? _client.auth.currentUser : null;
@@ -1089,10 +1450,7 @@ class AppRepository extends ChangeNotifier {
         await _client.auth.updateUser(UserAttributes(email: normalized));
       }
       _profile = _profile.copyWith(email: normalized);
-      await _prefs.setString(
-        _scopedStorageKey(_profileKey),
-        jsonEncode(_profile.toJson()),
-      );
+      await _prefs.remove(_scopedStorageKey(_profileKey));
       notifyListeners();
       return null;
     } catch (e) {
@@ -1101,42 +1459,96 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
-  Future<String?> deleteAccount() async {
+  Future<AccountDeletionResult> deleteAccount() async {
     if (!_hasSupabase || _client.auth.currentUser == null) {
-      await _clearScopedUserStorage('');
-      _loadLocalUserState();
-      notifyListeners();
-      return null;
+      return const AccountDeletionResult.failed(
+        'Для удаления аккаунта нужна подтвержденная сервером сессия',
+      );
     }
 
     try {
       final deletedUserId = currentUserId;
-      final response = await _client.functions.invoke('delete-account');
-      final data = response.data;
-      final confirmed =
-          response.status == 200 && data is Map && data['deleted'] == true;
-      if (!confirmed) {
-        throw StateError('Account deletion was not confirmed by the server');
-      }
-
-      // Never clear user data or the local session until the backend confirms
-      // that Storage, owned UGC and the Auth user were deleted.
-      await _clearScopedUserStorage(deletedUserId);
+      final idempotencyKey = await reuseOrCreateAccountDeletionAttemptKey(
+        preferences: _prefs,
+        userId: deletedUserId,
+      );
+      Object? raw;
       try {
-        await _client.auth.signOut(scope: SignOutScope.local);
-      } catch (e) {
-        // The server already deleted this Auth user. Do not turn a local
-        // session cleanup problem into a false "deletion failed" result.
-        debugPrint('Deleted account local sign-out error: $e');
+        final response = await _client.functions.invoke(
+          'delete-account',
+          body: {
+            'confirmation': 'DELETE_MY_ACCOUNT',
+            'idempotency_key': idempotencyKey,
+          },
+        );
+        raw = response.data;
+      } on FunctionException catch (error) {
+        // A blocked request is a valid server decision, not a successful
+        // deletion. Preserve its hold reasons for the account owner.
+        if (error.details is! Map) rethrow;
+        raw = error.details;
       }
-      _currentUser = null;
-      _loadLocalUserState();
+      if (raw is List && raw.isNotEmpty) raw = raw.first;
+      if (raw is Map && raw['result'] is Map) raw = raw['result'];
+      if (raw is! Map) throw const FormatException('Invalid deletion result');
+      final result = AccountDeletionResult.fromJson(
+        Map<String, dynamic>.from(raw),
+      );
+
+      if (result.isFinalized) {
+        // Only a final server receipt authorizes local destruction and
+        // sign-out. Deferred requests retain the session so the user can
+        // access support, disputes and data-subject controls.
+        await clearAccountDeletionAttemptKey(
+          preferences: _prefs,
+          userId: deletedUserId,
+        );
+        await _clearScopedUserStorage(deletedUserId);
+        try {
+          await _client.auth.signOut(scope: SignOutScope.local);
+        } catch (error) {
+          debugPrint('Deletion request local sign-out error: $error');
+        }
+        _currentUser = null;
+        _entitlements = UserEntitlements.unavailable();
+        _loadLocalUserState();
+      }
       notifyListeners();
-      return null;
-    } catch (e) {
-      debugPrint('Account delete error: $e');
-      return 'Не удалось удалить аккаунт. Попробуйте ещё раз';
+      return result;
+    } catch (error, stackTrace) {
+      debugPrint('Account deletion request error: $error\n$stackTrace');
+      return const AccountDeletionResult.failed(
+        'Не удалось отправить запрос на удаление аккаунта. Попробуйте ещё раз',
+      );
     }
+  }
+
+  @visibleForTesting
+  static Future<String> reuseOrCreateAccountDeletionAttemptKey({
+    required SharedPreferences preferences,
+    required String userId,
+    String Function()? createKey,
+  }) async {
+    final storageKey = userScopedStorageKey(
+      _accountDeletionAttemptKeyPrefix,
+      userId,
+    );
+    final existing = preferences.getString(storageKey)?.trim() ?? '';
+    if (existing.isNotEmpty) return existing;
+
+    final generated = (createKey ?? const Uuid().v4)();
+    await preferences.setString(storageKey, generated);
+    return generated;
+  }
+
+  @visibleForTesting
+  static Future<void> clearAccountDeletionAttemptKey({
+    required SharedPreferences preferences,
+    required String userId,
+  }) {
+    return preferences.remove(
+      userScopedStorageKey(_accountDeletionAttemptKeyPrefix, userId),
+    );
   }
 
   Future<String?> _inlineImage(XFile imageFile) async {
@@ -1161,7 +1573,6 @@ class AppRepository extends ChangeNotifier {
         'last_name': profile.lastName,
         'middle_name': profile.middleName,
         'gender': profile.gender,
-        'birth_date': profile.birthDate.isEmpty ? null : profile.birthDate,
         'phone': profile.phone,
         'email': profile.email,
         'updated_at': DateTime.now().toUtc().toIso8601String(),
@@ -1196,10 +1607,36 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
-  Future<void> _handleAuthState(User? user) async {
+  Future<void> _handleAuthState(User? user) {
+    final generation = ++_authTransitionGeneration;
+    final previous = _authTransitionTail;
+    final transition = () async {
+      try {
+        await previous;
+      } catch (error, stackTrace) {
+        debugPrint('Previous auth transition error: $error\n$stackTrace');
+      }
+      if (generation != _authTransitionGeneration) return;
+      await _applyAuthStateTransition(user, generation);
+    }();
+    _authTransitionTail = transition;
+    return transition;
+  }
+
+  Future<void> _applyAuthStateTransition(User? user, int generation) async {
+    bool isCurrentTransition() => generation == _authTransitionGeneration;
+
+    if (!isCurrentTransition()) return;
     final previousUserId = currentUserId;
+    final nextUserId = user?.id ?? '';
+    if (previousUserId != nextUserId) {
+      await _chatRepository?.deactivate();
+      if (!isCurrentTransition()) return;
+    }
     _currentUser = user;
     if (previousUserId != currentUserId) {
+      _entitlements = UserEntitlements.unavailable();
+      _entitlementsError = null;
       _chatMediaUrlCache.clear();
       _knownRemoteThreadIds.clear();
       _latestMessageNotification = null;
@@ -1212,36 +1649,50 @@ class AppRepository extends ChangeNotifier {
     }
     _activateBlockedUserIdentity(user?.id ?? '');
     _authError = null;
-    await _applyUserProfile(user, notify: false);
     if (user != null) {
-      await _subscribeToMessages();
-      unawaited(_registerPushToken(user.id));
-      unawaited(_updatePresence());
+      if (_registrationDocuments.isEmpty) {
+        await refreshRegistrationDocuments(notify: false);
+        if (!isCurrentTransition()) return;
+      }
+      final completedPending =
+          !_existingAccountLogin && _pendingRegistrationIntent?.isValid == true
+          ? await _completePendingRegistration()
+          : false;
+      if (!isCurrentTransition()) return;
+      if (!completedPending) {
+        await refreshUserEntitlements(notify: false);
+        if (!isCurrentTransition()) return;
+        if (_entitlements.canUseMarketplace) {
+          await _applyUserProfile(user, notify: false);
+          if (!isCurrentTransition()) return;
+          await _activateAuthorizedSession(user);
+          if (!isCurrentTransition()) {
+            await _chatRepository?.deactivate();
+            return;
+          }
+        }
+      }
+      if (!isCurrentTransition()) return;
       unawaited(_syncFromSupabase());
       unawaited(_syncAccessoriesFromSupabase());
       unawaited(_syncOutfitsFromSupabase());
-      unawaited(_syncBlockedUsers());
-      unawaited(_syncUserCollectionsFromSupabase());
-      unawaited(_syncProfileFeaturesFromSupabase());
-      unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
+      _existingAccountLogin = false;
     } else {
+      _entitlements = UserEntitlements.unavailable();
+      _entitlementsError = null;
+      _pendingRegistrationIntent = null;
+      _existingAccountLogin = false;
       _chatThreadSync.cancelPending();
-      _messageSubscriptionGeneration++;
-      final messagesChannel = _messagesChannel;
-      _messagesChannel = null;
-      if (messagesChannel != null) {
-        try {
-          await messagesChannel.unsubscribe();
-        } catch (e) {
-          debugPrint('Message channel unsubscribe error: $e');
-        }
-      }
+      await _chatRepository?.deactivate();
+      if (!isCurrentTransition()) return;
       await _pushTokenSubscription?.cancel();
+      if (!isCurrentTransition()) return;
       _pushTokenSubscription = null;
       _registeredPushToken = null;
       _lastSeenByUserId.clear();
       _hasCompletedThreadSync = false;
     }
+    if (!isCurrentTransition()) return;
     notifyListeners();
   }
 
@@ -1260,24 +1711,29 @@ class AppRepository extends ChangeNotifier {
       final rows = response as List<dynamic>;
       if (rows.isNotEmpty) {
         final row = rows.first as Map<String, dynamic>;
-        _profile = _profile.copyWith(
-          name: row['name'] as String? ?? _profile.name,
-          handle: row['handle'] as String? ?? _profile.handle,
-          city: row['city'] as String? ?? _profile.city,
-          avatarUrl: row['avatar_url'] as String? ?? _profile.avatarUrl,
-          rating: (row['rating'] as num?)?.toDouble() ?? _profile.rating,
-          salesCount:
-              (row['sales_count'] as num?)?.toInt() ?? _profile.salesCount,
-          followersCount:
-              (row['followers_count'] as num?)?.toInt() ??
-              _profile.followersCount,
-          email: _profile.email.isEmpty ? (user.email ?? '') : _profile.email,
-        );
+        _profile = _profile
+            .copyWith(
+              name: row['name'] as String? ?? _profile.name,
+              handle: row['handle'] as String? ?? _profile.handle,
+              city: row['city'] as String? ?? _profile.city,
+              avatarUrl: row['avatar_url'] as String? ?? _profile.avatarUrl,
+              email: _profile.email.isEmpty
+                  ? (user.email ?? '')
+                  : _profile.email,
+            )
+            .withServerStats(
+              ProfileStats(
+                rating: (row['rating'] as num?)?.toDouble() ?? _profile.rating,
+                salesCount:
+                    (row['sales_count'] as num?)?.toInt() ??
+                    _profile.salesCount,
+                followersCount:
+                    (row['followers_count'] as num?)?.toInt() ??
+                    _profile.followersCount,
+              ),
+            );
         await _loadPrivateProfileDetails(user.id);
-        await _prefs.setString(
-          _scopedStorageKey(_profileKey),
-          jsonEncode(_profile.toJson()),
-        );
+        await _prefs.remove(_scopedStorageKey(_profileKey));
         await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
         if (notify) notifyListeners();
         return;
@@ -1314,10 +1770,7 @@ class AppRepository extends ChangeNotifier {
         email: _profile.email.isEmpty ? (user.email ?? '') : _profile.email,
         avatarUrl: _profile.avatarUrl.isEmpty ? _currentAvatarUrl() : null,
       );
-      await _prefs.setString(
-        _scopedStorageKey(_profileKey),
-        jsonEncode(_profile.toJson()),
-      );
+      await _prefs.remove(_scopedStorageKey(_profileKey));
       await _upsertProfile(userId: user.id, profile: _profile);
       await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
     }
@@ -1383,7 +1836,6 @@ class AppRepository extends ChangeNotifier {
       'handle': profile.handle,
       'avatar_url': _currentAvatarUrl(),
       'city': profile.city,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
     }, onConflict: 'id');
   }
 
@@ -1391,13 +1843,16 @@ class AppRepository extends ChangeNotifier {
     if (!_notificationPreferences.pushEnabled ||
         !_hasSupabase ||
         userId.isEmpty ||
+        currentUserId != userId ||
         !PushNotificationService.isEnabled) {
       return;
     }
 
     var permission = await PushNotificationService.getPermissionStatus();
+    if (currentUserId != userId) return;
     if (permission == PushPermissionStatus.notDetermined) {
       permission = await PushNotificationService.requestPermission();
+      if (currentUserId != userId) return;
     }
     if (permission == PushPermissionStatus.denied) {
       _notificationPreferences = _notificationPreferences.copyWith(
@@ -1410,15 +1865,20 @@ class AppRepository extends ChangeNotifier {
     if (permission == PushPermissionStatus.unsupported) return;
 
     final token = await PushNotificationService.currentToken();
+    if (currentUserId != userId) return;
     if (token != null && token.isNotEmpty) {
       await _upsertPushToken(userId: userId, token: token);
+      if (currentUserId != userId) return;
     }
 
     await _pushTokenSubscription?.cancel();
+    if (currentUserId != userId) return;
     _pushTokenSubscription = PushNotificationService.onTokenRefresh.listen((
       token,
     ) {
-      unawaited(_upsertPushToken(userId: userId, token: token));
+      if (currentUserId == userId) {
+        unawaited(_upsertPushToken(userId: userId, token: token));
+      }
     });
   }
 
@@ -1426,7 +1886,12 @@ class AppRepository extends ChangeNotifier {
     required String userId,
     required String token,
   }) async {
-    if (!_hasSupabase || userId.isEmpty || token.isEmpty) return;
+    if (!_hasSupabase ||
+        userId.isEmpty ||
+        token.isEmpty ||
+        currentUserId != userId) {
+      return;
+    }
     try {
       _registeredPushToken = token;
       await _client.from('device_push_tokens').upsert({
@@ -1527,14 +1992,8 @@ class AppRepository extends ChangeNotifier {
               'seller_handle': profile.handle,
             })
             .eq('seller_id', userId);
-        await _client
-            .from('outfits')
-            .update({
-              'author_name': profile.name,
-              'author_handle': profile.handle,
-              'author_avatar_url': profile.avatarUrl,
-            })
-            .eq('owner_id', userId);
+        // Outfit author snapshots are synchronized by the database profile
+        // trigger. Clients cannot mutate those server-owned fields.
       } catch (e) {
         debugPrint('Seller product sync error: $e');
       }
@@ -1584,10 +2043,11 @@ class AppRepository extends ChangeNotifier {
           .eq('status', 'published')
           .eq('is_hidden', false)
           .order('created_at', ascending: false);
-      final fetched = (response as List<dynamic>)
-          .whereType<Map>()
-          .map((row) => Product.fromSupabase(Map<String, dynamic>.from(row)))
-          .toList();
+      final rows = (response as List<dynamic>).whereType<Map>().map(
+        (row) => Map<String, dynamic>.from(row),
+      );
+      final hydratedRows = await _hydrateProductMediaRows(rows);
+      final fetched = hydratedRows.map(Product.fromSupabase).toList();
 
       _products = fetched;
       _applyProductFavoriteState();
@@ -1631,108 +2091,72 @@ class AppRepository extends ChangeNotifier {
     return result;
   }
 
-  Future<void> _subscribeToMessages() async {
-    if (!_hasSupabase || currentUserId.isEmpty) return;
-    final subscriberId = currentUserId;
-    final generation = ++_messageSubscriptionGeneration;
-    final channelName = 'messages:$subscriberId';
-    final previousChannel = _messagesChannel;
-    _messagesChannel = null;
-    if (previousChannel != null) {
-      try {
-        await previousChannel.unsubscribe();
-      } catch (e) {
-        debugPrint('Previous message channel unsubscribe error: $e');
-      }
-    }
-    if (generation != _messageSubscriptionGeneration ||
-        currentUserId != subscriberId) {
-      return;
-    }
-    _messagesChannel = _client
-        .channel(channelName)
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'chat_messages',
-          callback: (payload) {
-            if (payload.eventType == PostgresChangeEvent.insert ||
-                payload.eventType == PostgresChangeEvent.update) {
-              unawaited(_applyRealtimeChatMessage(payload.newRecord));
-            } else {
-              _chatThreadSync.schedule(_syncThreadsFromSupabase);
-            }
-          },
-        )
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'message_threads',
-          callback: (_) => _chatThreadSync.schedule(_syncThreadsFromSupabase),
-        )
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'chat_thread_member_state',
-          callback: (_) => _chatThreadSync.schedule(_syncThreadsFromSupabase),
-        )
-        .subscribe((status, error) {
-          if (generation != _messageSubscriptionGeneration ||
-              currentUserId != subscriberId) {
-            return;
-          }
-          if (status == RealtimeSubscribeStatus.subscribed) {
-            _chatThreadSync.schedule(_syncThreadsFromSupabase);
-            return;
-          }
-          if (status == RealtimeSubscribeStatus.channelError ||
-              status == RealtimeSubscribeStatus.timedOut) {
-            debugPrint(
-              'Message realtime subscription error '
-              '(user=$subscriberId, status=$status): $error',
-            );
-          }
-        });
-  }
-
   Future<void> _applyRealtimeChatMessage(Map<String, dynamic> row) async {
     final syncUserId = currentUserId;
     if (syncUserId.isEmpty) return;
     final threadId = row['thread_id'] as String? ?? '';
     if (threadId.isEmpty) return;
-    final threadIndex = _threads.indexWhere((thread) => thread.id == threadId);
-    if (threadIndex == -1) {
+    final threadWasMissing = !_threads.any((thread) => thread.id == threadId);
+    if (threadWasMissing) {
+      // The message event may beat the thread event on a newly-created
+      // conversation. Hydrate the server-issued thread id immediately so the
+      // first message is not lost until a restart or a later gap sync.
+      try {
+        final remoteThread = await _fetchThreadFromSupabase(
+          threadId,
+          expectedUserId: syncUserId,
+        );
+        if (currentUserId != syncUserId) return;
+        if (remoteThread != null) _upsertLocalThread(remoteThread);
+      } catch (_) {
+        _chatThreadSync.schedule(_syncThreadsFromSupabase);
+        return;
+      }
+    }
+    late ChatMessage message;
+    try {
+      message = ChatMessage.fromJson(row, currentUserId: syncUserId);
+      message = await _resolveChatMessageMedia(message);
+    } catch (error, stackTrace) {
+      final failure = ChatFailure.from(
+        error,
+        stackTrace,
+        operation: 'apply_realtime_message',
+        threadId: threadId,
+        clientMessageId: row['client_message_id']?.toString() ?? '',
+      );
+      logChatFailure(failure, userId: syncUserId);
+      return;
+    }
+    if (currentUserId != syncUserId) return;
+
+    // Resolving a signed media URL is asynchronous. Re-read the live thread
+    // afterwards: another realtime callback may have appended a message while
+    // this callback was awaiting, and using the old snapshot would erase it.
+    final liveThreadIndex = _threads.indexWhere(
+      (thread) => thread.id == threadId,
+    );
+    if (liveThreadIndex == -1) {
       _chatThreadSync.schedule(_syncThreadsFromSupabase);
       return;
     }
-
-    final currentThread = _threads[threadIndex];
+    final currentThread = _threads[liveThreadIndex];
     if (!currentThread.containsUser(syncUserId) ||
         _isBlockedThread(currentThread)) {
       return;
     }
-    var message = ChatMessage.fromJson(row, currentUserId: syncUserId);
-    message = await _resolveChatMessageMedia(message);
-    if (currentUserId != syncUserId) return;
-
-    final messages = List<ChatMessage>.from(currentThread.messages);
-    final existingIndex = messages.indexWhere((item) => item.id == message.id);
-    final isNew = existingIndex == -1;
-    if (isNew) {
-      messages.add(message);
-    } else {
-      messages[existingIndex] = message;
-    }
-    messages.sort((left, right) {
-      final byTime = left.createdAt.compareTo(right.createdAt);
-      return byTime != 0 ? byTime : left.id.compareTo(right.id);
-    });
+    final existingIndex = currentThread.messages.indexWhere(
+      (item) => sameChatMessageIdentity(item, message),
+    );
+    final isNew = threadWasMissing || existingIndex == -1;
+    final messages = _mergeChatMessages(
+      <ChatMessage>[message],
+      currentThread.messages,
+      outbox: _outboxMessagesForThread(threadId),
+    );
 
     final isIncoming = !message.isMine && !message.isDeleted;
-    final isVisible = _activeThreadId == threadId;
-    final alreadyRead =
-        message.readBy.contains(syncUserId) ||
-        (currentThread.lastReadAt?.isAfter(message.createdAt) ?? false);
+    final isVisible = _isAppForeground && _activeThreadId == threadId;
     final updated = currentThread.copyWith(
       messages: messages,
       lastMessage: messages.isEmpty
@@ -1741,13 +2165,13 @@ class AppRepository extends ChangeNotifier {
       updatedAt: message.createdAt.isAfter(currentThread.updatedAt)
           ? message.createdAt
           : currentThread.updatedAt,
-      unreadCount: isVisible
-          ? 0
-          : isNew && isIncoming && !alreadyRead
-          ? currentThread.unreadCount + 1
-          : currentThread.unreadCount,
+      lastMessageId: messages.isEmpty ? '' : messages.last.id,
+      unreadCount: isVisible ? 0 : currentThread.unreadCount,
     );
     _upsertLocalThread(updated);
+    if (message.isMine && message.clientMessageId.isNotEmpty) {
+      unawaited(_chatRepository?.outbox.remove(message.clientMessageId));
+    }
     if (isNew && isIncoming && !isVisible && !currentThread.isMuted) {
       final senderName = message.senderName.trim().isNotEmpty
           ? message.senderName.trim()
@@ -1763,6 +2187,14 @@ class AppRepository extends ChangeNotifier {
     if (isNew && isIncoming && isVisible) {
       unawaited(markThreadRead(threadId));
     }
+    if (isNew && isIncoming) {
+      unawaited(
+        _chatRepository?.acknowledgeDelivered(
+          threadId: threadId,
+          messageIds: [message.id],
+        ),
+      );
+    }
     unawaited(
       _saveThreadsLocal().catchError((Object error) {
         debugPrint('Realtime chat cache write error: $error');
@@ -1771,8 +2203,9 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<List<MessageThread>> _hydrateThreadMemberState(
-    List<MessageThread> threads,
-  ) async {
+    List<MessageThread> threads, {
+    Map<String, MessageThread> fallbackById = const <String, MessageThread>{},
+  }) async {
     if (threads.isEmpty || currentUserId.isEmpty) return threads;
     try {
       final stateByThread = <String, Map<String, dynamic>>{};
@@ -1788,7 +2221,8 @@ class AppRepository extends ChangeNotifier {
         final response = await _client
             .from('chat_thread_member_state')
             .select(
-              'thread_id,is_pinned,is_muted,is_archived,draft,last_read_at',
+              'thread_id,is_pinned,is_muted,is_archived,draft,last_read_at,'
+              'last_read_message_id,unread_count',
             )
             .eq('user_id', currentUserId)
             .inFilter('thread_id', threadIds.sublist(start, end));
@@ -1802,32 +2236,90 @@ class AppRepository extends ChangeNotifier {
       return threads
           .map((thread) {
             final state = stateByThread[thread.id];
+            final fallback = fallbackById[thread.id];
             final rawLastReadAt = state?['last_read_at'] as String?;
             return thread.copyWith(
-              isPinned: state?['is_pinned'] as bool? ?? false,
-              isMuted: state?['is_muted'] as bool? ?? false,
-              isArchived: state?['is_archived'] as bool? ?? false,
-              draft: state?['draft'] as String? ?? '',
+              isPinned:
+                  state?['is_pinned'] as bool? ?? fallback?.isPinned ?? false,
+              isMuted:
+                  state?['is_muted'] as bool? ?? fallback?.isMuted ?? false,
+              isArchived:
+                  state?['is_archived'] as bool? ??
+                  fallback?.isArchived ??
+                  false,
+              draft: state?['draft'] as String? ?? fallback?.draft ?? '',
+              unreadCount:
+                  (state?['unread_count'] as num?)?.toInt() ??
+                  fallback?.unreadCount ??
+                  thread.unreadCount,
               lastReadAt: rawLastReadAt == null
-                  ? null
+                  ? fallback?.lastReadAt
                   : DateTime.tryParse(rawLastReadAt),
             );
           })
           .toList(growable: false);
     } catch (e) {
       debugPrint('Chat member state hydration error: $e');
-      // Additive rollout fallback for a backend that has not run the member
-      // state migration yet.
-      return threads;
+      // A transient state SELECT failure must not overwrite canonical unread,
+      // mute/pin/archive or draft values with deprecated thread-row defaults.
+      return threads
+          .map((thread) {
+            final fallback = fallbackById[thread.id];
+            return fallback == null
+                ? thread
+                : thread.copyWith(
+                    isPinned: fallback.isPinned,
+                    isMuted: fallback.isMuted,
+                    isArchived: fallback.isArchived,
+                    draft: fallback.draft,
+                    unreadCount: fallback.unreadCount,
+                    lastReadAt: fallback.lastReadAt,
+                  );
+          })
+          .toList(growable: false);
     }
   }
 
   Future<List<MessageThread>> _hydrateThreadMessages(
     List<MessageThread> threads,
   ) async {
-    if (threads.isEmpty) return threads;
+    if (threads.isEmpty || _chatRepository == null) return threads;
+    final hydrated = <MessageThread>[];
+    for (final thread in threads) {
+      final result = await _chatRepository!.loadLatest(
+        thread.id,
+        limit: _chatMessagePageSize,
+      );
+      final page = result.valueOrNull;
+      if (page == null) {
+        throw result.failureOrNull ??
+            const ChatFailure(
+              code: ChatFailureCode.unknown,
+              operation: 'load_latest_messages',
+            );
+      }
+      final remoteMessages = <ChatMessage>[];
+      for (final row in page.rows) {
+        final parsed = ChatMessage.fromJson(row, currentUserId: currentUserId);
+        remoteMessages.add(await _resolveChatMessageMedia(parsed));
+      }
+      _chatHasOlderMessages[thread.id] = page.hasMore;
+      final messages = _mergeChatMessages(
+        remoteMessages,
+        thread.messages,
+        outbox: _outboxMessagesForThread(thread.id),
+      );
+      hydrated.add(thread.copyWith(messages: messages));
+    }
+    return hydrated;
+  }
+
+  Future<List<MessageThread>> _hydrateThreadMemberships(
+    List<MessageThread> threads,
+  ) async {
+    if (threads.isEmpty || currentUserId.isEmpty) return threads;
     try {
-      final byThread = <String, List<ChatMessage>>{};
+      final idsByThread = <String, List<String>>{};
       final threadIds = threads.map((thread) => thread.id).toList();
       for (
         var start = 0;
@@ -1837,56 +2329,48 @@ class AppRepository extends ChangeNotifier {
         final end = (start + _chatHydrationBatchSize)
             .clamp(0, threadIds.length)
             .toInt();
-        var offset = 0;
-        while (true) {
-          final response = await _client
-              .from('chat_messages')
-              .select()
-              .inFilter('thread_id', threadIds.sublist(start, end))
-              .order('created_at', ascending: true)
-              .order('id', ascending: true)
-              .range(offset, offset + _chatHydrationPageSize - 1);
-          final rows = response as List<dynamic>;
-          for (final item in rows) {
-            final row = item as Map<String, dynamic>;
-            final threadId = row['thread_id'] as String? ?? '';
-            if (threadId.isEmpty) continue;
-            final parsed = ChatMessage.fromJson(
-              row,
-              currentUserId: currentUserId,
-            );
-            final message = await _resolveChatMessageMedia(parsed);
-            byThread.putIfAbsent(threadId, () => []).add(message);
-          }
-          if (rows.length < _chatHydrationPageSize) break;
-          offset += rows.length;
+        final response = await _client
+            .from('chat_thread_members')
+            .select('thread_id,user_id')
+            .inFilter('thread_id', threadIds.sublist(start, end));
+        for (final item in response as List<dynamic>) {
+          final row = item as Map<String, dynamic>;
+          final threadId = row['thread_id'] as String? ?? '';
+          final userId = row['user_id'] as String? ?? '';
+          if (threadId.isEmpty || userId.isEmpty) continue;
+          idsByThread.putIfAbsent(threadId, () => <String>[]).add(userId);
         }
       }
       return threads
           .map((thread) {
-            final messages = byThread[thread.id] ?? const <ChatMessage>[];
-            final unreadCount = messages.where((message) {
-              if (message.senderId == currentUserId || message.isDeleted) {
-                return false;
-              }
-              if (message.readBy.contains(currentUserId)) return false;
-              final lastReadAt = thread.lastReadAt;
-              return lastReadAt == null ||
-                  message.createdAt.isAfter(lastReadAt);
-            }).length;
+            final ids = idsByThread[thread.id];
+            if (ids == null || ids.isEmpty) return thread;
+            final members = <ConversationMember>[
+              ...thread.members,
+              for (final id in ids)
+                if (!thread.members.any((member) => member.id == id))
+                  ConversationMember(id: id, name: '', handle: ''),
+            ];
+            final others = ids.where((id) => id != currentUserId).toList();
             return thread.copyWith(
-              messages: messages,
-              unreadCount: unreadCount,
+              members: members,
+              buyerId: thread.buyerId.isEmpty ? currentUserId : thread.buyerId,
+              sellerId: thread.sellerId.isEmpty && others.isNotEmpty
+                  ? others.first
+                  : thread.sellerId,
             );
           })
           .toList(growable: false);
     } catch (error, stackTrace) {
-      debugPrint('Chat messages sync error: $error');
-      debugPrintStack(stackTrace: stackTrace);
-      // Messages are core conversation data. Treating a failed hydration as
-      // a successful empty response makes RLS/network failures indistinguish-
-      // able from a genuinely empty chat, so let the outer sync expose retry.
-      rethrow;
+      logChatFailure(
+        ChatFailure.from(
+          error,
+          stackTrace,
+          operation: 'hydrate_thread_memberships',
+        ),
+        userId: currentUserId,
+      );
+      return threads;
     }
   }
 
@@ -1956,25 +2440,84 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
+  Future<List<MessageThread>> _hydrateThreadProductMedia(
+    List<MessageThread> threads,
+  ) async {
+    if (threads.isEmpty) return threads;
+    final cache = <String, Future<String>>{};
+    return Future.wait(
+      threads.map((thread) async {
+        final reference = thread.productImage.trim();
+        if (_storageObjectPath(reference, _productImagesBucketName) == null) {
+          return thread;
+        }
+        final image = await _resolveStorageImageCached(
+          reference,
+          _productImagesBucketName,
+          cache,
+        );
+        return thread.copyWith(productImage: image);
+      }),
+    );
+  }
+
   Future<ChatMessage> _resolveChatMessageMedia(ChatMessage message) async {
+    var resolved = message;
     final attachment = message.attachment;
-    if (attachment == null || !attachment.hasRemoteObject) return message;
-    try {
-      final signedUrl = await _chatMediaUrlCache.resolve(
-        key: _chatMediaCacheKey(attachment.bucket, attachment.storagePath),
-        load: () => _client.storage
-            .from(attachment.bucket)
-            .createSignedUrl(
-              attachment.storagePath,
-              _chatMediaSignedUrlSeconds,
-            ),
-      );
-      if (signedUrl == null || signedUrl.isEmpty) return message;
-      return message.copyWith(attachment: attachment.copyWith(url: signedUrl));
-    } catch (e) {
-      debugPrint('Chat media URL refresh error: $e');
-      return message;
+    if (attachment != null && attachment.hasRemoteObject) {
+      try {
+        final signedUrl = await _chatMediaUrlCache.resolve(
+          key: _chatMediaCacheKey(attachment.bucket, attachment.storagePath),
+          load: () => _client.storage
+              .from(attachment.bucket)
+              .createSignedUrl(
+                attachment.storagePath,
+                _chatMediaSignedUrlSeconds,
+              ),
+        );
+        if (signedUrl != null && signedUrl.isNotEmpty) {
+          resolved = resolved.copyWith(
+            attachment: attachment.copyWith(url: signedUrl),
+          );
+        }
+      } catch (e) {
+        debugPrint('Chat media URL refresh error: $e');
+      }
     }
+
+    final product = resolved.sharedProduct;
+    if (product != null && product.image.trim().isNotEmpty) {
+      for (final bucket in const <String>[
+        _productImagesBucketName,
+        _outfitImagesBucketName,
+      ]) {
+        final objectPath = _storageObjectPath(product.image, bucket);
+        if (objectPath == null) continue;
+        try {
+          final signedUrl = await _chatMediaUrlCache.resolve(
+            key: _chatMediaCacheKey(bucket, objectPath),
+            load: () => _client.storage
+                .from(bucket)
+                .createSignedUrl(objectPath, _chatMediaSignedUrlSeconds),
+          );
+          if (signedUrl != null && signedUrl.isNotEmpty) {
+            resolved = resolved.copyWith(
+              sharedProduct: SharedProductPreview(
+                id: product.id,
+                title: product.title,
+                image: signedUrl,
+                price: product.price,
+                sellerHandle: product.sellerHandle,
+              ),
+            );
+          }
+        } catch (e) {
+          debugPrint('Shared product image URL refresh error: $e');
+        }
+        break;
+      }
+    }
+    return resolved;
   }
 
   String _chatMediaCacheKey(String bucket, String storagePath) {
@@ -1995,11 +2538,7 @@ class AppRepository extends ChangeNotifier {
       final previousById = {for (final thread in _threads) thread.id: thread};
       final response = await _client
           .from('message_threads')
-          .select()
-          .or(
-            'buyer_id.eq.$syncUserId,seller_id.eq.$syncUserId,'
-            'member_ids.cs.{$syncUserId}',
-          )
+          .select(_chatThreadSummaryColumns)
           .order('updated_at', ascending: false);
 
       var fetched = (response as List<dynamic>)
@@ -2007,14 +2546,19 @@ class AppRepository extends ChangeNotifier {
             (item) => MessageThread.fromSupabase(
               item as Map<String, dynamic>,
               currentUserId: syncUserId,
+              includeLegacyMessages: false,
             ),
           )
           .toList();
       if (currentUserId != syncUserId) return;
       _knownRemoteThreadIds.addAll(fetched.map((thread) => thread.id));
+      fetched = await _hydrateThreadProductMedia(fetched);
+      fetched = await _hydrateThreadMemberships(fetched);
       fetched = await _hydrateThreadProfiles(fetched);
-      fetched = await _hydrateThreadMemberState(fetched);
-      fetched = await _hydrateThreadMessages(fetched);
+      fetched = await _hydrateThreadMemberState(
+        fetched,
+        fallbackById: previousById,
+      );
       if (currentUserId != syncUserId) return;
 
       if (_hasCompletedThreadSync) {
@@ -2033,6 +2577,17 @@ class AppRepository extends ChangeNotifier {
         for (final thread in _threads) thread.id: thread,
       };
       fetched = mergeChatOutgoingState(fetched, latestLocalById);
+      fetched = fetched
+          .map(
+            (thread) => thread.copyWith(
+              messages: _mergeChatMessages(
+                thread.messages,
+                latestLocalById[thread.id]?.messages ?? const [],
+                outbox: _outboxMessagesForThread(thread.id),
+              ),
+            ),
+          )
+          .toList(growable: false);
       fetched.sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
       if (currentUserId != syncUserId) return;
       _threads = fetched;
@@ -2042,14 +2597,8 @@ class AppRepository extends ChangeNotifier {
       // Presence and disk cache are recovery aids. Keep them off the critical
       // path so incoming messages and their unread badge appear immediately.
       unawaited(_syncThreadPresence(fetched));
-      unawaited(
-        _writeList(
-          _scopedStorageKey(_threadsKey, syncUserId),
-          fetched.map((item) => item.toJson()),
-        ).catchError((Object error) {
-          debugPrint('Chat cache write error: $error');
-        }),
-      );
+      // Full message bodies and signed URLs are never persisted here. Only the
+      // small pending/failed outbox is stored by ChatLocalCache.
     } catch (error, stackTrace) {
       if (currentUserId == syncUserId) {
         _isThreadSyncPending = false;
@@ -2065,6 +2614,272 @@ class AppRepository extends ChangeNotifier {
   Future<void> retryThreadSync() {
     if (!_hasSupabase || currentUserId.isEmpty) return Future<void>.value();
     return _chatThreadSync.runNow(_syncThreadsFromSupabase);
+  }
+
+  List<ChatMessage> _outboxMessagesForThread(String threadId) {
+    final repository = _chatRepository;
+    if (repository == null) return const <ChatMessage>[];
+    return repository.outbox
+        .forThread(threadId)
+        .map(
+          (record) => record.message.copyWith(
+            isMine: true,
+            senderId: record.message.senderId.isEmpty
+                ? currentUserId
+                : record.message.senderId,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @visibleForTesting
+  static bool sameChatMessageIdentity(ChatMessage left, ChatMessage right) {
+    if (left.id == right.id) return true;
+    final leftClientId = left.clientMessageId.trim();
+    final rightClientId = right.clientMessageId.trim();
+    if (leftClientId.isEmpty || leftClientId != rightClientId) return false;
+    final leftSenderId = left.senderId.trim();
+    final rightSenderId = right.senderId.trim();
+    if (leftSenderId.isNotEmpty && rightSenderId.isNotEmpty) {
+      return leftSenderId == rightSenderId;
+    }
+    return left.isMine == right.isMine;
+  }
+
+  @visibleForTesting
+  static List<ChatMessage> mergeChatMessages(
+    Iterable<ChatMessage> remote,
+    Iterable<ChatMessage> local, {
+    Iterable<ChatMessage> outbox = const <ChatMessage>[],
+  }) {
+    final byId = <String, ChatMessage>{};
+    final idByClientIdentity = <String, String>{};
+
+    String clientIdentity(ChatMessage message) {
+      final clientId = message.clientMessageId.trim();
+      if (clientId.isEmpty) return '';
+      final senderId = message.senderId.trim();
+      final senderScope = senderId.isEmpty
+          ? 'mine=${message.isMine}'
+          : senderId;
+      return '$senderScope\u0000$clientId';
+    }
+
+    List<String> mergeReceipts(List<String> previous, List<String> incoming) =>
+        <String>{
+          ...previous.where((id) => id.isNotEmpty),
+          ...incoming.where((id) => id.isNotEmpty),
+        }.toList(growable: false);
+
+    ChatMessage reconcileServerVersions(
+      ChatMessage previous,
+      ChatMessage incoming,
+    ) {
+      final previousLifecycleAt = previous.deletedAt ?? previous.editedAt;
+      final incomingLifecycleAt = incoming.deletedAt ?? incoming.editedAt;
+      final keepPreviousContent =
+          previousLifecycleAt != null &&
+          (incomingLifecycleAt == null ||
+              previousLifecycleAt.isAfter(incomingLifecycleAt));
+      final base = keepPreviousContent ? previous : incoming;
+      return base.copyWith(
+        id: incoming.id,
+        clientMessageId: incoming.clientMessageId.trim().isEmpty
+            ? previous.clientMessageId
+            : incoming.clientMessageId,
+        readBy: mergeReceipts(previous.readBy, incoming.readBy),
+        deliveredTo: mergeReceipts(previous.deliveredTo, incoming.deliveredTo),
+      );
+    }
+
+    void add(ChatMessage message, {required bool serverAuthoritative}) {
+      final clientKey = clientIdentity(message);
+      final priorId = clientKey.isEmpty ? null : idByClientIdentity[clientKey];
+      var prior = priorId == null ? byId[message.id] : byId[priorId];
+      if (prior == null && message.clientMessageId.isNotEmpty) {
+        for (final candidate in byId.values) {
+          if (sameChatMessageIdentity(candidate, message)) {
+            prior = candidate;
+            break;
+          }
+        }
+      }
+      if (prior != null) {
+        if (serverAuthoritative ||
+            (prior.isPending && !message.isPending) ||
+            (prior.hasError && !message.hasError)) {
+          final replacement =
+              serverAuthoritative &&
+                  !prior.isPending &&
+                  !prior.hasError &&
+                  !message.isPending &&
+                  !message.hasError
+              ? reconcileServerVersions(prior, message)
+              : message;
+          byId.remove(prior.id);
+          byId[replacement.id] = replacement;
+          if (clientKey.isNotEmpty) {
+            idByClientIdentity[clientKey] = replacement.id;
+          }
+        }
+        return;
+      }
+      byId[message.id] = message;
+      if (clientKey.isNotEmpty) idByClientIdentity[clientKey] = message.id;
+    }
+
+    for (final message in local) {
+      add(message, serverAuthoritative: false);
+    }
+    for (final message in outbox) {
+      add(message, serverAuthoritative: false);
+    }
+    for (final message in remote) {
+      add(message, serverAuthoritative: true);
+    }
+
+    return byId.values.toList(growable: false)..sort((left, right) {
+      final byTime = left.createdAt.toUtc().compareTo(right.createdAt.toUtc());
+      return byTime != 0 ? byTime : left.id.compareTo(right.id);
+    });
+  }
+
+  List<ChatMessage> _mergeChatMessages(
+    Iterable<ChatMessage> remote,
+    Iterable<ChatMessage> local, {
+    Iterable<ChatMessage> outbox = const <ChatMessage>[],
+  }) => mergeChatMessages(remote, local, outbox: outbox);
+
+  Future<void> loadLatestChatMessages(String threadId) async {
+    if (!_hasSupabase ||
+        currentUserId.isEmpty ||
+        threadId.isEmpty ||
+        _chatPageLoads.contains(threadId)) {
+      return;
+    }
+    final repository = _chatRepository;
+    final thread = threadById(threadId);
+    if (repository == null || thread == null) return;
+    final syncUserId = currentUserId;
+    _chatPageLoads.add(threadId);
+    try {
+      final result = await repository.loadLatest(
+        threadId,
+        limit: _chatMessagePageSize,
+      );
+      final page = result.valueOrNull;
+      if (page == null || currentUserId != syncUserId) return;
+      final parsed = <ChatMessage>[];
+      for (final row in page.rows) {
+        parsed.add(
+          await _resolveChatMessageMedia(
+            ChatMessage.fromJson(row, currentUserId: currentUserId),
+          ),
+        );
+        if (currentUserId != syncUserId) return;
+      }
+      final liveThread = threadById(threadId);
+      if (liveThread == null || currentUserId != syncUserId) return;
+      final messages = _mergeChatMessages(
+        parsed,
+        liveThread.messages,
+        outbox: _outboxMessagesForThread(threadId),
+      );
+      _chatHasOlderMessages[threadId] = page.hasMore;
+      _upsertLocalThread(liveThread.copyWith(messages: messages));
+      notifyListeners();
+    } finally {
+      _chatPageLoads.remove(threadId);
+    }
+  }
+
+  Future<bool> loadOlderChatMessages(String threadId) async {
+    if (!_hasSupabase ||
+        currentUserId.isEmpty ||
+        threadId.isEmpty ||
+        _chatPageLoads.contains(threadId) ||
+        !hasOlderChatMessages(threadId)) {
+      return false;
+    }
+    final syncUserId = currentUserId;
+    final repository = _chatRepository;
+    final thread = threadById(threadId);
+    if (repository == null || thread == null || thread.messages.isEmpty) {
+      return false;
+    }
+    final firstServerMessage = thread.messages.firstWhere(
+      (message) => !message.isPending && !message.hasError,
+      orElse: () => thread.messages.first,
+    );
+    _chatPageLoads.add(threadId);
+    try {
+      final result = await repository.loadOlder(
+        threadId,
+        before: ChatCursor(
+          createdAt: firstServerMessage.createdAt,
+          id: firstServerMessage.id,
+        ),
+        limit: _chatMessagePageSize,
+      );
+      final page = result.valueOrNull;
+      if (page == null || currentUserId != syncUserId) return false;
+      final parsed = <ChatMessage>[];
+      for (final row in page.rows) {
+        parsed.add(
+          await _resolveChatMessageMedia(
+            ChatMessage.fromJson(row, currentUserId: currentUserId),
+          ),
+        );
+        if (currentUserId != syncUserId) return false;
+      }
+      final liveThread = threadById(threadId);
+      if (liveThread == null || currentUserId != syncUserId) return false;
+      _chatHasOlderMessages[threadId] = page.hasMore;
+      _upsertLocalThread(
+        liveThread.copyWith(
+          messages: _mergeChatMessages(
+            parsed,
+            liveThread.messages,
+            outbox: _outboxMessagesForThread(threadId),
+          ),
+        ),
+      );
+      notifyListeners();
+      return parsed.isNotEmpty;
+    } finally {
+      _chatPageLoads.remove(threadId);
+    }
+  }
+
+  Future<void> _syncChatGaps() async {
+    if (!_hasSupabase || currentUserId.isEmpty) return;
+    final repository = _chatRepository;
+    if (repository == null) return;
+    final syncUserId = currentUserId;
+    for (final snapshot in List<MessageThread>.from(_threads)) {
+      if (currentUserId != syncUserId) return;
+      final serverMessages = snapshot.messages
+          .where((message) => !message.isPending && !message.hasError)
+          .toList(growable: false);
+      if (serverMessages.isEmpty) {
+        if (snapshot.id == _activeThreadId) {
+          await loadLatestChatMessages(snapshot.id);
+        }
+        continue;
+      }
+      final last = serverMessages.last;
+      final result = await repository.loadAfter(
+        snapshot.id,
+        after: ChatCursor(createdAt: last.createdAt, id: last.id),
+      );
+      final rows = result.valueOrNull;
+      if (rows == null || rows.isEmpty) continue;
+      for (final row in rows) {
+        if (currentUserId != syncUserId) return;
+        await _applyRealtimeChatMessage(row);
+      }
+    }
+    unawaited(_chatThreadSync.runNow(_syncThreadsFromSupabase));
   }
 
   @visibleForTesting
@@ -2086,7 +2901,16 @@ class AppRepository extends ChangeNotifier {
                 // flags therefore identify a local-only row carried by an
                 // earlier merge while another local state change completed.
                 if (!message.isPending && !message.hasError) return message;
-                final localMessage = localById[message.id];
+                ChatMessage? localMessage = localById[message.id];
+                if (localMessage == null &&
+                    message.clientMessageId.isNotEmpty) {
+                  for (final candidate in localThread.messages) {
+                    if (sameChatMessageIdentity(candidate, message)) {
+                      localMessage = candidate;
+                      break;
+                    }
+                  }
+                }
                 if (localMessage == null) return message;
                 reconciledLocalState = true;
                 return localMessage;
@@ -2096,7 +2920,12 @@ class AppRepository extends ChangeNotifier {
               .map((message) => message.id)
               .toSet();
           final localOnly = localThread.messages.where(
-            (message) => message.isMine && !remoteIds.contains(message.id),
+            (message) =>
+                !remoteIds.contains(message.id) &&
+                !reconciledRemoteMessages.any(
+                  (remoteMessage) =>
+                      sameChatMessageIdentity(remoteMessage, message),
+                ),
           );
           if (localOnly.isEmpty && !reconciledLocalState) return remoteThread;
 
@@ -2224,14 +3053,30 @@ class AppRepository extends ChangeNotifier {
 
     final ordersUserId = currentUserId;
     try {
-      final orders = await _client
-          .from('orders')
-          .select()
-          .or('buyer_id.eq.$ordersUserId,seller_id.eq.$ordersUserId')
-          .order('updated_at', ascending: false);
-      final remoteOrders = (orders as List<dynamic>)
-          .map((item) => AppOrder.fromJson(item as Map<String, dynamic>))
-          .toList();
+      final responses = await Future.wait<dynamic>([
+        _client
+            .from('orders')
+            .select()
+            .or('buyer_id.eq.$ordersUserId,seller_id.eq.$ordersUserId')
+            .order('updated_at', ascending: false),
+        _client.from('order_delivery_details').select(),
+      ]);
+      final detailsByOrder = <String, Map<String, dynamic>>{
+        for (final item in (responses[1] as List<dynamic>).whereType<Map>())
+          if ((item['order_id'] ?? '').toString().isNotEmpty)
+            (item['order_id'] ?? '').toString(): Map<String, dynamic>.from(
+              item,
+            ),
+      };
+      final remoteOrders = (responses[0] as List<dynamic>).whereType<Map>().map(
+        (item) {
+          final row = Map<String, dynamic>.from(item);
+          return AppOrder.fromJson({
+            ...row,
+            ...?detailsByOrder[(row['id'] ?? '').toString()],
+          });
+        },
+      ).toList();
       if (ordersUserId.isNotEmpty && currentUserId == ordersUserId) {
         _orders = mergeOrdersForParticipant(
           localOrders: _orders,
@@ -2274,6 +3119,30 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
+  Future<String?> withdrawMarketingConsent() async {
+    if (!_hasSupabase || _client.auth.currentUser == null) {
+      return 'Для отзыва согласия нужна подтверждённая сервером сессия';
+    }
+    try {
+      final response = await _client.functions.invoke(
+        'withdraw-marketing-consent',
+        body: const {'confirmation': 'WITHDRAW_MARKETING_CONSENT'},
+      );
+      final data = response.data;
+      if (response.status < 200 ||
+          response.status >= 300 ||
+          data is! Map ||
+          data['withdrawn'] != true) {
+        return 'Сервер не подтвердил отзыв маркетингового согласия';
+      }
+      await refreshUserEntitlements();
+      return null;
+    } catch (error, stackTrace) {
+      debugPrint('Marketing consent withdrawal error: $error\n$stackTrace');
+      return 'Не удалось отозвать маркетинговое согласие. Попробуйте позже';
+    }
+  }
+
   Future<void> updateDeliveryProfile(DeliveryProfile profile) async {
     _deliveryProfile = profile;
     await _saveDeliveryProfileLocal();
@@ -2294,6 +3163,16 @@ class AppRepository extends ChangeNotifier {
     String deliveryService = 'address:unassigned',
     int deliveryPrice = 0,
   }) async {
+    if (_hasSupabase) {
+      await refreshUserEntitlements();
+      if (!_entitlements.canBuy) {
+        throw const CheckoutException(
+          code: 'buyer_not_eligible',
+          message:
+              'Покупка недоступна: нужны обязательные согласия и подтверждение возраста 18+',
+        );
+      }
+    }
     final user = _hasSupabase
         ? await _ensureAuthSession(message: 'Войдите в профиль, чтобы купить')
         : null;
@@ -2362,7 +3241,7 @@ class AppRepository extends ChangeNotifier {
     final pendingOrder = AppOrder.fromProduct(
       product: product,
       buyerId: buyerId,
-      status: AppOrderStatus.pendingConfirmation,
+      status: AppOrderStatus.created,
       deliveryProfile: orderProfile,
       deliveryService: displayDeliveryService,
       deliveryPrice: deliveryPrice,
@@ -2439,7 +3318,13 @@ class AppRepository extends ChangeNotifier {
         if (row is! Map) {
           throw const FormatException('Invalid checkout response');
         }
-        committedOrder = AppOrder.fromJson(Map<String, dynamic>.from(row));
+        committedOrder = AppOrder.fromJson({
+          ...Map<String, dynamic>.from(row),
+          'recipient_name': orderProfile.fullName.trim(),
+          'recipient_phone': orderProfile.phone.trim(),
+          'recipient_email': orderProfile.email.trim(),
+          'delivery_address': destination,
+        });
       } on PostgrestException catch (e, stackTrace) {
         debugPrint('Order create error: $e\n$stackTrace');
         final failure = _checkoutFailure(e.message, code: e.code);
@@ -2493,6 +3378,255 @@ class AppRepository extends ChangeNotifier {
     notifyListeners();
     unawaited(_addOrderCreatedNotification(committedOrder));
     return committedOrder;
+  }
+
+  @visibleForTesting
+  static bool canRequestOrderTransition({
+    required AppOrder order,
+    required String actorId,
+    required AppOrderStatus target,
+  }) {
+    final isBuyer = order.buyerId == actorId;
+    final isSeller = order.sellerId == actorId;
+    return switch ((order.status, target)) {
+      (AppOrderStatus.paid, AppOrderStatus.sellerConfirmed) => isSeller,
+      (AppOrderStatus.sellerConfirmed, AppOrderStatus.shipped) => isSeller,
+      (AppOrderStatus.shipped, AppOrderStatus.received) => isBuyer,
+      (AppOrderStatus.received, AppOrderStatus.inspection) => isBuyer,
+      (AppOrderStatus.inspection, AppOrderStatus.completed) => isBuyer,
+      (AppOrderStatus.created, AppOrderStatus.cancelled) => isBuyer,
+      _ => false,
+    };
+  }
+
+  Future<AppOrder?> requestOrderTransition(
+    String orderId,
+    AppOrderStatus target, {
+    Map<String, dynamic> payload = const {},
+  }) async {
+    if (!_hasSupabase || currentUserId.isEmpty) return null;
+    final order = _orders.where((item) => item.id == orderId).firstOrNull;
+    if (order == null ||
+        !canRequestOrderTransition(
+          order: order,
+          actorId: currentUserId,
+          target: target,
+        )) {
+      return null;
+    }
+    final metadata = Map<String, dynamic>.from(payload);
+    if (target == AppOrderStatus.shipped) {
+      final trackingNumber = (metadata['tracking_number'] ?? '')
+          .toString()
+          .trim();
+      if (!RegExp(r'^[A-Za-z0-9._ -]{5,100}$').hasMatch(trackingNumber)) {
+        return null;
+      }
+      metadata
+        ..clear()
+        ..['tracking_number'] = trackingNumber;
+    } else if (metadata.isNotEmpty) {
+      return null;
+    }
+    try {
+      final response = await _client.rpc(
+        'request_order_transition',
+        params: {
+          'p_order_id': orderId,
+          'p_target_status': target.wireName,
+          'p_metadata': metadata,
+        },
+      );
+      Object? raw = response;
+      if (raw is Map && raw['order'] is Map) raw = raw['order'];
+      if (raw is List && raw.isNotEmpty) raw = raw.first;
+      final updated = raw is Map
+          ? AppOrder.fromJson(Map<String, dynamic>.from(raw))
+          : null;
+      if (updated != null) {
+        _orders = mergeOrdersForParticipant(
+          localOrders: _orders,
+          remoteOrders: [updated],
+          participantId: currentUserId,
+        );
+        notifyListeners();
+      } else {
+        await _syncProfileFeaturesFromSupabase();
+      }
+      return updated;
+    } catch (error, stackTrace) {
+      debugPrint('Order transition error: $error\n$stackTrace');
+      return null;
+    }
+  }
+
+  Future<String?> uploadDisputeEvidence(
+    String disputeId,
+    XFile evidence,
+  ) async {
+    final normalizedDisputeId = disputeId.trim().toLowerCase();
+    if (!_hasSupabase ||
+        currentUserId.isEmpty ||
+        !RegExp(
+          r'^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+        ).hasMatch(normalizedDisputeId)) {
+      return null;
+    }
+    final extension = path.extension(evidence.name).toLowerCase();
+    final safeExtension =
+        const {'.jpg', '.jpeg', '.png', '.webp'}.contains(extension)
+        ? extension
+        : '.jpg';
+    try {
+      final disputeRows = await _client
+          .from('disputes')
+          .select('id,status')
+          .eq('id', normalizedDisputeId)
+          .inFilter('status', const ['open', 'under_review'])
+          .limit(1);
+      if (disputeRows.isEmpty) return null;
+      final bytes = await evidence.readAsBytes();
+      if (bytes.isEmpty || bytes.length > 20 * 1024 * 1024) return null;
+      final contentHash = sha256HexBytes(bytes);
+      final objectPath =
+          '$currentUserId/$normalizedDisputeId/$contentHash$safeExtension';
+      final existing = await _client
+          .from('dispute_evidence')
+          .select('id')
+          .eq('dispute_id', normalizedDisputeId)
+          .eq('storage_path', objectPath)
+          .limit(1);
+      if (existing.isNotEmpty) return objectPath;
+      try {
+        await _client.storage
+            .from('dispute-evidence')
+            .uploadBinary(
+              objectPath,
+              bytes,
+              fileOptions: FileOptions(
+                cacheControl: 'private, max-age=0',
+                contentType: _mimeTypeForImage(evidence.name, evidence.path),
+                upsert: false,
+              ),
+            );
+      } on StorageException catch (error) {
+        // The content-addressed path makes a retry idempotent. A conflict can
+        // only refer to the same participant/dispute/hash namespace.
+        if (error.statusCode != '409') rethrow;
+      }
+      final originalName = path.basename(evidence.name);
+      final response = await _client.functions.invoke(
+        'finalize-dispute-evidence',
+        body: {
+          'dispute_id': normalizedDisputeId,
+          'storage_path': objectPath,
+          'original_name': originalName.substring(
+            0,
+            originalName.length.clamp(0, 255),
+          ),
+        },
+      );
+      final data = response.data;
+      if (response.status < 200 ||
+          response.status >= 300 ||
+          data is! Map ||
+          data['finalized'] != true ||
+          data['storage_path']?.toString() != objectPath) {
+        return null;
+      }
+      return objectPath;
+    } catch (error, stackTrace) {
+      debugPrint('Dispute evidence upload error: $error\n$stackTrace');
+      return null;
+    }
+  }
+
+  Future<OrderDispute?> openDispute({
+    required String orderId,
+    required DisputeReason reason,
+    required String description,
+    required List<String> evidencePaths,
+  }) async {
+    if (!_hasSupabase || currentUserId.isEmpty) return null;
+    final order = _orders.where((item) => item.id == orderId).firstOrNull;
+    if (order == null ||
+        (order.buyerId != currentUserId && order.sellerId != currentUserId) ||
+        !const {
+          AppOrderStatus.paid,
+          AppOrderStatus.sellerConfirmed,
+          AppOrderStatus.shipped,
+          AppOrderStatus.received,
+          AppOrderStatus.inspection,
+          AppOrderStatus.completed,
+        }.contains(order.status)) {
+      return null;
+    }
+    final normalizedDescription = description.trim();
+    if (normalizedDescription.length < 10 ||
+        normalizedDescription.length > 4000) {
+      return null;
+    }
+    if (evidencePaths.length > 18 ||
+        evidencePaths.any((value) => value.trim().length > 500)) {
+      return null;
+    }
+    final evidence = <Map<String, dynamic>>[
+      {
+        'type': 'text',
+        'reference': 'participant_statement',
+        'note': normalizedDescription,
+      },
+      if (order.trackingNumber.trim().isNotEmpty)
+        {
+          'type': 'tracking',
+          'reference': order.trackingNumber.trim(),
+          'note': 'Номер отправления из заказа',
+        },
+      for (final reference in evidencePaths)
+        {
+          'type': 'text',
+          'reference': reference.trim(),
+          'note': 'Дополнительная ссылка участника',
+        },
+    ];
+    try {
+      final response = await _client.rpc(
+        'open_dispute',
+        params: {
+          'p_order_id': order.id,
+          'p_reason': reason.wireName,
+          'p_description': normalizedDescription,
+          'p_evidence': evidence,
+        },
+      );
+      final disputeId = response?.toString().trim() ?? '';
+      if (disputeId.isEmpty) return null;
+      final rows = await _client
+          .from('disputes')
+          .select()
+          .eq('id', disputeId)
+          .limit(1);
+      final dispute = rows.isNotEmpty
+          ? OrderDispute.fromJson(Map<String, dynamic>.from(rows.first))
+          : OrderDispute(
+              id: disputeId,
+              orderId: order.id,
+              createdBy: currentUserId,
+              reason: reason,
+              description: normalizedDescription,
+              evidence: [
+                for (final item in evidence)
+                  DisputeEvidenceReference.fromJson(item),
+              ],
+              status: OrderDisputeStatus.open,
+              createdAt: DateTime.now().toUtc(),
+            );
+      await _syncProfileFeaturesFromSupabase();
+      return dispute;
+    } catch (error, stackTrace) {
+      debugPrint('Open dispute error: $error\n$stackTrace');
+      return null;
+    }
   }
 
   Future<void> _addOrderCreatedNotification(AppOrder order) async {
@@ -2735,9 +3869,18 @@ class AppRepository extends ChangeNotifier {
           .select()
           .order('created_at', ascending: false);
 
-      final fetched = (response as List<dynamic>)
-          .map((item) => CreatedOutfit.fromSupabase(item))
-          .toList();
+      final signedUrls = <String, Future<String>>{};
+      final hydratedRows = await Future.wait(
+        (response as List<dynamic>).whereType<Map>().map(
+          (item) => _hydrateOutfitMediaRow(
+            Map<String, dynamic>.from(item),
+            signedUrls,
+          ),
+        ),
+      );
+      final fetched = hydratedRows
+          .map(CreatedOutfit.fromSupabase)
+          .toList(growable: false);
 
       final localById = <String, CreatedOutfit>{
         for (final outfit in _outfits) outfit.id: outfit,
@@ -2946,9 +4089,18 @@ class AppRepository extends ChangeNotifier {
           .select()
           .order('created_at', ascending: false);
 
-      final fetched = (response as List<dynamic>)
-          .map((item) => OutfitAccessory.fromSupabase(item))
-          .toList();
+      final signedUrls = <String, Future<String>>{};
+      final hydratedRows = await Future.wait(
+        (response as List<dynamic>).whereType<Map>().map(
+          (item) => _hydrateAccessoryMediaRow(
+            Map<String, dynamic>.from(item),
+            signedUrls,
+          ),
+        ),
+      );
+      final fetched = hydratedRows
+          .map(OutfitAccessory.fromSupabase)
+          .toList(growable: false);
 
       final merged = <String, OutfitAccessory>{
         for (final accessory in fetched) accessory.id: accessory,
@@ -2965,38 +4117,276 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
+  /// Kept temporarily for constructor compatibility with legacy screens.
+  /// Generic product-images writes are intentionally fail-closed: listing
+  /// media must use the authoritative listing draft/publication repository,
+  /// while profile/outfit/accessory media use the typed methods below.
+  @Deprecated('Use a resource-specific media command')
   Future<String?> uploadImage(XFile imageFile, {String? folder}) async {
+    debugPrint(
+      'Rejected generic image upload for folder "${folder ?? ''}"; '
+      'use a resource-specific media command.',
+    );
+    return null;
+  }
+
+  Future<String?> _uploadProfileAvatar(XFile imageFile) async {
     if (!_hasSupabase) return null;
     try {
       final user = await _ensureAuthSession();
       if (user == null) return null;
-      final ext = path.extension(imageFile.name).toLowerCase().isNotEmpty
-          ? path.extension(imageFile.name).toLowerCase()
-          : path.extension(imageFile.path).toLowerCase();
-      final fileName = '${_uuid.v4()}$ext';
-      final filePath = folder != null ? '$folder/$fileName' : fileName;
-
-      const options = FileOptions(cacheControl: '3600', upsert: false);
-      if (kIsWeb || imageFile.path.isEmpty) {
-        await _client.storage
-            .from(_bucketName)
-            .uploadBinary(
-              filePath,
-              await imageFile.readAsBytes(),
-              fileOptions: options,
-            );
-      } else {
-        await _client.storage
-            .from(_bucketName)
-            .upload(filePath, File(imageFile.path), fileOptions: options);
-      }
-
-      final url = _client.storage.from(_bucketName).getPublicUrl(filePath);
-      return url;
-    } catch (e) {
-      debugPrint('Upload error: $e');
+      final objectPath =
+          '${user.id}/avatar/${_uuid.v4()}${_safeImageExtension(imageFile)}';
+      await _uploadImageObject(
+        bucket: _profileImagesBucketName,
+        objectPath: objectPath,
+        imageFile: imageFile,
+        cacheControl: '3600',
+      );
+      return _client.storage
+          .from(_profileImagesBucketName)
+          .getPublicUrl(objectPath);
+    } catch (error, stackTrace) {
+      debugPrint('Profile avatar upload error: $error\n$stackTrace');
       return null;
     }
+  }
+
+  Future<void> _uploadImageObject({
+    required String bucket,
+    required String objectPath,
+    required XFile imageFile,
+    required String cacheControl,
+  }) async {
+    final options = FileOptions(
+      cacheControl: cacheControl,
+      contentType: _mimeTypeForImage(imageFile.name, imageFile.path),
+      upsert: false,
+    );
+    if (kIsWeb || imageFile.path.isEmpty) {
+      await _client.storage
+          .from(bucket)
+          .uploadBinary(
+            objectPath,
+            await imageFile.readAsBytes(),
+            fileOptions: options,
+          );
+      return;
+    }
+    await _client.storage
+        .from(bucket)
+        .upload(objectPath, File(imageFile.path), fileOptions: options);
+  }
+
+  String _safeImageExtension(XFile imageFile) {
+    final namedExtension = path.extension(imageFile.name).toLowerCase();
+    final pathExtension = path.extension(imageFile.path).toLowerCase();
+    final extension = namedExtension.isNotEmpty
+        ? namedExtension
+        : pathExtension;
+    return const {'.jpg', '.jpeg', '.png', '.webp'}.contains(extension)
+        ? extension
+        : '.jpg';
+  }
+
+  String? _storageObjectPath(
+    String value,
+    String bucket, {
+    bool allowCanonicalRawPath = false,
+  }) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return null;
+    final storagePrefix = 'storage://$bucket/';
+    if (normalized.startsWith(storagePrefix)) {
+      final objectPath = normalized.substring(storagePrefix.length);
+      return objectPath.isEmpty ? null : objectPath;
+    }
+
+    final parsed = Uri.tryParse(normalized);
+    if (parsed != null && parsed.hasScheme) {
+      final markers = <String>[
+        '/storage/v1/object/public/$bucket/',
+        '/storage/v1/object/sign/$bucket/',
+        '/storage/v1/object/authenticated/$bucket/',
+        '/storage/v1/object/$bucket/',
+      ];
+      for (final marker in markers) {
+        final markerIndex = parsed.path.indexOf(marker);
+        if (markerIndex < 0) continue;
+        final encodedPath = parsed.path.substring(markerIndex + marker.length);
+        try {
+          return Uri.decodeComponent(encodedPath);
+        } on FormatException {
+          return null;
+        }
+      }
+      return null;
+    }
+
+    if (allowCanonicalRawPath &&
+        RegExp(
+          r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[^/]+$',
+        ).hasMatch(normalized)) {
+      return normalized;
+    }
+    return null;
+  }
+
+  Future<String> _resolveStorageImage(
+    String value,
+    String bucket, {
+    bool allowCanonicalRawPath = false,
+  }) async {
+    final objectPath = _storageObjectPath(
+      value,
+      bucket,
+      allowCanonicalRawPath: allowCanonicalRawPath,
+    );
+    if (objectPath == null) return value;
+    try {
+      if (bucket == _profileImagesBucketName) {
+        return _client.storage.from(bucket).getPublicUrl(objectPath);
+      }
+      return await _client.storage
+          .from(bucket)
+          .createSignedUrl(objectPath, _nonListingMediaSignedUrlSeconds);
+    } catch (error) {
+      debugPrint('Storage URL resolution error for $bucket: $error');
+      return value.startsWith('http://') || value.startsWith('https://')
+          ? value
+          : '';
+    }
+  }
+
+  Future<String> _resolveStorageImageCached(
+    String value,
+    String bucket,
+    Map<String, Future<String>> cache, {
+    bool allowCanonicalRawPath = false,
+  }) {
+    final key = '$bucket::$value';
+    return cache.putIfAbsent(
+      key,
+      () => _resolveStorageImage(
+        value,
+        bucket,
+        allowCanonicalRawPath: allowCanonicalRawPath,
+      ),
+    );
+  }
+
+  Future<Map<String, dynamic>> _hydrateOutfitMediaRow(
+    Map<String, dynamic> row,
+    Map<String, Future<String>> cache,
+  ) async {
+    Future<String> resolve(Object? value) {
+      final reference = value?.toString() ?? '';
+      if (_storageObjectPath(reference, _outfitImagesBucketName) != null) {
+        return _resolveStorageImageCached(
+          reference,
+          _outfitImagesBucketName,
+          cache,
+        );
+      }
+      if (_storageObjectPath(reference, _productImagesBucketName) != null) {
+        return _resolveStorageImageCached(
+          reference,
+          _productImagesBucketName,
+          cache,
+        );
+      }
+      return Future.value(reference);
+    }
+
+    final photos = (row['photos'] as List<dynamic>? ?? const []);
+    row['photos'] = await Future.wait(photos.map(resolve));
+
+    final items = <Map<String, dynamic>>[];
+    for (final rawItem
+        in (row['items'] as List<dynamic>? ?? const <dynamic>[])) {
+      if (rawItem is! Map) continue;
+      final item = Map<String, dynamic>.from(rawItem);
+      item['image'] = await resolve(item['image']);
+      items.add(item);
+    }
+    row['items'] = items;
+
+    final rawPreview = row['preview_layout'];
+    if (rawPreview is Map) {
+      final preview = Map<String, dynamic>.from(rawPreview);
+      final previewItems = <Map<String, dynamic>>[];
+      for (final rawItem
+          in (preview['items'] as List<dynamic>? ?? const <dynamic>[])) {
+        if (rawItem is! Map) continue;
+        final item = Map<String, dynamic>.from(rawItem);
+        item['image'] = await resolve(item['image']);
+        previewItems.add(item);
+      }
+      preview['items'] = previewItems;
+      row['preview_layout'] = preview;
+    }
+    return row;
+  }
+
+  Future<List<Map<String, dynamic>>> _hydrateProductMediaRows(
+    Iterable<Map<String, dynamic>> rows,
+  ) async {
+    final cache = <String, Future<String>>{};
+    return Future.wait(
+      rows.map(
+        (row) => _hydrateProductMediaRow(Map<String, dynamic>.from(row), cache),
+      ),
+    );
+  }
+
+  Future<Map<String, dynamic>> _hydrateProductMediaRow(
+    Map<String, dynamic> row,
+    Map<String, Future<String>> cache,
+  ) async {
+    Future<String> resolve(Object? value) {
+      final reference = value?.toString() ?? '';
+      for (final bucket in const <String>[
+        _productImagesBucketName,
+        _outfitImagesBucketName,
+      ]) {
+        if (_storageObjectPath(reference, bucket) != null) {
+          return _resolveStorageImageCached(reference, bucket, cache);
+        }
+      }
+      return Future.value(reference);
+    }
+
+    for (final key in const <String>[
+      'main_image',
+      'image',
+      'original_image',
+      'cutout_image',
+    ]) {
+      final value = row[key];
+      if (value != null) row[key] = await resolve(value);
+    }
+    for (final key in const <String>['images', 'outfit_images']) {
+      final values = row[key];
+      if (values is List) row[key] = await Future.wait(values.map(resolve));
+    }
+    return row;
+  }
+
+  Future<Map<String, dynamic>> _hydrateAccessoryMediaRow(
+    Map<String, dynamic> row,
+    Map<String, Future<String>> cache,
+  ) async {
+    for (final key in const ['original_image', 'cutout_image']) {
+      final value = row[key]?.toString() ?? '';
+      if (value.isEmpty) continue;
+      row[key] = await _resolveStorageImageCached(
+        value,
+        _accessoryImagesBucketName,
+        cache,
+        allowCanonicalRawPath: true,
+      );
+    }
+    return row;
   }
 
   String _mimeTypeForImage(String name, String fallbackPath) {
@@ -3019,38 +4409,6 @@ class AppRepository extends ChangeNotifier {
 
   // ─── Products ───
 
-  Future<bool> publishProduct(Product product) async {
-    if (!_hasSupabase) return false;
-
-    try {
-      final user = await _ensureAuthSession();
-      if (user == null) return false;
-
-      final ownedProduct = product.copyWith(
-        ownerId: user.id,
-        sellerName: _profile.name,
-        sellerHandle: _profile.handle,
-        publishedAt: DateTime.now().toUtc(),
-        viewsCount: 0,
-        likesCount: 0,
-      );
-      final data = ownedProduct.toSupabaseJson(sellerId: user.id);
-      await _client.from('products').upsert(data, onConflict: 'id');
-      if (ownedProduct.outfitImages.isEmpty) {
-        _queueBackgroundRemoval(ownedProduct);
-      }
-
-      _products.removeWhere((item) => item.id == ownedProduct.id);
-      _products.insert(0, ownedProduct);
-      await _saveProducts();
-      notifyListeners();
-      return true;
-    } catch (e) {
-      debugPrint('Publish to Supabase error: $e');
-      return false;
-    }
-  }
-
   /// Caches a listing that was already atomically published by the dedicated
   /// publication repository, without writing it to Supabase a second time.
   Future<Product> adoptPublishedProduct(Product product) async {
@@ -3068,17 +4426,17 @@ class AppRepository extends ChangeNotifier {
     return ownedProduct;
   }
 
-  void _queueBackgroundRemoval(Product product) {
-    if (!_hasSupabase || product.image.isEmpty) return;
-
-    unawaited(
-      _client.functions
-          .invoke('process-product-image', body: {'product_id': product.id})
-          .then((_) => _syncFromSupabase())
-          .catchError((e) {
-            debugPrint('Background queue error: $e');
-          }),
-    );
+  /// Updates only the local projection after an authoritative server command
+  /// has returned the complete owner-visible row.
+  Future<Product> adoptServerProductSnapshot(Product product) async {
+    if (currentUserId.isEmpty || product.ownerId != currentUserId) {
+      throw StateError('server_product_snapshot_owner_mismatch');
+    }
+    _products.removeWhere((item) => item.id == product.id);
+    _products.insert(0, product);
+    await _saveProducts();
+    notifyListeners();
+    return product;
   }
 
   Future<OutfitAccessory?> createOutfitAccessory({
@@ -3114,22 +4472,39 @@ class AppRepository extends ChangeNotifier {
       return fallback;
     }
 
+    String? objectPath;
+    var finalized = false;
     try {
-      final imageUrl = await uploadImage(
-        imageFile,
-        folder: 'accessories/${user!.id}',
+      await _client.rpc(
+        'create_private_outfit_accessory',
+        params: {'p_accessory_id': id, 'p_title': cleanTitle},
       );
-      if (imageUrl == null) return fallback;
+      objectPath =
+          '${user!.id}/$id/${_uuid.v4()}${_safeImageExtension(imageFile)}';
+      await _uploadImageObject(
+        bucket: _accessoryImagesBucketName,
+        objectPath: objectPath,
+        imageFile: imageFile,
+        cacheControl: 'private, max-age=0',
+      );
+      await _client.rpc(
+        'finalize_private_outfit_accessory',
+        params: {'p_accessory_id': id, 'p_storage_path': objectPath},
+      );
+      finalized = true;
 
+      final storedReference =
+          'storage://$_accessoryImagesBucketName/$objectPath';
+      final displayUrl = await _resolveStorageImage(
+        storedReference,
+        _accessoryImagesBucketName,
+      );
       final accessory = fallback.copyWith(
-        image: imageUrl,
+        image: displayUrl.isEmpty ? localImage : displayUrl,
         ownerId: user.id,
+        backgroundStatus: 'queued',
         isLocal: false,
       );
-
-      await _client
-          .from('outfit_accessories')
-          .insert(accessory.toSupabaseJson());
       _queueAccessoryBackgroundRemoval(accessory);
 
       _accessories.removeWhere((item) => item.id == accessory.id);
@@ -3137,9 +4512,30 @@ class AppRepository extends ChangeNotifier {
       await _saveAccessories();
       notifyListeners();
       return accessory;
-    } catch (e) {
-      debugPrint('Create accessory error: $e');
-      return fallback;
+    } catch (error, stackTrace) {
+      debugPrint('Create accessory error: $error\n$stackTrace');
+      if (!finalized) {
+        if (objectPath != null) {
+          try {
+            await _client.storage.from(_accessoryImagesBucketName).remove([
+              objectPath,
+            ]);
+          } catch (cleanupError) {
+            debugPrint('Accessory draft media cleanup error: $cleanupError');
+          }
+        }
+        try {
+          await _client.rpc(
+            'abort_private_outfit_accessory',
+            params: {'p_accessory_id': id},
+          );
+        } catch (cleanupError) {
+          debugPrint('Accessory draft abort error: $cleanupError');
+        }
+      }
+      _authError = 'Не удалось безопасно сохранить аксессуар';
+      notifyListeners();
+      return null;
     }
   }
 
@@ -3672,10 +5068,7 @@ class AppRepository extends ChangeNotifier {
 
     if (!_hasSupabase) return true;
     try {
-      await _client.from('blocked_users').upsert({
-        'blocker_id': currentUserId,
-        'blocked_id': blockedId,
-      }, onConflict: 'blocker_id,blocked_id');
+      await _client.rpc('block_user', params: {'p_blocked_user_id': blockedId});
       return true;
     } catch (e) {
       _blockedUserIds.remove(blockedId);
@@ -3695,11 +5088,10 @@ class AppRepository extends ChangeNotifier {
     notifyListeners();
     if (!_hasSupabase || currentUserId.isEmpty) return true;
     try {
-      await _client
-          .from('blocked_users')
-          .delete()
-          .eq('blocker_id', currentUserId)
-          .eq('blocked_id', blockedId);
+      await _client.rpc(
+        'unblock_user',
+        params: {'p_blocked_user_id': blockedId},
+      );
       return true;
     } catch (e) {
       _blockedUserIds.add(blockedId);
@@ -3713,16 +5105,17 @@ class AppRepository extends ChangeNotifier {
   Future<void> deleteProduct(String productId) async {
     if (_hasSupabase) {
       try {
-        final deleted = await _client
-            .from('products')
-            .delete()
-            .eq('id', productId)
-            .select('id');
-        if ((deleted as List<dynamic>).isEmpty) {
-          throw StateError('product_delete_not_permitted');
+        final response = await _client.rpc(
+          'archive_own_listing',
+          params: {'p_listing_id': productId},
+        );
+        Object? raw = response;
+        if (raw is List && raw.isNotEmpty) raw = raw.first;
+        if (raw is! Map || raw['status']?.toString() != 'archived') {
+          throw StateError('product_archive_not_confirmed');
         }
       } catch (e) {
-        debugPrint('Product delete error: $e');
+        debugPrint('Product archive error: $e');
         rethrow;
       }
     }
@@ -3744,37 +5137,276 @@ class AppRepository extends ChangeNotifier {
 
   // ─── Outfits ───
 
+  Future<String> _uploadOutfitFile({
+    required String userId,
+    required String outfitId,
+    required XFile imageFile,
+    required List<String> uploadedPaths,
+  }) async {
+    final objectPath =
+        '$userId/$outfitId/${_uuid.v4()}${_safeImageExtension(imageFile)}';
+    uploadedPaths.add(objectPath);
+    await _uploadImageObject(
+      bucket: _outfitImagesBucketName,
+      objectPath: objectPath,
+      imageFile: imageFile,
+      cacheControl: 'private, max-age=0',
+    );
+    return objectPath;
+  }
+
+  Future<String> _uploadOutfitDataImage({
+    required String userId,
+    required String outfitId,
+    required String dataImage,
+    required List<String> uploadedPaths,
+  }) async {
+    final match = RegExp(
+      r'^data:image/(jpeg|jpg|png|webp);base64,',
+      caseSensitive: false,
+    ).firstMatch(dataImage);
+    if (match == null) throw const FormatException('Invalid data image');
+    final bytes = base64Decode(dataImage.substring(match.end));
+    if (bytes.isEmpty || bytes.length > 15 * 1024 * 1024) {
+      throw const FormatException('Outfit image size is invalid');
+    }
+    final mediaType = match.group(1)!.toLowerCase();
+    final extension = mediaType == 'jpeg' || mediaType == 'jpg'
+        ? '.jpg'
+        : '.$mediaType';
+    final contentType = extension == '.jpg'
+        ? 'image/jpeg'
+        : 'image/${extension.substring(1)}';
+    final objectPath = '$userId/$outfitId/${_uuid.v4()}$extension';
+    uploadedPaths.add(objectPath);
+    await _client.storage
+        .from(_outfitImagesBucketName)
+        .uploadBinary(
+          objectPath,
+          bytes,
+          fileOptions: FileOptions(
+            cacheControl: 'private, max-age=0',
+            contentType: contentType,
+            upsert: false,
+          ),
+        );
+    return objectPath;
+  }
+
+  Future<List<String>> _prepareOutfitPhotoPaths({
+    required CreatedOutfit outfit,
+    required String userId,
+    required List<String> uploadedPaths,
+  }) async {
+    final pendingFiles = outfit.pendingPhotoFiles;
+    if (pendingFiles.length > 10) {
+      throw const FormatException('Too many outfit photos');
+    }
+    if (pendingFiles.isNotEmpty) {
+      final paths = <String>[];
+      for (final file in pendingFiles) {
+        paths.add(
+          await _uploadOutfitFile(
+            userId: userId,
+            outfitId: outfit.id,
+            imageFile: file,
+            uploadedPaths: uploadedPaths,
+          ),
+        );
+      }
+      return paths;
+    }
+
+    if (outfit.photos.length > 10) {
+      throw const FormatException('Too many outfit photos');
+    }
+    final paths = <String>[];
+    for (final reference in outfit.photos) {
+      final existingPath = _storageObjectPath(
+        reference,
+        _outfitImagesBucketName,
+      );
+      if (existingPath != null &&
+          existingPath.startsWith('$userId/${outfit.id}/')) {
+        paths.add(existingPath);
+        continue;
+      }
+      if (reference.startsWith('data:image/')) {
+        paths.add(
+          await _uploadOutfitDataImage(
+            userId: userId,
+            outfitId: outfit.id,
+            dataImage: reference,
+            uploadedPaths: uploadedPaths,
+          ),
+        );
+        continue;
+      }
+      if (reference.startsWith('http://') ||
+          reference.startsWith('https://') ||
+          reference.startsWith('assets/')) {
+        throw const FormatException('Outfit photos must be owned draft media');
+      }
+      final localPath = reference.startsWith('file://')
+          ? Uri.parse(reference).toFilePath()
+          : reference;
+      paths.add(
+        await _uploadOutfitFile(
+          userId: userId,
+          outfitId: outfit.id,
+          imageFile: XFile(localPath),
+          uploadedPaths: uploadedPaths,
+        ),
+      );
+    }
+    return paths;
+  }
+
+  Future<List<OutfitItem>> _prepareOutfitItems({
+    required CreatedOutfit outfit,
+    required String userId,
+    required List<String> uploadedPaths,
+    required Map<String, String> stagedReferences,
+  }) async {
+    final prepared = <OutfitItem>[];
+    for (final item in outfit.items) {
+      var image = item.image.trim();
+      final alreadyStaged = stagedReferences[image];
+      if (alreadyStaged != null) {
+        image = alreadyStaged;
+      } else if (image.startsWith('data:image/')) {
+        final objectPath = await _uploadOutfitDataImage(
+          userId: userId,
+          outfitId: outfit.id,
+          dataImage: image,
+          uploadedPaths: uploadedPaths,
+        );
+        final stored = 'storage://$_outfitImagesBucketName/$objectPath';
+        stagedReferences[image] = stored;
+        image = stored;
+      } else {
+        final isServerReference =
+            image.startsWith('https://') ||
+            image.startsWith('assets/') ||
+            _storageObjectPath(image, _productImagesBucketName) != null ||
+            _storageObjectPath(image, _outfitImagesBucketName) != null;
+        if (!isServerReference) {
+          final localPath = image.startsWith('file://')
+              ? Uri.parse(image).toFilePath()
+              : image;
+          final objectPath = await _uploadOutfitFile(
+            userId: userId,
+            outfitId: outfit.id,
+            imageFile: XFile(localPath),
+            uploadedPaths: uploadedPaths,
+          );
+          final stored = 'storage://$_outfitImagesBucketName/$objectPath';
+          stagedReferences[image] = stored;
+          image = stored;
+        }
+      }
+      prepared.add(
+        OutfitItem(
+          id: item.id,
+          name: item.name,
+          price: item.price,
+          image: image,
+        ),
+      );
+    }
+    return prepared;
+  }
+
   Future<void> publishOutfit(CreatedOutfit outfit) async {
     final user = _hasSupabase ? await _ensureAuthSession() : null;
     if (_hasSupabase && user == null) return;
 
     final publishedAt = DateTime.now().toUtc();
-    final ownedOutfit = outfit.copyWith(
-      ownerId: user?.id ?? currentUserId,
-      authorName: _profile.name,
-      authorHandle: _profile.handle,
-      authorAvatarUrl: _profile.avatarUrl,
-      publishedAt: publishedAt,
-    );
-
-    if (_hasSupabase) {
+    late final CreatedOutfit ownedOutfit;
+    if (!_hasSupabase) {
+      ownedOutfit = outfit.copyWith(
+        ownerId: currentUserId,
+        authorName: _profile.name,
+        authorHandle: _profile.handle,
+        authorAvatarUrl: _profile.avatarUrl,
+        publishedAt: publishedAt,
+        pendingPhotoFiles: const [],
+      );
+    } else {
+      final uploadedPaths = <String>[];
+      var finalized = false;
       try {
-        await _client.from('outfits').insert({
-          'id': ownedOutfit.id,
-          'owner_id': ownedOutfit.ownerId,
-          'author_name': ownedOutfit.authorName,
-          'author_handle': ownedOutfit.authorHandle,
-          'author_avatar_url': ownedOutfit.authorAvatarUrl,
-          'photos': ownedOutfit.photos,
-          'items': ownedOutfit.items.map((i) => i.toJson()).toList(),
-          'preview_layout': {
-            'backgroundColor': ownedOutfit.previewBackgroundColor,
-            'items': ownedOutfit.layoutItems.map((i) => i.toJson()).toList(),
+        await _client.rpc(
+          'create_outfit_media_draft',
+          params: {'p_outfit_id': outfit.id},
+        );
+        final photoPaths = await _prepareOutfitPhotoPaths(
+          outfit: outfit,
+          userId: user!.id,
+          uploadedPaths: uploadedPaths,
+        );
+        final stagedReferences = <String, String>{};
+        final preparedItems = await _prepareOutfitItems(
+          outfit: outfit,
+          userId: user.id,
+          uploadedPaths: uploadedPaths,
+          stagedReferences: stagedReferences,
+        );
+        final preparedLayout = outfit.layoutItems
+            .map(
+              (item) => OutfitLayoutItem(
+                image: stagedReferences[item.image] ?? item.image,
+                offsetX: item.offsetX,
+                offsetY: item.offsetY,
+                widthFactor: item.widthFactor,
+                heightFactor: item.heightFactor,
+                scale: item.scale,
+                rotation: item.rotation,
+              ),
+            )
+            .toList(growable: false);
+        final response = await _client.rpc(
+          'finalize_outfit_media_draft',
+          params: {
+            'p_outfit_id': outfit.id,
+            'p_photo_paths': photoPaths,
+            'p_items': preparedItems.map((item) => item.toJson()).toList(),
+            'p_preview_layout': {
+              'backgroundColor': outfit.previewBackgroundColor,
+              'items': preparedLayout.map((item) => item.toJson()).toList(),
+            },
           },
-          'created_at': publishedAt.toIso8601String(),
-        });
-      } catch (e) {
-        debugPrint('Outfit publish error: $e');
+        );
+        finalized = true;
+        final rawRow = response is Map
+            ? Map<String, dynamic>.from(response)
+            : throw const FormatException('Invalid outfit finalize response');
+        final hydratedRow = await _hydrateOutfitMediaRow(
+          rawRow,
+          <String, Future<String>>{},
+        );
+        ownedOutfit = CreatedOutfit.fromSupabase(hydratedRow);
+      } catch (error, stackTrace) {
+        debugPrint('Outfit publish error: $error\n$stackTrace');
+        if (!finalized) {
+          if (uploadedPaths.isNotEmpty) {
+            try {
+              await _client.storage
+                  .from(_outfitImagesBucketName)
+                  .remove(uploadedPaths);
+            } catch (cleanupError) {
+              debugPrint('Outfit draft media cleanup error: $cleanupError');
+            }
+          }
+          try {
+            await _client.rpc(
+              'abort_outfit_media_draft',
+              params: {'p_outfit_id': outfit.id},
+            );
+          } catch (cleanupError) {
+            debugPrint('Outfit draft abort error: $cleanupError');
+          }
+        }
         _authError = 'Не удалось опубликовать образ. Попробуйте ещё раз';
         notifyListeners();
         rethrow;
@@ -3799,6 +5431,74 @@ class AppRepository extends ChangeNotifier {
           )
         : null;
     if (_hasSupabase && user == null) return null;
+
+    if (_hasSupabase) {
+      final repository = _chatRepository;
+      if (repository == null || product.id.trim().isEmpty) {
+        _setChatFailureMessage(
+          const ChatFailure(
+            code: ChatFailureCode.schemaMismatch,
+            operation: 'create_product_thread',
+          ),
+        );
+        return null;
+      }
+      const firstText = 'Здравствуйте! Вещь ещё доступна?';
+      final clientId = _uuid.v4();
+      final pending = ChatMessage(
+        id: clientId,
+        clientMessageId: clientId,
+        text: firstText,
+        createdAt: DateTime.now().toUtc(),
+        isMine: true,
+        senderId: user!.id,
+        senderName: _profile.name,
+        senderAvatar: _currentAvatarUrl(),
+        isPending: true,
+        status: ChatMessageDeliveryStatus.sending,
+      );
+      final actorId = user.id;
+      // This RPC obtains the seller from the product row, creates/gets the
+      // thread, and inserts the initial message in one Postgres transaction.
+      final result = await repository.sendProductChatMessage(
+        productId: product.id,
+        message: pending,
+      );
+      final opened = result.valueOrNull;
+      if (currentUserId != actorId) return null;
+      if (opened == null) {
+        _setChatFailureMessage(result.failureOrNull);
+        return null;
+      }
+      var thread = await _materializeRemoteThread(
+        opened.threadRow,
+        expectedUserId: actorId,
+        fallbackProduct: product,
+      );
+      if (currentUserId != actorId) return null;
+      if (imageOnly) {
+        thread = thread.copyWith(productTitle: '', productImage: product.image);
+      }
+      _upsertLocalThread(thread);
+      notifyListeners();
+      await loadLatestChatMessages(thread.id);
+      if (currentUserId != actorId) return null;
+      final messageRow = opened.messageRow;
+      if (messageRow != null) {
+        final delivered = await _resolveChatMessageMedia(
+          ChatMessage.fromJson(messageRow, currentUserId: currentUserId),
+        );
+        if (currentUserId != actorId) return null;
+        await _replaceLocalMessageByIdentity(thread.id, delivered);
+        // The Edge function deduplicates by the real server message id. Also
+        // invoke it when this response recovered an earlier ambiguous commit;
+        // in that case createdMessage is false but the original push may never
+        // have been requested.
+        final latest = threadById(thread.id) ?? thread;
+        unawaited(_notifyMessageRecipient(latest, delivered));
+      }
+      return threadById(thread.id) ?? thread;
+    }
 
     final buyerId = user?.id ?? currentUserId;
     final sellerId = product.ownerId;
@@ -3974,6 +5674,30 @@ class AppRepository extends ChangeNotifier {
     if (_hasSupabase && user == null) return null;
     if (recipient.id.isEmpty || recipient.id == currentUserId) return null;
 
+    if (_hasSupabase) {
+      final repository = _chatRepository;
+      if (repository == null) return null;
+      final actorId = user!.id;
+      final result = await repository.createDirectThread(recipient.id);
+      if (currentUserId != actorId) return null;
+      final creation = result.valueOrNull;
+      if (creation == null) {
+        _setChatFailureMessage(result.failureOrNull);
+        return null;
+      }
+      final thread = await _materializeRemoteThread(
+        creation.row,
+        expectedUserId: actorId,
+        fallbackRecipient: recipient,
+      );
+      if (currentUserId != actorId) return null;
+      _upsertLocalThread(thread);
+      notifyListeners();
+      await loadLatestChatMessages(thread.id);
+      if (currentUserId != actorId) return null;
+      return threadById(thread.id) ?? thread;
+    }
+
     final senderId = user?.id ?? currentUserId;
     final threadId = _directThreadId(senderId, recipient.id);
     final existing = threadById(threadId);
@@ -4055,6 +5779,41 @@ class AppRepository extends ChangeNotifier {
       return startDirectChat(uniqueRecipients.single);
     }
 
+    if (_hasSupabase) {
+      final repository = _chatRepository;
+      if (repository == null) return null;
+      final actorId = user!.id;
+      final groupCreationRequestId = _uuid.v4();
+      final cleanTitle = title.trim();
+      final fallbackTitle = uniqueRecipients
+          .map((recipient) => recipient.name.trim())
+          .where((name) => name.isNotEmpty)
+          .take(3)
+          .join(', ');
+      final result = await repository.createGroupThread(
+        memberIds: uniqueRecipients.map((item) => item.id).toList(),
+        title: cleanTitle.isEmpty ? fallbackTitle : cleanTitle,
+        requestId: groupCreationRequestId,
+      );
+      if (currentUserId != actorId) return null;
+      final creation = result.valueOrNull;
+      if (creation == null) {
+        _setChatFailureMessage(result.failureOrNull);
+        return null;
+      }
+      final thread = await _materializeRemoteThread(
+        creation.row,
+        expectedUserId: actorId,
+        fallbackRecipients: uniqueRecipients,
+      );
+      if (currentUserId != actorId) return null;
+      _upsertLocalThread(thread);
+      notifyListeners();
+      await loadLatestChatMessages(thread.id);
+      if (currentUserId != actorId) return null;
+      return threadById(thread.id) ?? thread;
+    }
+
     final now = DateTime.now();
     final members = [
       _currentConversationMember(senderId),
@@ -4132,9 +5891,14 @@ class AppRepository extends ChangeNotifier {
         ? await _ensureAuthSession(message: 'Войдите, чтобы поделиться')
         : null;
     if (_hasSupabase && user == null) return false;
+    final actorId = user?.id ?? currentUserId;
     if (_hasSupabase && threadById(threadId) == null) {
       try {
-        final remoteThread = await _fetchThreadFromSupabase(threadId);
+        final remoteThread = await _fetchThreadFromSupabase(
+          threadId,
+          expectedUserId: actorId,
+        );
+        if (currentUserId != actorId) return false;
         if (remoteThread != null) _upsertLocalThread(remoteThread);
       } catch (_) {
         _authError = 'Не удалось загрузить диалог. Попробуйте ещё раз.';
@@ -4145,15 +5909,14 @@ class AppRepository extends ChangeNotifier {
     final index = _threads.indexWhere((thread) => thread.id == threadId);
     if (index == -1) return false;
     final thread = _threads[index];
-    final senderId = user?.id ?? currentUserId;
-    if (_hasSupabase && !thread.containsUser(senderId)) return false;
+    if (_hasSupabase && !thread.containsUser(actorId)) return false;
     final now = DateTime.now();
     final message = ChatMessage(
       id: _uuid.v4(),
       text: 'Объявление: ${product.title}',
       createdAt: now,
       isMine: true,
-      senderId: senderId,
+      senderId: actorId,
       senderName: _profile.name,
       senderAvatar: _currentAvatarUrl(),
       type: 'product',
@@ -4179,10 +5942,15 @@ class AppRepository extends ChangeNotifier {
           )
         : null;
     if (_hasSupabase && user == null) return false;
+    final actorId = user?.id ?? currentUserId;
 
     if (_hasSupabase && threadById(threadId) == null) {
       try {
-        final remoteThread = await _fetchThreadFromSupabase(threadId);
+        final remoteThread = await _fetchThreadFromSupabase(
+          threadId,
+          expectedUserId: actorId,
+        );
+        if (currentUserId != actorId) return false;
         if (remoteThread != null) {
           _upsertLocalThread(remoteThread);
         }
@@ -4198,8 +5966,7 @@ class AppRepository extends ChangeNotifier {
 
     final now = DateTime.now();
     final thread = _threads[index];
-    final senderId = user?.id ?? currentUserId;
-    if (_hasSupabase && !thread.containsUser(senderId)) {
+    if (_hasSupabase && !thread.containsUser(actorId)) {
       return false;
     }
 
@@ -4208,7 +5975,7 @@ class AppRepository extends ChangeNotifier {
       text: trimmed,
       createdAt: now,
       isMine: true,
-      senderId: senderId,
+      senderId: actorId,
       senderName: _profile.name,
       senderAvatar: _currentAvatarUrl(),
       isPending: _hasSupabase,
@@ -4299,32 +6066,8 @@ class AppRepository extends ChangeNotifier {
       isPending: _hasSupabase,
       hasError: false,
     );
-    if (existingIndex == -1) {
-      thread = thread.copyWith(
-        lastMessage: retrying.previewText,
-        updatedAt: retrying.createdAt,
-        messages: [...thread.messages, retrying],
-      );
-      _upsertLocalThread(thread);
-      await _saveThreadsLocal();
-      notifyListeners();
-    } else {
-      await _replaceLocalMessage(threadId, retrying, updateLastPreview: true);
-      thread = threadById(threadId) ?? thread;
-    }
-
-    final saved = await _upsertThread(thread, newMessages: [retrying]);
-    if (_hasSupabase) {
-      await _replaceLocalMessage(
-        threadId,
-        retrying.copyWith(isPending: false, hasError: !saved),
-        updateLastPreview: true,
-      );
-    }
-    if (saved) {
-      final latestThread = threadById(threadId) ?? thread;
-      unawaited(_notifyMessageRecipient(latestThread, retrying));
-    } else {
+    final saved = await _appendOutgoingMessage(thread, retrying);
+    if (!saved) {
       _authError = 'Не удалось повторно отправить сообщение.';
       notifyListeners();
     }
@@ -4340,9 +6083,7 @@ class AppRepository extends ChangeNotifier {
         failedMessage.id.isEmpty ||
         !failedMessage.hasError ||
         !failedMessage.isMedia ||
-        failedAttachment == null ||
-        failedAttachment.url.trim().isEmpty ||
-        failedAttachment.hasRemoteObject) {
+        failedAttachment == null) {
       return false;
     }
 
@@ -4370,11 +6111,31 @@ class AppRepository extends ChangeNotifier {
         candidate.isDeleted ||
         !candidate.isMedia ||
         attachment == null ||
-        attachment.url.trim().isEmpty ||
-        attachment.hasRemoteObject ||
         !belongsToActor) {
       return false;
     }
+
+    if (attachment.hasRemoteObject) {
+      // A restart may recover an upload that reached Storage but crashed
+      // before send_chat_message. Reuse both the object and client id; the RPC
+      // validates ownership and remains idempotent if it actually committed.
+      final sent = await _appendOutgoingMessage(
+        thread,
+        candidate.copyWith(
+          isPending: _hasSupabase,
+          hasError: false,
+          status: _hasSupabase
+              ? ChatMessageDeliveryStatus.sending
+              : ChatMessageDeliveryStatus.sent,
+        ),
+      );
+      if (!sent) {
+        _authError = 'Не удалось повторно отправить вложение.';
+        notifyListeners();
+      }
+      return sent;
+    }
+    if (attachment.url.trim().isEmpty) return false;
 
     var localPath = attachment.url.trim();
     if (localPath.startsWith('http://') ||
@@ -4398,7 +6159,7 @@ class AppRepository extends ChangeNotifier {
     final kind = candidate.isVideo ? ChatMediaKind.video : ChatMediaKind.image;
     ChatMessage? retryingMessage;
     final sent = await _chatMediaSendCoordinator.send(
-      ensureRemoteThread: () => _upsertThread(thread),
+      ensureRemoteThread: () async => true,
       upload: () => _uploadChatMedia(
         threadId: threadId,
         actorId: actorId,
@@ -4428,27 +6189,7 @@ class AppRepository extends ChangeNotifier {
           hasError: false,
         );
         retryingMessage = retrying;
-        await _replaceLocalMessage(threadId, retrying, updateLastPreview: true);
-        final threadToSave = threadById(threadId);
-        if (threadToSave == null) return false;
-        final saved = await _upsertThread(
-          threadToSave,
-          newMessages: [retrying],
-        );
-        if (saved) {
-          final delivered = retrying.copyWith(
-            isPending: false,
-            hasError: false,
-          );
-          await _replaceLocalMessage(
-            threadId,
-            delivered,
-            updateLastPreview: true,
-          );
-          final deliveredThread = threadById(threadId) ?? threadToSave;
-          unawaited(_notifyMessageRecipient(deliveredThread, delivered));
-        }
-        return saved;
+        return _appendOutgoingMessage(latestThread, retrying);
       },
       markFailed: (uploaded) async {
         final localAttachment = _chatMediaSendCoordinator
@@ -4459,17 +6200,68 @@ class AppRepository extends ChangeNotifier {
           actorId: actorId,
         );
       },
-      cleanup: (uploaded) => _removeRemoteChatMedia(
-        uploaded.bucket,
-        uploaded.storagePath,
-        logContext: 'Failed retried chat media cleanup',
-      ),
+      cleanup: (uploaded) => _cleanupUnreferencedChatMedia(threadId, uploaded),
     );
     if (!sent) {
       _authError = 'Не удалось повторно отправить вложение.';
       notifyListeners();
     }
     return sent;
+  }
+
+  Future<bool> retryChatMessage(
+    String threadId,
+    ChatMessage failedMessage,
+  ) async {
+    if (failedMessage.type == 'text') {
+      return retryChatText(threadId, failedMessage);
+    }
+    if (failedMessage.isMedia) {
+      return retryChatMedia(threadId, failedMessage);
+    }
+    if (threadId.isEmpty ||
+        failedMessage.type != 'product' ||
+        failedMessage.sharedProduct == null ||
+        !failedMessage.hasError) {
+      return false;
+    }
+
+    final actorId = await _resolveChatActor(
+      message: 'Войдите в профиль, чтобы повторить отправку',
+    );
+    if (actorId == null) return false;
+    final thread = threadById(threadId);
+    if (thread == null || (_hasSupabase && !thread.containsUser(actorId))) {
+      return false;
+    }
+    final index = thread.messages.indexWhere(
+      (message) => sameChatMessageIdentity(message, failedMessage),
+    );
+    if (index == -1) return false;
+    final candidate = thread.messages[index];
+    if (!candidate.hasError ||
+        candidate.isDeleted ||
+        candidate.type != 'product' ||
+        candidate.sharedProduct == null ||
+        (_hasSupabase && candidate.senderId != actorId)) {
+      return false;
+    }
+
+    final saved = await _appendOutgoingMessage(
+      thread,
+      candidate.copyWith(
+        isPending: _hasSupabase,
+        hasError: false,
+        status: _hasSupabase
+            ? ChatMessageDeliveryStatus.sending
+            : ChatMessageDeliveryStatus.sent,
+      ),
+    );
+    if (!saved) {
+      _authError = 'Не удалось повторно отправить объявление.';
+      notifyListeners();
+    }
+    return saved;
   }
 
   Future<bool> sendReply(
@@ -4564,7 +6356,7 @@ class AppRepository extends ChangeNotifier {
     ChatMessage? outgoingMessage;
     return _chatMediaSendCoordinator.send(
       ensureRemoteThread: () async {
-        final ready = await _upsertThread(initialThread);
+        final ready = initialThread.containsUser(actorId);
         if (!ready) {
           _authError = 'Не удалось подготовить чат. Проверьте подключение.';
           notifyListeners();
@@ -4599,8 +6391,10 @@ class AppRepository extends ChangeNotifier {
         }
 
         final now = DateTime.now();
+        final clientMessageId = _uuid.v4();
         final message = ChatMessage(
-          id: _uuid.v4(),
+          id: clientMessageId,
+          clientMessageId: clientMessageId,
           text: caption.trim(),
           createdAt: now,
           isMine: true,
@@ -4632,12 +6426,38 @@ class AppRepository extends ChangeNotifier {
           actorId: actorId,
         );
       },
-      cleanup: (attachment) => _removeRemoteChatMedia(
-        attachment.bucket,
-        attachment.storagePath,
-        logContext: 'Failed chat media cleanup',
-      ),
+      cleanup: (attachment) =>
+          _cleanupUnreferencedChatMedia(threadId, attachment),
     );
+  }
+
+  Future<void> _cleanupUnreferencedChatMedia(
+    String threadId,
+    ChatAttachment attachment,
+  ) async {
+    if (!_hasSupabase ||
+        attachment.bucket != _chatMediaBucketName ||
+        attachment.storagePath.isEmpty) {
+      return;
+    }
+    try {
+      await _client.functions.invoke(
+        'cleanup-chat-media',
+        body: {'thread_id': threadId, 'storage_path': attachment.storagePath},
+      );
+    } catch (error, stackTrace) {
+      // If the message commit won the race, the endpoint refuses deletion.
+      // Other cleanup failures also remain non-destructive and retryable.
+      logChatFailure(
+        ChatFailure.from(
+          error,
+          stackTrace,
+          operation: 'cleanup_chat_media',
+          threadId: threadId,
+        ),
+        userId: currentUserId,
+      );
+    }
   }
 
   Future<ChatAttachment?> _uploadChatMedia({
@@ -4938,12 +6758,7 @@ class AppRepository extends ChangeNotifier {
 
     final deletedAt = DateTime.now();
     final deleted = original.copyWith(
-      text: '',
-      type: 'text',
-      sharedProduct: null,
-      attachment: null,
       deletedAt: deletedAt,
-      reactions: const {},
       isPending: false,
       hasError: false,
     );
@@ -4960,16 +6775,47 @@ class AppRepository extends ChangeNotifier {
         await _replaceLocalMessage(threadId, original, updateLastPreview: true);
         return false;
       }
-      final attachment = original.attachment;
-      if (attachment?.hasRemoteObject == true) {
-        await _removeRemoteChatMedia(
-          attachment!.bucket,
-          attachment.storagePath,
-          logContext: 'Deleted chat media cleanup',
-        );
-      }
     }
     return true;
+  }
+
+  Future<bool> reportMessage(
+    String threadId,
+    String messageId,
+    String reason,
+  ) async {
+    final thread = threadById(threadId);
+    final normalizedReason = reason.trim();
+    if (thread == null ||
+        messageId.trim().isEmpty ||
+        normalizedReason.isEmpty ||
+        !thread.containsUser(currentUserId) ||
+        !thread.messages.any((message) => message.id == messageId)) {
+      return false;
+    }
+    if (!_hasSupabase) return false;
+    try {
+      await _client.rpc(
+        'report_chat_message',
+        params: {
+          'p_message_id': messageId,
+          'p_reason': normalizedReason,
+          'p_description': null,
+        },
+      );
+      return true;
+    } catch (error, stackTrace) {
+      debugPrint('Message report error: $error\n$stackTrace');
+      return false;
+    }
+  }
+
+  Future<bool> blockChatUser(String threadId) async {
+    final thread = threadById(threadId);
+    if (thread == null || thread.isGroup) return false;
+    final otherPartyId = thread.otherPartyId(currentUserId).trim();
+    if (otherPartyId.isEmpty) return false;
+    return blockUser(otherPartyId);
   }
 
   Future<bool> updateThreadPreferences(
@@ -5007,6 +6853,7 @@ class AppRepository extends ChangeNotifier {
     );
 
     if (_hasSupabase) {
+      if (currentUserId != actorId) return false;
       final params = <String, dynamic>{
         'p_thread_id': threadId,
         'p_is_pinned': ?isPinned,
@@ -5017,7 +6864,9 @@ class AppRepository extends ChangeNotifier {
       if (params.length > 1) {
         try {
           await _client.rpc('update_chat_thread_settings', params: params);
+          if (currentUserId != actorId) return false;
         } catch (e) {
+          if (currentUserId != actorId) return false;
           debugPrint('Thread preferences sync error: $e');
           _upsertLocalThread(thread);
           await _saveThreadsLocal();
@@ -5030,20 +6879,26 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<void> saveThreadDraft(String threadId, String draft) async {
+    final actorId = currentUserId;
+    if (_hasSupabase && actorId.isEmpty) return;
     final index = _threads.indexWhere((thread) => thread.id == threadId);
     if (index == -1) return;
     final thread = _threads[index];
+    if (_hasSupabase && !thread.containsUser(actorId)) return;
     _threads[index] = thread.copyWith(draft: draft);
     await _saveThreadsLocal();
+    if (_hasSupabase && currentUserId != actorId) return;
     notifyListeners();
 
-    if (!_hasSupabase || currentUserId.isEmpty) return;
+    if (!_hasSupabase) return;
     try {
+      if (currentUserId != actorId) return;
       await _client.rpc(
         'update_chat_thread_settings',
         params: {'p_thread_id': threadId, 'p_draft': draft},
       );
     } catch (e) {
+      if (currentUserId != actorId) return;
       debugPrint('Thread draft sync error: $e');
     }
   }
@@ -5054,6 +6909,7 @@ class AppRepository extends ChangeNotifier {
     final actorId = _hasSupabase
         ? (_client.auth.currentUser?.id ?? currentUserId)
         : currentUserId;
+    if (_hasSupabase && (actorId.isEmpty || currentUserId != actorId)) return;
     final readActor = actorId.isEmpty ? 'local-user' : actorId;
     final thread = _threads[index];
     final now = DateTime.now();
@@ -5071,16 +6927,48 @@ class AppRepository extends ChangeNotifier {
       lastReadAt: now,
     );
     await _saveThreadsLocal();
+    if (_hasSupabase && currentUserId != actorId) return;
     notifyListeners();
 
     if (!_hasSupabase || actorId.isEmpty) return;
     try {
+      if (currentUserId != actorId) return;
       await _client.rpc(
         'mark_chat_thread_read',
         params: {'p_thread_id': threadId},
       );
+      if (currentUserId != actorId) return;
     } catch (e) {
+      if (currentUserId != actorId) return;
       debugPrint('Thread read state sync error: $e');
+      final liveIndex = _threads.indexWhere((item) => item.id == threadId);
+      if (liveIndex != -1) {
+        final live = _threads[liveIndex];
+        final originalById = <String, ChatMessage>{
+          for (final message in thread.messages) message.id: message,
+        };
+        final restoredMessages = live.messages
+            .map((message) {
+              final original = originalById[message.id];
+              return original == null
+                  ? message
+                  : message.copyWith(readBy: original.readBy);
+            })
+            .toList(growable: false);
+        _threads[liveIndex] = live.copyWith(
+          unreadCount: live.unreadCount > thread.unreadCount
+              ? live.unreadCount
+              : thread.unreadCount,
+          messages: restoredMessages,
+          lastReadAt: thread.lastReadAt,
+        );
+        notifyListeners();
+      }
+      // Re-fetch both normalized messages and per-user member state. The
+      // optimistic zero must not survive a rejected/failed read RPC.
+      await loadLatestChatMessages(threadId);
+      if (currentUserId != actorId) return;
+      await _chatThreadSync.runNow(_syncThreadsFromSupabase);
     }
   }
 
@@ -5101,25 +6989,79 @@ class AppRepository extends ChangeNotifier {
     MessageThread thread,
     ChatMessage message,
   ) async {
+    final clientId = message.idempotencyKey.trim().isEmpty
+        ? _uuid.v4()
+        : message.idempotencyKey.trim();
+    final optimistic = message.copyWith(
+      id: message.id.isEmpty ? clientId : message.id,
+      clientMessageId: clientId,
+      isPending: _hasSupabase,
+      hasError: false,
+      status: _hasSupabase
+          ? ChatMessageDeliveryStatus.sending
+          : ChatMessageDeliveryStatus.sent,
+    );
+    if (_hasSupabase) {
+      final repository = _chatRepository;
+      if (repository == null) {
+        _setChatFailureMessage(
+          const ChatFailure(
+            code: ChatFailureCode.schemaMismatch,
+            operation: 'send_message',
+          ),
+        );
+        return false;
+      }
+      final actorId = currentUserId;
+      if (actorId.isEmpty || optimistic.senderId != actorId) return false;
+      _insertOptimisticMessage(thread.id, optimistic);
+      final result = await repository.sendMessage(
+        threadId: thread.id,
+        message: optimistic,
+      );
+      if (currentUserId != actorId) return false;
+      final row = result.valueOrNull;
+      if (row == null) {
+        await _replaceLocalMessageByIdentity(
+          thread.id,
+          optimistic.copyWith(
+            isPending: false,
+            hasError: true,
+            status: ChatMessageDeliveryStatus.failed,
+          ),
+        );
+        _setChatFailureMessage(result.failureOrNull);
+        return false;
+      }
+      final delivered = await _resolveChatMessageMedia(
+        ChatMessage.fromJson(row, currentUserId: currentUserId),
+      );
+      if (currentUserId != actorId) return false;
+      await _replaceLocalMessageByIdentity(thread.id, delivered);
+      final latestThread = threadById(thread.id) ?? thread;
+      unawaited(_notifyMessageRecipient(latestThread, delivered));
+      return true;
+    }
+
     final updated = thread.copyWith(
-      lastMessage: message.previewText,
-      updatedAt: message.createdAt,
-      messages: [...thread.messages, message],
+      lastMessage: optimistic.previewText,
+      updatedAt: optimistic.createdAt,
+      messages: [...thread.messages, optimistic],
       draft: '',
     );
     _upsertLocalThread(updated);
     await _saveThreadsLocal();
     notifyListeners();
 
-    final saved = await _upsertThread(updated, newMessages: [message]);
+    final saved = await _upsertThread(updated, newMessages: [optimistic]);
     if (_hasSupabase) {
       await _replaceLocalMessage(
         thread.id,
-        message.copyWith(isPending: false, hasError: !saved),
+        optimistic.copyWith(isPending: false, hasError: !saved),
       );
     }
     final latestThread = threadById(thread.id) ?? updated;
-    if (saved) unawaited(_notifyMessageRecipient(latestThread, message));
+    if (saved) unawaited(_notifyMessageRecipient(latestThread, optimistic));
     if (!saved) {
       _authError = 'Не удалось доставить сообщение. Проверьте интернет.';
       notifyListeners();
@@ -5164,9 +7106,15 @@ class AppRepository extends ChangeNotifier {
     final thread = _threads[threadIndex];
     if (_hasSupabase && !thread.containsUser(actorId)) return;
 
-    final failed = message.copyWith(isPending: false, hasError: true);
+    final failed = message.copyWith(
+      isPending: false,
+      hasError: true,
+      status: ChatMessageDeliveryStatus.failed,
+    );
     final messages = List<ChatMessage>.from(thread.messages);
-    final messageIndex = messages.indexWhere((item) => item.id == failed.id);
+    final messageIndex = messages.indexWhere(
+      (item) => sameChatMessageIdentity(item, failed),
+    );
     if (messageIndex == -1) {
       messages.add(failed);
     } else {
@@ -5181,6 +7129,12 @@ class AppRepository extends ChangeNotifier {
     _sortThreads();
     notifyListeners();
     try {
+      if (_hasSupabase && failed.clientMessageId.isNotEmpty) {
+        // Media cleanup replaces the remote attachment with its local source.
+        // Persist that retryable form under the same idempotency key so an app
+        // restart cannot lose the failed attempt or generate a second message.
+        await _chatRepository?.outbox.put(threadId, failed);
+      }
       await _saveThreadsLocal();
     } catch (e) {
       debugPrint('Failed chat message local save error: $e');
@@ -5191,7 +7145,13 @@ class AppRepository extends ChangeNotifier {
     MessageThread thread,
     ChatMessage message,
   ) async {
-    if (!_hasSupabase || currentUserId.isEmpty || message.id.isEmpty) return;
+    if (!_hasSupabase ||
+        currentUserId.isEmpty ||
+        message.id.isEmpty ||
+        message.isPending ||
+        message.hasError) {
+      return;
+    }
     try {
       await _client.functions.invoke(
         'send-message-push',
@@ -5212,27 +7172,215 @@ class AppRepository extends ChangeNotifier {
     _sortThreads();
   }
 
-  Future<MessageThread?> _fetchThreadFromSupabase(String threadId) async {
-    if (!_hasSupabase || currentUserId.isEmpty) return null;
+  void _setChatFailureMessage(ChatFailure? failure) {
+    _authError =
+        (failure ??
+                const ChatFailure(
+                  code: ChatFailureCode.unknown,
+                  operation: 'chat',
+                ))
+            .userMessage;
+    notifyListeners();
+  }
+
+  Future<MessageThread> _materializeRemoteThread(
+    Map<String, dynamic> row, {
+    String? expectedUserId,
+    AppUserProfile? fallbackRecipient,
+    List<AppUserProfile> fallbackRecipients = const <AppUserProfile>[],
+    Product? fallbackProduct,
+  }) async {
+    final syncUserId = expectedUserId?.trim().isNotEmpty == true
+        ? expectedUserId!.trim()
+        : currentUserId;
+    var thread = MessageThread.fromSupabase(
+      row,
+      currentUserId: syncUserId,
+      includeLegacyMessages: false,
+    );
+    final recipients = <AppUserProfile>[
+      ?fallbackRecipient,
+      ...fallbackRecipients,
+    ];
+    final remoteMembers = thread.members;
+    final memberIds = <String>{
+      ...thread.memberIds,
+      if (syncUserId.isNotEmpty) syncUserId,
+      ...recipients.map((item) => item.id),
+      if (fallbackProduct != null && fallbackProduct.ownerId.isNotEmpty)
+        fallbackProduct.ownerId,
+    };
+    final profiles = <String, AppUserProfile>{
+      for (final profile in recipients) profile.id: profile,
+    };
+    final members = memberIds
+        .map((id) {
+          final existing = remoteMembers
+              .where((member) => member.id == id)
+              .firstOrNull;
+          final profile = profiles[id];
+          if (id == syncUserId) return _currentConversationMember(id);
+          return ConversationMember(
+            id: id,
+            name:
+                existing?.name ??
+                profile?.name ??
+                (id == fallbackProduct?.ownerId
+                    ? fallbackProduct!.sellerName
+                    : ''),
+            handle:
+                existing?.handle ??
+                profile?.handle ??
+                (id == fallbackProduct?.ownerId
+                    ? fallbackProduct!.sellerHandle
+                    : ''),
+            avatarUrl: existing?.avatarUrl ?? profile?.avatarUrl ?? '',
+          );
+        })
+        .toList(growable: false);
+
+    var buyerId = thread.buyerId;
+    var sellerId = thread.sellerId;
+    if (buyerId.isEmpty) buyerId = syncUserId;
+    if (sellerId.isEmpty) {
+      sellerId =
+          fallbackRecipient?.id ??
+          fallbackProduct?.ownerId ??
+          (recipients.isEmpty ? '' : recipients.first.id);
+    }
+    final recipient = profiles[sellerId];
+    thread = thread.copyWith(
+      buyerId: buyerId,
+      sellerId: sellerId,
+      buyerName:
+          thread.buyerName.trim().isEmpty || thread.buyerName == 'Покупатель'
+          ? _profile.name
+          : thread.buyerName,
+      sellerName:
+          recipient?.name ??
+          (fallbackProduct?.sellerName.trim().isNotEmpty == true
+              ? fallbackProduct!.sellerName
+              : thread.sellerName),
+      buyerHandle: thread.buyerHandle.isEmpty
+          ? _profile.handle
+          : thread.buyerHandle,
+      sellerHandle:
+          recipient?.handle ??
+          (fallbackProduct?.sellerHandle.trim().isNotEmpty == true
+              ? fallbackProduct!.sellerHandle
+              : thread.sellerHandle),
+      buyerAvatar: thread.buyerAvatar.isEmpty
+          ? _currentAvatarUrl()
+          : thread.buyerAvatar,
+      sellerAvatar: recipient?.avatarUrl ?? thread.sellerAvatar,
+      productId: thread.productId.isEmpty
+          ? fallbackProduct?.id ?? ''
+          : thread.productId,
+      productTitle: thread.productTitle.isEmpty
+          ? fallbackProduct?.title ?? ''
+          : thread.productTitle,
+      productImage: thread.productImage.isEmpty
+          ? fallbackProduct?.image ?? ''
+          : thread.productImage,
+      members: members,
+      isGroup:
+          thread.isGroup || recipients.length > 1 || thread.type == 'group',
+    );
+    if (currentUserId != syncUserId) return thread;
+    var hydrated = await _hydrateThreadProductMedia(<MessageThread>[thread]);
+    if (currentUserId != syncUserId) return thread;
+    hydrated = await _hydrateThreadProfiles(hydrated);
+    if (currentUserId != syncUserId) return thread;
+    hydrated = await _hydrateThreadMemberState(hydrated);
+    if (currentUserId != syncUserId) return thread;
+    _knownRemoteThreadIds.add(thread.id);
+    return hydrated.first;
+  }
+
+  void _insertOptimisticMessage(String threadId, ChatMessage message) {
+    final index = _threads.indexWhere((thread) => thread.id == threadId);
+    if (index == -1) return;
+    final thread = _threads[index];
+    final messages = _mergeChatMessages(
+      const <ChatMessage>[],
+      thread.messages,
+      outbox: <ChatMessage>[message],
+    );
+    _threads[index] = thread.copyWith(
+      messages: messages,
+      lastMessage: message.previewText,
+      updatedAt: message.createdAt,
+      draft: '',
+    );
+    _sortThreads();
+    notifyListeners();
+  }
+
+  Future<void> _replaceLocalMessageByIdentity(
+    String threadId,
+    ChatMessage replacement,
+  ) async {
+    final index = _threads.indexWhere((thread) => thread.id == threadId);
+    if (index == -1) return;
+    final thread = _threads[index];
+    final messages = _mergeChatMessages(
+      <ChatMessage>[replacement],
+      thread.messages,
+      outbox: _outboxMessagesForThread(threadId),
+    );
+    final latestMessage = messages.isEmpty ? null : messages.last;
+    _threads[index] = thread.copyWith(
+      messages: messages,
+      lastMessage: latestMessage?.previewText ?? thread.lastMessage,
+      lastMessageId: latestMessage?.id ?? thread.lastMessageId,
+      updatedAt: replacement.createdAt.isAfter(thread.updatedAt)
+          ? replacement.createdAt
+          : thread.updatedAt,
+    );
+    if (!replacement.isPending && !replacement.hasError) {
+      await _chatRepository?.outbox.remove(replacement.idempotencyKey);
+    }
+    _sortThreads();
+    notifyListeners();
+  }
+
+  Future<MessageThread?> _fetchThreadFromSupabase(
+    String threadId, {
+    String? expectedUserId,
+  }) async {
+    final syncUserId = expectedUserId?.trim().isNotEmpty == true
+        ? expectedUserId!.trim()
+        : currentUserId;
+    if (!_hasSupabase || syncUserId.isEmpty || currentUserId != syncUserId) {
+      return null;
+    }
 
     try {
       final response = await _client
           .from('message_threads')
-          .select()
+          .select(_chatThreadSummaryColumns)
           .eq('id', threadId)
           .limit(1);
+      if (currentUserId != syncUserId) return null;
       final rows = response as List<dynamic>;
       if (rows.isEmpty) return null;
       final thread = MessageThread.fromSupabase(
         rows.first as Map<String, dynamic>,
-        currentUserId: currentUserId,
+        currentUserId: syncUserId,
+        includeLegacyMessages: false,
       );
-      _knownRemoteThreadIds.add(thread.id);
-      var hydrated = await _hydrateThreadProfiles([thread]);
+      var hydrated = await _hydrateThreadProductMedia([thread]);
+      if (currentUserId != syncUserId) return null;
+      hydrated = await _hydrateThreadProfiles(hydrated);
+      if (currentUserId != syncUserId) return null;
       hydrated = await _hydrateThreadMemberState(hydrated);
+      if (currentUserId != syncUserId) return null;
       hydrated = await _hydrateThreadMessages(hydrated);
+      if (currentUserId != syncUserId) return null;
+      _knownRemoteThreadIds.add(thread.id);
       return hydrated.first;
     } catch (error, stackTrace) {
+      if (currentUserId != syncUserId) return null;
       debugPrint(
         'Thread fetch error (thread=$threadId): '
         '${_describeChatRemoteError(error)}',
@@ -5275,57 +7423,15 @@ class AppRepository extends ChangeNotifier {
     bool ensureThreadFirst = false,
   }) async {
     if (!_hasSupabase) return true;
-
-    final result = await _chatRemoteWriteCoordinator.persist(
-      hasMessages: newMessages.isNotEmpty,
-      threadKnownRemote: _knownRemoteThreadIds.contains(thread.id),
-      ensureThreadFirst: ensureThreadFirst,
-      ensureThread: () async {
-        final payload = thread.toSupabaseJson()
-          ..remove('messages')
-          ..remove('is_pinned')
-          ..remove('is_muted')
-          ..remove('is_archived')
-          ..remove('draft')
-          ..remove('last_read_at')
-          ..remove('unread_count');
-        await _client
-            .from('message_threads')
-            .upsert(payload, onConflict: 'id', ignoreDuplicates: true);
-      },
-      persistMessages: () async {
-        if (newMessages.isEmpty) return;
-        await _client
-            .from('chat_messages')
-            .upsert(
-              newMessages
-                  .map(
-                    (message) => {
-                      ...message.toSupabaseJson(),
-                      'thread_id': thread.id,
-                    },
-                  )
-                  .toList(),
-              onConflict: 'id',
-              ignoreDuplicates: true,
-            );
-      },
+    logChatFailure(
+      ChatFailure(
+        code: ChatFailureCode.schemaMismatch,
+        operation: 'legacy_direct_chat_write_blocked',
+        threadId: thread.id,
+        details: 'messages=${newMessages.length},ensure=$ensureThreadFirst',
+      ),
+      userId: currentUserId,
     );
-    if (result.threadConfirmed) {
-      _knownRemoteThreadIds.add(thread.id);
-    }
-    if (result.succeeded) return true;
-
-    final failure = result.failure!;
-    final stage = switch (failure.stage) {
-      ChatRemoteWriteStage.ensureThread => 'ensure thread',
-      ChatRemoteWriteStage.persistMessages => 'persist messages',
-    };
-    debugPrint(
-      'Chat remote write error ($stage, thread=${thread.id}): '
-      '${_describeChatRemoteError(failure.error)}',
-    );
-    debugPrintStack(stackTrace: failure.stackTrace);
     return false;
   }
 
@@ -5532,18 +7638,59 @@ class AppRepository extends ChangeNotifier {
     for (final key in attemptKeys) {
       await _prefs.remove(key);
     }
+    await Future.wait([
+      _prefs.remove(_productsKey),
+      _prefs.remove(_accessoriesKey),
+      _prefs.remove(_outfitsKey),
+    ]);
+    await _purgeSensitiveFileCaches();
+  }
+
+  Future<void> _purgeSensitiveFileCaches() async {
+    _chatMediaUrlCache.clear();
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+    if (kIsWeb) return;
+    try {
+      final support = await getApplicationSupportDirectory();
+      final listingDrafts = Directory(
+        path.join(support.path, 'listing_drafts'),
+      );
+      if (await listingDrafts.exists()) {
+        await listingDrafts.delete(recursive: true);
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Sensitive file cache purge error: $error\n$stackTrace');
+    }
+  }
+
+  Future<void> _purgeLegacySensitiveLocalStorage() async {
+    const sensitivePrefixes = <String>[
+      _threadsKey,
+      _profileKey,
+      _deliveryProfileKey,
+      _ordersKey,
+    ];
+    final keys = _prefs.getKeys().where(
+      (key) => sensitivePrefixes.any(
+        (prefix) => key == prefix || key.startsWith('$prefix:'),
+      ),
+    );
+    for (final key in keys.toList(growable: false)) {
+      await _prefs.remove(key);
+    }
   }
 
   void _loadLocalUserState() {
-    _threads = _readList(
-      _scopedStorageKey(_threadsKey),
-      MessageThread.fromJson,
-    );
+    // Message bodies, recipient data and private profile fields are never
+    // persisted in SharedPreferences. They are reloaded from the protected
+    // server views after every authenticated session.
+    _threads = [];
     _notifications = _readList(
       _scopedStorageKey(_notificationsKey),
       ProfileNotification.fromJson,
     ).where((notification) => notification.kind != 'message').toList();
-    _orders = _readList(_scopedStorageKey(_ordersKey), AppOrder.fromJson);
+    _orders = [];
     _sellerReviews = _readList(
       _scopedStorageKey(_sellerReviewsKey),
       SellerReview.fromJson,
@@ -5560,14 +7707,6 @@ class AppRepository extends ChangeNotifier {
     }
 
     _deliveryProfile = const DeliveryProfile();
-    final deliveryProfileJson = _prefs.getString(
-      _scopedStorageKey(_deliveryProfileKey),
-    );
-    if (deliveryProfileJson != null) {
-      _deliveryProfile = DeliveryProfile.fromJson(
-        jsonDecode(deliveryProfileJson) as Map<String, dynamic>,
-      );
-    }
 
     _favoriteProductIds = _readStringSet(
       _scopedStorageKey(_favoriteProductIdsKey),
@@ -5593,12 +7732,6 @@ class AppRepository extends ChangeNotifier {
       salesCount: 0,
       followersCount: 0,
     );
-    final profileJson = _prefs.getString(_scopedStorageKey(_profileKey));
-    if (profileJson != null) {
-      _profile = AppProfile.fromJson(
-        jsonDecode(profileJson) as Map<String, dynamic>,
-      );
-    }
     _sortThreads();
   }
 
@@ -5659,10 +7792,7 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<void> _saveThreadsLocal() {
-    return _writeList(
-      _scopedStorageKey(_threadsKey),
-      _threads.map((item) => item.toJson()),
-    );
+    return _prefs.remove(_scopedStorageKey(_threadsKey));
   }
 
   Future<void> _saveProducts() {
@@ -5677,10 +7807,7 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<void> _saveOrdersLocal() {
-    return _writeList(
-      _scopedStorageKey(_ordersKey),
-      _orders.map((item) => item.toJson()),
-    );
+    return _prefs.remove(_scopedStorageKey(_ordersKey));
   }
 
   Future<void> _saveSellerReviewsLocal() {
@@ -5698,13 +7825,13 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<void> _saveDeliveryProfileLocal() {
-    return _prefs.setString(
-      _scopedStorageKey(_deliveryProfileKey),
-      jsonEncode(_deliveryProfile.toJson()),
-    );
+    return _prefs.remove(_scopedStorageKey(_deliveryProfileKey));
   }
 
   Future<void> _saveAccessories() {
+    // Private accessory URLs are short-lived signed delivery URLs. Persisting
+    // them would both leak bearer tokens and produce broken cache entries.
+    if (_hasSupabase) return _prefs.remove(_accessoriesKey);
     return _writeList(
       _accessoriesKey,
       _accessories.map((item) => item.toJson()),
@@ -5797,14 +7924,14 @@ class AppRepository extends ChangeNotifier {
 
   @override
   void dispose() {
+    _authTransitionGeneration++;
     _syncTimer?.cancel();
     _chatMediaUrlCache.clear();
     _chatThreadSync.dispose();
-    _messageSubscriptionGeneration++;
     _authSubscription?.cancel();
     _pushTokenSubscription?.cancel();
-    final messagesChannel = _messagesChannel;
-    if (messagesChannel != null) unawaited(messagesChannel.unsubscribe());
+    _chatRepository?.removeListener(_handleChatDiagnosticsChanged);
+    _chatRepository?.dispose();
     super.dispose();
   }
 }

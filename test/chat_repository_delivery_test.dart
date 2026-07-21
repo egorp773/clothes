@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:clothes/data/app_repository.dart';
 import 'package:clothes/models/message_thread.dart';
@@ -10,95 +9,151 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('repository keeps an empty direct thread visible', () async {
+  test('delivered chat history is not restored from preferences', () async {
     final thread = _thread();
     final repository = await _repositoryWithThread(thread);
     addTearDown(repository.dispose);
 
-    expect(repository.threads, hasLength(1));
-    expect(repository.threads.single.id, thread.id);
+    expect(repository.threads, isEmpty);
   });
 
-  test('client optimistic id is persisted once and duplicate-safe', () async {
-    final thread = _thread();
-    final repository = await _repositoryWithThread(thread);
-    addTearDown(repository.dispose);
+  test('server row replaces the matching optimistic client message', () {
     final pending = ChatMessage(
-      id: 'pending-client-1',
-      text: 'Привет',
+      id: 'local-pending-1',
+      text: 'pending text',
       createdAt: DateTime.utc(2026, 7, 18, 12),
       isMine: true,
+      senderId: 'me',
       isPending: true,
+      clientMessageId: 'client-message-1',
     );
-
-    expect(await repository.sendPendingChatText(thread.id, pending), isTrue);
-    expect(
-      repository.threadById(thread.id)!.messages.map((message) => message.id),
-      ['pending-client-1'],
+    final delivered = ChatMessage(
+      id: 'server-message-1',
+      text: 'pending text',
+      createdAt: DateTime.utc(2026, 7, 18, 12, 0, 1),
+      isMine: true,
+      senderId: 'me',
+      clientMessageId: 'client-message-1',
     );
-
-    expect(await repository.sendPendingChatText(thread.id, pending), isFalse);
-    expect(repository.threadById(thread.id)!.messages, hasLength(1));
+    final messages = AppRepository.mergeChatMessages([delivered], [pending]);
+    expect(messages, hasLength(1));
+    expect(messages.single.id, 'server-message-1');
+    expect(messages.single.clientMessageId, 'client-message-1');
+    expect(messages.single.isPending, isFalse);
   });
 
-  test(
-    'retry reuses the failed message id instead of appending a copy',
-    () async {
-      final failed = ChatMessage(
-        id: 'pending-client-failed',
-        text: 'Повторить',
-        createdAt: DateTime.utc(2026, 7, 18, 12),
-        isMine: true,
-        hasError: true,
-      );
-      final thread = _thread(messages: [failed]);
-      final repository = await _repositoryWithThread(thread);
-      addTearDown(repository.dispose);
+  test('client message deduplication is scoped to the sender', () {
+    final fromAlice = ChatMessage(
+      id: 'server-alice-1',
+      text: 'Alice',
+      createdAt: DateTime.utc(2026, 7, 18, 12),
+      isMine: false,
+      senderId: 'alice',
+      clientMessageId: 'shared-client-id',
+    );
+    final fromBob = ChatMessage(
+      id: 'server-bob-1',
+      text: 'Bob',
+      createdAt: DateTime.utc(2026, 7, 18, 12, 0, 1),
+      isMine: false,
+      senderId: 'bob',
+      clientMessageId: 'shared-client-id',
+    );
 
-      expect(await repository.retryChatText(thread.id, failed), isTrue);
-      final messages = repository.threadById(thread.id)!.messages;
-      expect(messages, hasLength(1));
-      expect(messages.single.id, failed.id);
-      expect(messages.single.hasError, isFalse);
-    },
-  );
+    expect(AppRepository.sameChatMessageIdentity(fromAlice, fromBob), isFalse);
+    final messages = AppRepository.mergeChatMessages([
+      fromAlice,
+      fromBob,
+    ], const []);
 
-  test('media retry reuses the failed id and local attachment', () async {
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'clothes-chat-media-retry-',
+    expect(messages.map((message) => message.id), [
+      'server-alice-1',
+      'server-bob-1',
+    ]);
+  });
+
+  test('stale server response cannot regress receipts or edited content', () {
+    final edited = ChatMessage(
+      id: 'server-message-2',
+      text: 'edited text',
+      createdAt: DateTime.utc(2026, 7, 18, 12),
+      isMine: true,
+      senderId: 'me',
+      clientMessageId: 'client-message-2',
+      editedAt: DateTime.utc(2026, 7, 18, 12, 1),
+      readBy: const ['recipient'],
+      deliveredTo: const ['recipient'],
     );
-    addTearDown(() => temporaryDirectory.delete(recursive: true));
-    final file = File(
-      '${temporaryDirectory.path}${Platform.pathSeparator}retry.png',
+    final staleRpcResponse = ChatMessage(
+      id: 'server-message-2',
+      text: 'original text',
+      createdAt: DateTime.utc(2026, 7, 18, 12),
+      isMine: true,
+      senderId: 'me',
+      clientMessageId: 'client-message-2',
     );
-    await file.writeAsBytes(
-      base64Decode(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-      ),
+
+    final messages = AppRepository.mergeChatMessages(
+      [staleRpcResponse],
+      [edited],
     );
+
+    expect(messages, hasLength(1));
+    expect(messages.single.text, 'edited text');
+    expect(messages.single.editedAt, edited.editedAt);
+    expect(messages.single.readBy, ['recipient']);
+    expect(messages.single.deliveredTo, ['recipient']);
+    expect(
+      messages.single.effectiveStatus,
+      ChatMessageDeliveryStatus.delivered,
+    );
+  });
+
+  test('retry identity replaces failed state instead of appending a copy', () {
+    final failed = ChatMessage(
+      id: 'pending-client-failed',
+      text: 'Повторить',
+      createdAt: DateTime.utc(2026, 7, 18, 12),
+      isMine: true,
+      hasError: true,
+      clientMessageId: 'pending-client-failed',
+    );
+    final retrying = failed.copyWith(isPending: true, hasError: false);
+    final messages = AppRepository.mergeChatMessages(
+      const [],
+      [failed],
+      outbox: [retrying],
+    );
+    expect(messages, hasLength(1));
+    expect(messages.single.id, failed.id);
+    expect(messages.single.hasError, isFalse);
+  });
+
+  test('media outbox keeps its local retry identity', () {
     final failed = ChatMessage(
       id: 'pending-media-failed',
       text: '',
       createdAt: DateTime.utc(2026, 7, 18, 12),
       isMine: true,
       type: 'image',
-      attachment: ChatAttachment(
-        url: file.path,
+      attachment: const ChatAttachment(
+        url: 'C:/temporary/retry.png',
         name: 'retry.png',
         mimeType: 'image/png',
       ),
       hasError: true,
+      clientMessageId: 'pending-media-failed',
     );
-    final thread = _thread(messages: [failed]);
-    final repository = await _repositoryWithThread(thread);
-    addTearDown(repository.dispose);
-
-    expect(await repository.retryChatMedia(thread.id, failed), isTrue);
-    final messages = repository.threadById(thread.id)!.messages;
+    final retrying = failed.copyWith(isPending: true, hasError: false);
+    final messages = AppRepository.mergeChatMessages(
+      const [],
+      [failed],
+      outbox: [retrying],
+    );
     expect(messages, hasLength(1));
     expect(messages.single.id, failed.id);
     expect(messages.single.hasError, isFalse);
-    expect(messages.single.attachment?.url, startsWith('data:image/'));
+    expect(messages.single.attachment?.url, 'C:/temporary/retry.png');
   });
 
   test('legacy sendMessage forwards its delivery result', () async {
@@ -107,8 +162,7 @@ void main() {
     addTearDown(repository.dispose);
 
     final Future<bool> delivery = repository.sendMessage(thread.id, 'Текст');
-    expect(await delivery, isTrue);
-    expect(repository.threadById(thread.id)!.messages, hasLength(1));
+    expect(await delivery, isFalse);
   });
 
   test(

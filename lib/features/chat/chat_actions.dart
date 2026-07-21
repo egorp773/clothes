@@ -14,6 +14,9 @@ typedef RetryChatTextCallback =
 typedef RetryChatMediaCallback =
     Future<bool> Function(String threadId, ChatMessage failedMessage);
 
+typedef RetryChatMessageCallback =
+    Future<bool> Function(String threadId, ChatMessage failedMessage);
+
 typedef SendReplyCallback =
     Future<bool> Function(String threadId, String text, ChatMessage replyTo);
 
@@ -39,6 +42,9 @@ typedef EditMessageCallback =
 
 typedef DeleteMessageCallback =
     Future<bool> Function(String threadId, String messageId);
+typedef ReportMessageCallback =
+    Future<bool> Function(String threadId, String messageId, String reason);
+typedef BlockChatUserCallback = Future<bool> Function(String threadId);
 
 typedef UpdateThreadCallback =
     Future<bool> Function(
@@ -53,6 +59,7 @@ typedef SaveDraftCallback =
     Future<void> Function(String threadId, String draft);
 
 typedef MarkThreadReadCallback = Future<void> Function(String threadId);
+typedef LoadOlderChatMessagesCallback = Future<bool> Function(String threadId);
 typedef SetChatVisibilityCallback =
     void Function(String threadId, bool isVisible);
 
@@ -67,14 +74,18 @@ class ChatActions {
     this.sendPendingText,
     this.retryText,
     this.retryMedia,
+    this.retryMessage,
     this.sendReply,
     this.sendImage,
     this.sendMedia,
     this.editMessage,
     this.deleteMessage,
+    this.reportMessage,
+    this.blockUser,
     this.updateThread,
     this.saveDraft,
     this.markRead,
+    this.loadOlder,
     this.setVisibility,
   });
 
@@ -82,13 +93,17 @@ class ChatActions {
   final SendPendingChatTextCallback? sendPendingText;
   final RetryChatTextCallback? retryText;
   final RetryChatMediaCallback? retryMedia;
+  final RetryChatMessageCallback? retryMessage;
   final SendReplyCallback? sendReply;
   final SendChatImageCallback? sendImage;
   final SendChatMediaCallback? sendMedia;
   final EditMessageCallback? editMessage;
   final DeleteMessageCallback? deleteMessage;
+  final ReportMessageCallback? reportMessage;
+  final BlockChatUserCallback? blockUser;
   final UpdateThreadCallback? updateThread;
   final SaveDraftCallback? saveDraft;
   final MarkThreadReadCallback? markRead;
+  final LoadOlderChatMessagesCallback? loadOlder;
   final SetChatVisibilityCallback? setVisibility;
 }

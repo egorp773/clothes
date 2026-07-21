@@ -1,28 +1,118 @@
 # Production readiness и архитектура интеграций
 
-Срез репозитория и официальной документации на 2026-07-17. Это технический чек-лист, а не юридическое заключение. Перед запуском нужно повторно сверить тарифы, статусы и условия провайдеров: они меняются независимо от приложения.
+Срез репозитория и официальной документации на **2026-07-20**. Это технический
+чек-лист, а не юридическое заключение. Перед запуском нужно повторно сверить
+редакции законов, тарифы, статусы и условия провайдеров: они меняются независимо
+от приложения.
 
 ## Вердикт
 
-Приложение **пока нельзя выпускать с реальными оплатой и доставкой**. До закрытия P0 все live-флаги оплаты, выплат и перевозчиков должны оставаться выключенными на сервере. UI выбора доставки не означает, что интеграция существует.
+Приложение **нельзя выпускать с реальными оплатой и доставкой**. До закрытия P0
+все live-флаги оплаты, выплат и перевозчиков должны оставаться выключенными на
+сервере. UI выбора доставки и наличие provider-neutral таблиц не означают, что
+интеграция существует.
+
+Неустранимые одним коммитом P0:
+
+1. оператор/сторона договора и публичные реквизиты не определены;
+2. нет доказанной первичной локализации данных граждан РФ: hosted Supabase не
+   предлагает российский регион, а RF self-hosted production еще не развернут;
+3. нет договоров обработки/карты последующих и трансграничных передач для
+   Supabase/FCM/analyzer/logging/support;
+4. нет подписанного договора Safe Deal, кассового заключения, provider
+   credentials, webhook verification и ежедневной reconciliation;
+5. нет независимого legal review, pentest, staging migration reset и restore
+   drill.
+
+Реестр исходных технических проблем и доказательств:
+`security_legal_audit_2026-07-19.md`.
 
 Обозначения: ✅ есть в репозитории; ⚠️ есть частично или требует проверки в развернутом окружении; ❌ отсутствует либо блокирует релиз.
 
 | Область | Статус на дату среза | Что нужно до production |
 |---|---:|---|
-| Версионируемые Supabase migrations и RLS для основных сущностей | ⚠️ | Новая цепочка закрывает основные chat/order/view/storage-политики, но еще не применена к связанному проекту; сначала staging, Security Advisor и сверка drift |
-| Заказы | ⚠️ | `create_order(jsonb)` серверно фиксирует товар/цену, idempotency и резерв, а прямые записи клиента отозваны; до live нужны узкие RPC переходов, платежи, отправления и E2E в staging |
-| ЮKassa / безопасная сделка | ❌ | Нет deal/payment/payout/refund ledger, webhook-обработки, сверки и договора |
+| Identity, возраст и согласия | ⚠️ | Новая модель должна пройти reset/deploy: один user, отдельные buyer/seller account, server 18+, четыре независимых versioned consent; без active legal versions система обязана быть fail-closed |
+| Версионируемые Supabase migrations и RLS | ⚠️ | Migration chain является единственным источником истины; до GO нужны clean reset, staging deploy, Security Advisor, drift и multi-user RLS tests |
+| Объявления и seller risk | ⚠️ | Нужны verified private seller, семь деклараций, moderation gate, draft/public Storage split и проверенный risk hold; материальное редактирование скрывает карточку и создает immutable revision до повторной модерации; профессиональные типы остаются запрещены |
+| Заказы | ⚠️ | Клиенту запрещены прямые записи; до live нужно доказать exact state graph, конкурентный резерв, узкие role commands и E2E в staging |
+| ЮKassa / безопасная сделка | ⚠️ | Внутренние payment/payout ledgers, replay fingerprint и 48-часовой payout hold реализованы; нет подписанного provider webhook, фактических refund/payout, сверки и договора, поэтому live-флаги заблокированы |
 | СДЭК, Почта России, Яндекс Доставка | ❌ | В коде есть названия способов, но нет серверных адаптеров, реальных ПВЗ, тарифов, отправлений и синхронизации статусов |
 | Модерация UGC | ⚠️ | Есть foundation-таблицы ролей, жалоб, блокировок и аудита, а клиент умеет жаловаться/блокировать; нужны обязательная очередь до публикации, панель, SLA, апелляции и abuse-тесты |
 | Удаленное управление баннерами | ⚠️ | Есть серверная модель versioned banners, роли и аудит; каталог пока использует локальные баннеры, нет отдельной панели, preview/publish/rollback UI и клиентского feature-flag rollout |
-| Удаление аккаунта | ⚠️ | Клиент вызывает fail-closed Edge Function, которая удаляет owner Storage/UGC и Auth user; legacy direct RPC отозван. Нужны staging deploy/E2E, retention-решение и Apple token revocation после добавления Apple login |
+| Споры | ⚠️ | Есть typed reasons, participant RPC, private evidence ACL, server-side MIME/SHA-256 finalize, payout freeze и moderator audit; нужны AV/quota/orphan cleanup, provider refund/outbox, апелляции и операционный SLA |
+| Удаление аккаунта | ⚠️ | Есть recent-auth Edge workflow, hold, storage inventory, anonymization и локальная очистка; production требует утвержденный retention schedule, scheduled purge/legal hold и staging E2E |
 | Социальный вход | ❌ | Есть Яндекс/VK/Telegram, но нет эквивалентного privacy-preserving login по guideline 4.8; предпочтительно добавить Sign in with Apple |
 | iOS identity и push | ⚠️ | Debug/Release APNs entitlement разделен и FCM-клиент реализован, но остаются `com.example.clothes`, тестовый URL scheme, отсутствие App ID/APNs key/provisioning и release Firebase-конфигурации |
-| Privacy | ❌ | Нужны публичная privacy policy, точные App Privacy answers и Xcode privacy report; app-level `PrivacyInfo.xcprivacy` в репозитории отсутствует |
+| Privacy/локализация | ❌ | Нет назначенного оператора, финальных документов, RF primary deployment, vendor/transfer map, точных App Privacy answers и Xcode privacy report |
 | Release CI | ⚠️ | Один workflow на `master` запускает format/analyze/tests, Android debug и unsigned iOS compile; отсутствуют подписанные AAB/IPA, environments/secrets, TestFlight/internal-testing и device E2E gate |
 
-Новая pending-миграция отзывает прямые `insert/update/delete` на `orders` и старый positional checkout RPC. Это станет реальной границей доверия только после успешного staging/production deploy и проверки grants. Следующий P0 — добавить узкие команды (`cancel`, `confirm_handoff`, `confirm_receipt`, `open_dispute`), проверяемые серверным автоматом состояний. `service_role` и ключи провайдеров запрещено помещать в Flutter, браузерную админку, логи и Git.
+Миграции отзывают прямые `insert/update/delete` на `orders` и старый positional
+checkout RPC. Переходы выполняет только `apply_order_transition`, открытие
+спора — отдельная server-side команда, а факт оплаты — provider-only RPC.
+Граница считается доказанной только после clean reset/deploy и multi-user
+проверки grants/RLS. `service_role` и ключи провайдеров запрещено помещать во
+Flutter, браузерную админку, логи и Git.
+
+### Что закрыто кодом в срезе 20 июля
+
+- один `users` с отдельными `buyer_profiles`, `seller_accounts` и заделом
+  `business_profiles`; продажа разрешена только verified
+  `private_individual`;
+- server-side 18+ gate, versioned legal documents и отдельные обязательные
+  consent events; marketing opt-in не является условием регистрации;
+- server-owned поля профиля и объявления защищены trigger/RLS, публикация идет
+  через fail-closed Edge command с семью версиями seller declarations;
+- черновые и опубликованные product media разделены, финальный путь имеет вид
+  `{user_id}/{listing_id}/{file}`, а публичное чтение связано с допустимостью
+  объявления и продавца;
+- заказ имеет серверный автомат, dispute workflow и неизменяемые события;
+- payout не может перейти к обработке раньше `completed_at + 48 hours`, при
+  активном споре или выключенном live-флаге;
+- чат использует soft delete, отдельные reports/blocks и evidence/audit слой;
+- account deletion не обещает уничтожение обязательной истории и не завершает
+  локальный logout, пока сервер не подтвердил финальную анонимизацию.
+
+Это не меняет вердикт NO-GO: утвержденные legal texts и retention сроки в
+репозитории намеренно не подставляются шаблонами, а реального платежного и
+логистического провайдера код пока не вызывает.
+
+## Допуск пользователей и продавцов
+
+Покупка и продажа разрешаются только при одновременном выполнении:
+
+- account active, обязательные актуальные версии terms/privacy/personal-data
+  consent приняты отдельно;
+- дата рождения проверена сервером, пользователю исполнилось 18 лет;
+- для продажи существует `seller_account` типа `private_individual` со
+  статусом `verified`, без moderation/risk hold;
+- по конкретному объявлению принята актуальная версия всех семи seller
+  declarations;
+- объявление не скрыто антифродом и прошло требуемую модерацию.
+
+Marketing consent не является условием доступа, может быть отозван независимо и
+не выводится из настроек push/SMS. Самозанятые, ИП и юридические лица не могут
+обойти запрет изменением Flutter payload: тип и entitlement проверяются в
+server-side транзакции.
+
+Риск частного продавца рассчитывается не чекбоксом, а событиями: число активных
+объявлений/продаж, массовые загрузки, новые одинаковые вещи, повтор изображений,
+брендов, размеров и других fingerprint-сигналов. Порог проверки скрывает
+публикации и переводит seller account в `verification_required`; высокий риск
+блокирует новые продажи. Решение модератора требует reason и audit trail.
+
+## Споры и безопасная сделка
+
+Спор открывает участник заказа только по разрешенной причине:
+`not_received`, `wrong_item`, `fake`, `hidden_damage`,
+`description_mismatch` или `other`. Открытие атомарно переводит заказ в
+`dispute`, замораживает seller payout и фиксирует snapshot объявления,
+переписки и загруженных evidence. Файлы спора находятся в приватном bucket и
+не удаляются обычным chat/account-delete flow.
+
+Модератор не «редактирует заказ»: он создает неизменяемое решение с reason,
+before/after, actor и request id, после чего server-side финансовая команда
+создает возврат/выплату. До договора Safe Deal и проверенной provider
+интеграции такие команды остаются отключены.
 
 ## Целевая граница доверия
 
@@ -53,17 +143,20 @@ PaymentProvider / DeliveryProvider adapters
 Заказ:
 
 ```text
-draft -> awaiting_payment -> paid_held -> awaiting_handoff -> in_transit
-      -> delivered -> acceptance_window -> completed
+created -> paid -> seller_confirmed -> shipped -> received
+        -> inspection -> completed
 
-awaiting_payment ---------------------------> canceled
-paid_held / awaiting_handoff / in_transit --> disputed
-disputed -> refunding -> refunded
-disputed -> completed
-in_transit -> return_in_transit -> returned -> refunded
+created / paid / seller_confirmed ---------------------> cancelled
+paid / seller_confirmed / shipped / received /
+inspection --------------------------------------------> dispute
 ```
 
-Платежную сделку хранить отдельно:
+`received` фиксирует доказанное событие выдачи/получения, а `inspection` —
+начавшееся окно проверки. Они не смешиваются с payment/payout state. Выход из
+`dispute` выполняет только moderator/server command и оформляется
+компенсирующими финансовыми событиями; клиент не присваивает статус напрямую.
+
+Платежную сделку хранить отдельно от этих девяти состояний:
 
 ```text
 none -> deal_open -> payment_pending -> funds_held

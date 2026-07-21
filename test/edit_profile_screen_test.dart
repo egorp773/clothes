@@ -1,4 +1,5 @@
 import 'package:clothes/models/app_profile.dart';
+import 'package:clothes/models/account_deletion.dart';
 import 'package:clothes/screens/edit_profile_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -38,7 +39,11 @@ void main() {
             return null;
           },
           onConfirmEmail: (email) async => null,
-          onDeleteAccount: () async => null,
+          onDeleteAccount: () async => const AccountDeletionResult(
+            status: AccountDeletionStatus.anonymized,
+            requestId: '',
+            retainedCategories: [],
+          ),
         ),
       ),
     );
@@ -90,7 +95,9 @@ void main() {
           onConfirmEmail: (email) async => null,
           onDeleteAccount: () async {
             deleteCalls += 1;
-            return 'Сервер не подтвердил удаление аккаунта';
+            return const AccountDeletionResult.failed(
+              'Сервер не подтвердил удаление аккаунта',
+            );
           },
         ),
       ),

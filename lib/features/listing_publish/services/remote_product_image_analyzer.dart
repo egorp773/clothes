@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/app_config.dart';
 import 'product_image_analyzer.dart';
@@ -13,6 +12,7 @@ class RemoteProductImageAnalyzer implements ProductImageAnalyzer {
   RemoteProductImageAnalyzer({
     String? baseUrl,
     http.Client? client,
+    @Deprecated('User access tokens must not be sent to analyzer services.')
     String? Function()? accessTokenProvider,
     // Production intentionally has a single inference slot. A publication
     // request can briefly wait behind one durable enrichment job, so the
@@ -22,21 +22,22 @@ class RemoteProductImageAnalyzer implements ProductImageAnalyzer {
          RegExp(r'/$'),
          '',
        ),
-       _client = client ?? http.Client(),
-       _accessTokenProvider =
-           accessTokenProvider ??
-           (() => Supabase.instance.client.auth.currentSession?.accessToken);
+       _client = client ?? http.Client();
 
   final String baseUrl;
   final Duration timeout;
   final http.Client _client;
-  final String? Function() _accessTokenProvider;
 
   @override
   Future<ProductAnalysisResult> analyze({
     required List<String> imageUrls,
     String? listingId,
   }) async {
+    if (baseUrl.isEmpty) {
+      throw const ProductImageAnalysisException(
+        'Analyzer is disabled until a protected Edge proxy is configured',
+      );
+    }
     final sources = imageUrls
         .map((value) => value.trim())
         .where((value) => value.isNotEmpty)
@@ -50,7 +51,6 @@ class RemoteProductImageAnalyzer implements ProductImageAnalyzer {
       'POST',
       Uri.parse('$baseUrl/v1/analyze'),
     );
-    _authorize(request.headers);
     if (listingId != null && listingId.isNotEmpty) {
       request.fields['listing_id'] = listingId;
     }
@@ -109,7 +109,6 @@ class RemoteProductImageAnalyzer implements ProductImageAnalyzer {
         'POST',
         Uri.parse('$baseUrl/v1/analyze/$analysisId/enrich'),
       );
-      _authorize(request.headers);
       for (var index = 0; index < sources.length; index++) {
         final loaded = await _loadSource(sources[index]);
         request.files.add(
@@ -174,10 +173,8 @@ class RemoteProductImageAnalyzer implements ProductImageAnalyzer {
   @override
   Future<ProductAnalysisResult?> getAnalysis(String analysisId) async {
     try {
-      final headers = <String, String>{};
-      _authorize(headers);
       final response = await _client
-          .get(Uri.parse('$baseUrl/v1/analyze/$analysisId'), headers: headers)
+          .get(Uri.parse('$baseUrl/v1/analyze/$analysisId'))
           .timeout(timeout);
       if (response.statusCode == 404) return null;
       if (response.statusCode < 200 || response.statusCode >= 300) return null;
@@ -187,13 +184,6 @@ class RemoteProductImageAnalyzer implements ProductImageAnalyzer {
           : null;
     } catch (_) {
       return null;
-    }
-  }
-
-  void _authorize(Map<String, String> headers) {
-    final token = _accessTokenProvider();
-    if (token != null && token.isNotEmpty) {
-      headers['Authorization'] = 'Bearer $token';
     }
   }
 
