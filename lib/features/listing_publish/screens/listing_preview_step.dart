@@ -56,48 +56,50 @@ class ListingPreviewStep extends StatelessWidget {
                     null,
           ),
         ),
-        Container(
-          key: const Key('seller-declarations-panel'),
-          constraints: const BoxConstraints(maxHeight: 270),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            border: Border(
-              top: BorderSide(color: Theme.of(context).dividerColor),
+        Material(
+          color: Theme.of(context).colorScheme.surface,
+          child: Container(
+            key: const Key('seller-declarations-panel'),
+            constraints: const BoxConstraints(maxHeight: 270),
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: Theme.of(context).dividerColor),
+              ),
             ),
-          ),
-          child: ListView(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
-            children: [
-              Text(
-                'Подтверждения продавца '
-                '(${controller.draft.sellerDeclarations.length}/'
-                '${SellerDeclaration.values.length})',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 4),
-              for (final declaration in SellerDeclaration.values)
-                CheckboxListTile(
-                  key: Key('seller-declaration-${declaration.wireName}'),
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  value: controller.draft.sellerDeclarations.contains(
-                    declaration,
-                  ),
-                  title: Text(
-                    declaration.label,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  onChanged: (value) => controller.setSellerDeclaration(
-                    declaration,
-                    value ?? false,
-                  ),
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+              children: [
+                Text(
+                  'Подтверждения продавца '
+                  '(${controller.draft.sellerDeclarations.length}/'
+                  '${SellerDeclaration.values.length})',
+                  style: Theme.of(context).textTheme.titleSmall,
                 ),
-              Text(
-                'Версия: ${controller.draft.sellerConfirmationVersion}',
-                style: Theme.of(context).textTheme.labelSmall,
-              ),
-            ],
+                const SizedBox(height: 4),
+                for (final declaration in SellerDeclaration.values)
+                  CheckboxListTile(
+                    key: Key('seller-declaration-${declaration.wireName}'),
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    value: controller.draft.sellerDeclarations.contains(
+                      declaration,
+                    ),
+                    title: Text(
+                      declaration.label,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    onChanged: (value) => controller.setSellerDeclaration(
+                      declaration,
+                      value ?? false,
+                    ),
+                  ),
+                Text(
+                  'Версия: ${controller.draft.sellerConfirmationVersion}',
+                  style: Theme.of(context).textTheme.labelSmall,
+                ),
+              ],
+            ),
           ),
         ),
       ],

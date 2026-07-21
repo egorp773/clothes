@@ -300,7 +300,8 @@ class VisualSearchService:
         for url in urls:
             download_started = time.perf_counter()
             try:
-                payload, image = self._download_image(url)
+                download_url = self.store.resolve_media_download_url(url)
+                payload, image = self._download_image(download_url)
             except Exception:
                 skipped += 1
                 continue
@@ -584,7 +585,7 @@ class VisualSearchService:
         urls: list[str] = []
         for value in candidates:
             url = str(value or "").strip()
-            if url.startswith(("https://", "http://")) and url not in urls:
+            if self._is_product_media_reference(url) and url not in urls:
                 urls.append(url)
             if len(urls) >= self.settings.visual_search_max_product_images:
                 break
@@ -598,7 +599,9 @@ class VisualSearchService:
                 product.get("cutout_image"),
                 *(product.get("outfit_images") or []),
             ]
-            if str(value or "").strip().startswith(("https://", "http://"))
+            if VisualSearchService._is_product_media_reference(
+                str(value or "").strip()
+            )
         }
 
     @staticmethod
@@ -610,8 +613,21 @@ class VisualSearchService:
                 product.get("image"),
                 product.get("original_image"),
             ]
-            if str(value or "").strip().startswith(("https://", "http://"))
+            if VisualSearchService._is_product_media_reference(
+                str(value or "").strip()
+            )
         }
+
+    @staticmethod
+    def _is_product_media_reference(value: str) -> bool:
+        return value.startswith(
+            (
+                "https://",
+                "http://",
+                "storage://product-images/",
+                "storage://outfit-images/",
+            )
+        )
 
     @staticmethod
     def _related_subcategories(candidates) -> list[str]:

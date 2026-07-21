@@ -3,6 +3,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as path;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../../core/product_media_hydration.dart';
 import '../../../core/supabase_config.dart';
 import '../../../models/product.dart';
 
@@ -78,7 +79,11 @@ class ListingEditRepository {
       if (snapshot is! Map) {
         throw StateError('Edited listing snapshot is missing');
       }
-      return Product.fromSupabase(Map<String, dynamic>.from(snapshot));
+      return productFromAuthoritativeSnapshot(
+        Map<String, dynamic>.from(snapshot),
+        signer: (bucket, objectPath) =>
+            client.storage.from(bucket).createSignedUrl(objectPath, 60 * 60),
+      );
     } on ListingEditException {
       rethrow;
     } on FunctionException catch (error) {
@@ -95,6 +100,18 @@ class ListingEditRepository {
         error,
       );
     }
+  }
+
+  @visibleForTesting
+  static Future<Product> productFromAuthoritativeSnapshot(
+    Map<String, dynamic> snapshot, {
+    required StorageMediaSigner signer,
+  }) async {
+    final hydrated = await hydrateProductMediaSnapshot(
+      snapshot,
+      signer: signer,
+    );
+    return Product.fromSupabase(hydrated);
   }
 
   Future<String> _activeConfirmationVersion(SupabaseClient client) async {

@@ -624,7 +624,7 @@ class ListingPublishController extends ChangeNotifier {
       ...draft.photos.where((photo) => photo.id != mainPhoto?.id),
     ];
     final sources = orderedPhotos
-        .map((photo) => photo.displaySource)
+        .map((photo) => photo.analysisSource)
         .where((source) => source.isNotEmpty)
         .toList();
     _analysisFuture = _runAnalysis(sources);

@@ -13,11 +13,78 @@ typedef ChatRealtimeRowCallback =
       Map<String, dynamic> row,
     );
 
-class ChatRealtimeService extends ChangeNotifier {
-  ChatRealtimeService(this._client);
+typedef ChatRealtimeSubscriptionCallback =
+    void Function(RealtimeSubscribeStatus status, Object? error);
+
+@visibleForTesting
+abstract interface class ChatRealtimeChannelAdapter {
+  ChatRealtimeChannelAdapter onPostgresChanges({
+    required PostgresChangeEvent event,
+    required String schema,
+    required String table,
+    required ChatRealtimeRowCallback callback,
+  });
+
+  void subscribe(ChatRealtimeSubscriptionCallback callback);
+
+  Future<void> remove();
+}
+
+typedef ChatRealtimeChannelFactory =
+    ChatRealtimeChannelAdapter Function(String channelName);
+
+class _SupabaseChatRealtimeChannel implements ChatRealtimeChannelAdapter {
+  _SupabaseChatRealtimeChannel(this._client, this._channel);
 
   final SupabaseClient _client;
-  RealtimeChannel? _channel;
+  final RealtimeChannel _channel;
+
+  @override
+  ChatRealtimeChannelAdapter onPostgresChanges({
+    required PostgresChangeEvent event,
+    required String schema,
+    required String table,
+    required ChatRealtimeRowCallback callback,
+  }) {
+    _channel.onPostgresChanges(
+      event: event,
+      schema: schema,
+      table: table,
+      callback: (payload) {
+        final row = payload.eventType == PostgresChangeEvent.delete
+            ? payload.oldRecord
+            : payload.newRecord;
+        if (row.isNotEmpty) {
+          callback(payload.eventType, Map<String, dynamic>.from(row));
+        }
+      },
+    );
+    return this;
+  }
+
+  @override
+  void subscribe(ChatRealtimeSubscriptionCallback callback) {
+    _channel.subscribe(callback);
+  }
+
+  @override
+  Future<void> remove() async {
+    await _client.removeChannel(_channel);
+  }
+}
+
+class ChatRealtimeService extends ChangeNotifier {
+  ChatRealtimeService(SupabaseClient client)
+    : _channelFactory = ((channelName) =>
+          _SupabaseChatRealtimeChannel(client, client.channel(channelName)));
+
+  @visibleForTesting
+  ChatRealtimeService.testing({
+    required ChatRealtimeChannelFactory channelFactory,
+  }) : _channelFactory = channelFactory;
+
+  final ChatRealtimeChannelFactory _channelFactory;
+  ChatRealtimeChannelAdapter? _channel;
   Timer? _retryTimer;
   int _generation = 0;
   String _userId = '';
@@ -30,6 +97,8 @@ class ChatRealtimeService extends ChangeNotifier {
   ChatFailure? _lastError;
   DateTime? _lastConnectedAt;
   String? _activeChannel;
+  Future<void> _messageQueue = Future<void>.value();
+  bool _isDisposed = false;
 
   ChatRealtimeConnectionStatus get status => _status;
   ChatFailure? get lastError => _lastError;
@@ -42,43 +111,39 @@ class ChatRealtimeService extends ChangeNotifier {
     required VoidCallback onThreadInvalidated,
     required FutureOr<void> Function() onConnected,
   }) async {
-    await stop();
+    final generation = ++_generation;
+    _clearActiveCallbacks();
+    await _detachChannel();
+    if (generation != _generation) return;
     final identity = userId.trim();
-    if (identity.isEmpty) return;
+    if (identity.isEmpty) {
+      _setStatus(ChatRealtimeConnectionStatus.disconnected);
+      return;
+    }
     _userId = identity;
     _onMessage = onMessage;
     _onThreadInvalidated = onThreadInvalidated;
     _onConnected = onConnected;
-    final generation = ++_generation;
+    _messageQueue = Future<void>.value();
     final channelName = 'chat:$identity';
     _activeChannel = channelName;
     _setStatus(ChatRealtimeConnectionStatus.connecting);
 
-    final channel = _client
-        .channel(channelName)
+    final channel = _channelFactory(channelName)
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'chat_messages',
-          callback: (payload) {
+          callback: (event, row) {
             if (!_isCurrent(generation, identity)) return;
-            final row = payload.eventType == PostgresChangeEvent.delete
-                ? payload.oldRecord
-                : payload.newRecord;
-            if (row.isNotEmpty) {
-              unawaited(
-                Future<void>.sync(
-                  () => _onMessage?.call(payload.eventType, row),
-                ),
-              );
-            }
+            _enqueueMessage(generation, identity, event, row);
           },
         )
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'message_threads',
-          callback: (_) {
+          callback: (_, _) {
             if (_isCurrent(generation, identity)) _onThreadInvalidated?.call();
           },
         )
@@ -86,7 +151,7 @@ class ChatRealtimeService extends ChangeNotifier {
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'chat_thread_member_state',
-          callback: (_) {
+          callback: (_, _) {
             if (_isCurrent(generation, identity)) _onThreadInvalidated?.call();
           },
         );
@@ -138,15 +203,29 @@ class ChatRealtimeService extends ChangeNotifier {
   }
 
   Future<void> stop() async {
-    _generation++;
+    final generation = ++_generation;
+    _clearActiveCallbacks();
+    await _detachChannel();
+    if (generation != _generation) return;
+    _setStatus(ChatRealtimeConnectionStatus.disconnected);
+  }
+
+  void _clearActiveCallbacks() {
     _retryTimer?.cancel();
     _retryTimer = null;
+    _userId = '';
+    _onMessage = null;
+    _onThreadInvalidated = null;
+    _onConnected = null;
+  }
+
+  Future<void> _detachChannel() async {
     final channel = _channel;
     _channel = null;
     _activeChannel = null;
     if (channel != null) {
       try {
-        await _client.removeChannel(channel);
+        await channel.remove();
       } catch (error, stackTrace) {
         logChatFailure(
           ChatFailure.from(
@@ -158,8 +237,38 @@ class ChatRealtimeService extends ChangeNotifier {
         );
       }
     }
-    _setStatus(ChatRealtimeConnectionStatus.disconnected);
   }
+
+  void _enqueueMessage(
+    int generation,
+    String identity,
+    PostgresChangeEvent event,
+    Map<String, dynamic> row,
+  ) {
+    if (!_isCurrent(generation, identity)) return;
+    final immutableRow = Map<String, dynamic>.unmodifiable(row);
+    _messageQueue = _messageQueue.then((_) async {
+      if (!_isCurrent(generation, identity)) return;
+      try {
+        await _onMessage?.call(event, immutableRow);
+      } catch (error, stackTrace) {
+        logChatFailure(
+          ChatFailure.from(
+            error,
+            stackTrace,
+            operation: 'realtime_message_callback',
+            threadId: immutableRow['thread_id']?.toString() ?? '',
+            clientMessageId:
+                immutableRow['client_message_id']?.toString() ?? '',
+          ),
+          userId: identity,
+        );
+      }
+    });
+  }
+
+  @visibleForTesting
+  Future<void> get pendingMessageCallbacks => _messageQueue;
 
   bool _isCurrent(int generation, String userId) =>
       generation == _generation && userId == _userId;
@@ -177,11 +286,13 @@ class ChatRealtimeService extends ChangeNotifier {
   void _setStatus(ChatRealtimeConnectionStatus value) {
     if (_status == value) return;
     _status = value;
-    notifyListeners();
+    if (!_isDisposed) notifyListeners();
   }
 
   @override
   void dispose() {
+    if (_isDisposed) return;
+    _isDisposed = true;
     unawaited(stop());
     super.dispose();
   }

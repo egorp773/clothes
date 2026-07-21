@@ -1,4 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'app_config.dart';
 
 class SupabaseConfig {
   static const String url = String.fromEnvironment('SUPABASE_URL');
@@ -28,21 +31,29 @@ class SupabaseConfig {
   static bool _isInitialized = false;
   static String? _configurationError;
 
-  static bool get isConfigured {
-    final parsed = Uri.tryParse(url);
-    return url.trim().isNotEmpty &&
+  static bool isValidConfiguration({
+    required String url,
+    required String anonKey,
+  }) {
+    final normalizedUrl = url.trim();
+    final parsed = Uri.tryParse(normalizedUrl);
+    return normalizedUrl.isNotEmpty &&
         anonKey.trim().isNotEmpty &&
         parsed != null &&
         parsed.scheme == 'https' &&
         parsed.host.isNotEmpty;
   }
 
+  static bool get isConfigured =>
+      isValidConfiguration(url: url, anonKey: anonKey);
+
   static Future<void> initialize() async {
     if (!isConfigured) {
       _isInitialized = false;
       _configurationError =
           'SUPABASE_URL and SUPABASE_ANON_KEY dart-defines are required';
-      return;
+      if (kDebugMode && AppConfig.allowUnsafeLocalDemo) return;
+      throw StateError(_configurationError!);
     }
     await Supabase.initialize(
       url: url,

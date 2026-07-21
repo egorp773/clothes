@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:clothes/features/listing_publish/data/listing_publish_repository.dart';
 import 'package:clothes/features/listing_publish/data/listing_catalogs.dart';
@@ -163,9 +164,124 @@ void main() {
       draft.photos.add(ListingPhoto(id: 'photo', localPath: '/tmp/photo.jpg'));
       expect(draft.validateForPublish(), contains('загрузки'));
     });
+
+    test('uses the local photo while a private upload receipt exists', () {
+      final photo = ListingPhoto(
+        id: 'photo',
+        localPath: '/tmp/photo.jpg',
+        remoteUrl: 'seller/listing/photo.jpg',
+        storagePath: 'seller/listing/photo.jpg',
+        uploadStatus: ListingPhotoUploadStatus.uploaded,
+      );
+
+      expect(photo.displaySource, '/tmp/photo.jpg');
+      expect(photo.analysisSource, '/tmp/photo.jpg');
+      expect(photo.isUploaded, isTrue);
+    });
+
+    test('accepts an uploaded private path without inventing a public URL', () {
+      final draft = _validDraft();
+      final photo = draft.photos.single
+        ..remoteUrl = ''
+        ..storagePath = 'seller/listing/photo.jpg'
+        ..uploadStatus = ListingPhotoUploadStatus.uploaded;
+
+      expect(photo.isUploaded, isTrue);
+      expect(draft.uploadedImageUrls, isEmpty);
+      expect(draft.validateForPublish(), isNull);
+    });
+  });
+
+  group('ListingPublishRepository image contract', () {
+    test('recognizes only formats accepted by listing Storage', () {
+      expect(
+        ListingPublishRepository.supportedImageExtension(
+          Uint8List.fromList([0xff, 0xd8, 0xff, 0xe0]),
+        ),
+        '.jpg',
+      );
+      expect(
+        ListingPublishRepository.supportedImageExtension(
+          Uint8List.fromList([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        ),
+        '.png',
+      );
+      expect(
+        ListingPublishRepository.supportedImageExtension(
+          Uint8List.fromList([
+            0x52,
+            0x49,
+            0x46,
+            0x46,
+            0,
+            0,
+            0,
+            0,
+            0x57,
+            0x45,
+            0x42,
+            0x50,
+          ]),
+        ),
+        '.webp',
+      );
+    });
+
+    test('rejects HEIC before upload instead of renaming it to JPEG', () {
+      final heic = Uint8List.fromList([
+        0,
+        0,
+        0,
+        24,
+        0x66,
+        0x74,
+        0x79,
+        0x70,
+        0x68,
+        0x65,
+        0x69,
+        0x63,
+      ]);
+
+      expect(
+        () => ListingPublishRepository.supportedImageExtension(heic),
+        throwsA(
+          isA<ListingPublishException>().having(
+            (error) => error.userMessage,
+            'userMessage',
+            contains('JPEG, PNG и WebP'),
+          ),
+        ),
+      );
+    });
   });
 
   group('ListingPublishController', () {
+    test('sends the local photo to analysis after upload completes', () async {
+      final analyzer = _RecordingAnalyzer();
+      final controller = ListingPublishController(
+        repository: _FakeRepository(),
+        analyzer: analyzer,
+        sellerName: 'Seller',
+        sellerHandle: '@seller',
+      );
+      controller.draft = ListingDraft.empty(sellerId: 'seller')
+        ..photos.add(
+          ListingPhoto(
+            id: 'photo',
+            localPath: '/tmp/photo.jpg',
+            remoteUrl: 'seller/listing/photo.jpg',
+            storagePath: 'seller/listing/photo.jpg',
+            uploadStatus: ListingPhotoUploadStatus.uploaded,
+          ),
+        );
+
+      await controller.resumeDraft();
+
+      expect(await analyzer.receivedSources.future, ['/tmp/photo.jpg']);
+      controller.dispose();
+    });
+
     test('keeps analyzer white as the canonical publication color', () {
       final controller = _controller();
       controller.draft = ListingDraft.empty(sellerId: 'seller');
@@ -534,7 +650,8 @@ void main() {
 
       await controller.retryPhotoUpload(photo);
       expect(photo.uploadStatus, ListingPhotoUploadStatus.uploaded);
-      expect(photo.remoteUrl, 'https://example.com/photo.jpg');
+      expect(photo.remoteUrl, isEmpty);
+      expect(photo.storagePath, endsWith('/photo.jpg'));
       expect(repository.uploadCalls, 2);
       controller.dispose();
     });
@@ -579,6 +696,7 @@ ListingDraft _validDraft() {
     ),
   );
   draft.mainPhotoId = 'photo';
+  draft.sellerDeclarations.addAll(SellerDeclaration.values);
   return draft;
 }
 
@@ -674,6 +792,21 @@ class _FakeAnalyzer implements ProductImageAnalyzer {
   Future<ProductAnalysisResult?> getAnalysis(String analysisId) async => null;
 }
 
+class _RecordingAnalyzer extends _FakeAnalyzer {
+  final receivedSources = Completer<List<String>>();
+
+  @override
+  Future<ProductAnalysisResult> analyze({
+    required List<String> imageUrls,
+    String? listingId,
+  }) {
+    if (!receivedSources.isCompleted) {
+      receivedSources.complete(List<String>.of(imageUrls));
+    }
+    return super.analyze(imageUrls: imageUrls, listingId: listingId);
+  }
+}
+
 class _FakeRepository extends ListingPublishRepository {
   _FakeRepository()
     : super(sellerName: 'Seller', sellerHandle: '@seller', fallbackCity: '');
@@ -726,7 +859,6 @@ class _DelayedUploadRepository extends _FakeRepository {
     if (!uploadStarted.isCompleted) uploadStarted.complete();
     await finishUpload.future;
     photo
-      ..remoteUrl = 'https://example.com/${photo.id}.jpg'
       ..storagePath = 'users/seller/listings/${draft.id}/${photo.id}.jpg'
       ..uploadStatus = ListingPhotoUploadStatus.uploaded;
     return true;
@@ -734,7 +866,7 @@ class _DelayedUploadRepository extends _FakeRepository {
 
   @override
   Future<void> deletePhoto(ListingDraft draft, ListingPhoto photo) async {
-    if (photo.remoteUrl.isNotEmpty) remoteDeletionCalls += 1;
+    if (photo.storagePath.isNotEmpty) remoteDeletionCalls += 1;
   }
 }
 
@@ -749,7 +881,6 @@ class _RetryUploadRepository extends _FakeRepository {
     uploadCalls += 1;
     if (uploadCalls == 1) return false;
     photo
-      ..remoteUrl = 'https://example.com/photo.jpg'
       ..storagePath = 'users/seller/listings/${draft.id}/photo.jpg'
       ..uploadStatus = ListingPhotoUploadStatus.uploaded;
     return true;

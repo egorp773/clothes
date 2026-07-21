@@ -61,13 +61,36 @@ void main() {
     final migration = File(
       'supabase/migrations/20260720200000_chat_server_authority.sql',
     ).readAsStringSync();
+    final serverIdMigration = File(
+      'supabase/migrations/20260721120000_chat_group_server_ids.sql',
+    ).readAsStringSync();
     final remote = File(
       'lib/features/chat/chat_remote_data_source.dart',
     ).readAsStringSync();
+    final repository = File('lib/data/app_repository.dart').readAsStringSync();
 
     expect(migration, contains('p_client_thread_id text'));
-    expect(remote, contains("'p_client_thread_id': clientThreadId"));
+    expect(remote, contains("'p_client_thread_id': requestId"));
+    expect(repository, contains('final groupCreationRequestId = _uuid.v4();'));
+    expect(repository, isNot(contains('id: groupCreationRequestId')));
+    expect(
+      repository,
+      matches(RegExp(r'_materializeRemoteThread\(\s*creation\.row')),
+    );
     expect(migration, contains("hashtextextended('chat:group:' || thread_id"));
+    expect(serverIdMigration, contains("request_key := 'group-request:v2:'"));
+    expect(serverIdMigration, contains('gen_random_uuid()::text'));
+    expect(
+      serverIdMigration,
+      isNot(contains("'group', 'group:' || request_id")),
+    );
+    expect(
+      serverIdMigration,
+      contains(
+        'grant execute on function public.create_group_thread(uuid[], text, text)',
+      ),
+    );
+    expect(serverIdMigration, contains("notify pgrst, 'reload schema'"));
     expect(migration, contains('if not thread_has_messages then'));
     expect(
       migration,

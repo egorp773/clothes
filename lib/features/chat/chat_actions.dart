@@ -14,6 +14,9 @@ typedef RetryChatTextCallback =
 typedef RetryChatMediaCallback =
     Future<bool> Function(String threadId, ChatMessage failedMessage);
 
+typedef RetryChatMessageCallback =
+    Future<bool> Function(String threadId, ChatMessage failedMessage);
+
 typedef SendReplyCallback =
     Future<bool> Function(String threadId, String text, ChatMessage replyTo);
 
@@ -71,6 +74,7 @@ class ChatActions {
     this.sendPendingText,
     this.retryText,
     this.retryMedia,
+    this.retryMessage,
     this.sendReply,
     this.sendImage,
     this.sendMedia,
@@ -89,6 +93,7 @@ class ChatActions {
   final SendPendingChatTextCallback? sendPendingText;
   final RetryChatTextCallback? retryText;
   final RetryChatMediaCallback? retryMedia;
+  final RetryChatMessageCallback? retryMessage;
   final SendReplyCallback? sendReply;
   final SendChatImageCallback? sendImage;
   final SendChatMediaCallback? sendMedia;

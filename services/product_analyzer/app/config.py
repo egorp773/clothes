@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     visual_search_strong_rerank_score: float = 0.58
     visual_search_similar_result_count: int = 12
     visual_search_download_timeout_seconds: float = 6.0
+    # Storage URLs are used only for the bounded indexing download. Durable
+    # embeddings keep their canonical storage:// reference instead.
+    visual_search_signed_url_seconds: int = 5 * 60
     # u2net_cloth_seg is useful on a roomy worker, but its CPU inference arena
     # is too large for the 4 GB production container. The fast geometric
     # upper/lower fallback is the safe default; larger deployments can opt in.
@@ -211,6 +214,10 @@ class Settings(BaseSettings):
             raise ValueError("Remote fetch connect timeout must be positive")
         if not 0 <= self.remote_fetch_max_redirects <= 5:
             raise ValueError("Remote fetch redirect limit must be between 0 and 5")
+        if not 60 <= self.visual_search_signed_url_seconds <= 60 * 60:
+            raise ValueError(
+                "Visual-search signed URL lifetime must be between 60 and 3600 seconds"
+            )
         if self.analyzer_service_secret and len(self.analyzer_service_secret) < 32:
             raise ValueError("Analyzer service secret must be at least 32 characters")
         if (

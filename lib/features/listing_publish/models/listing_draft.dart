@@ -75,8 +75,17 @@ class ListingPhoto {
   double? qualityScore;
   ListingPhotoUploadStatus uploadStatus;
 
-  String get displaySource => remoteUrl.isNotEmpty ? remoteUrl : localPath;
-  bool get isUploaded => remoteUrl.isNotEmpty;
+  /// Draft previews and analysis must keep using the device-local source.
+  /// [storagePath] is an upload receipt, not a URL that Flutter can display.
+  String get displaySource => localPath.isNotEmpty ? localPath : remoteUrl;
+  String get analysisSource => localPath.isNotEmpty ? localPath : remoteUrl;
+
+  /// A staged object is uploaded only after Storage returned its canonical
+  /// path. [remoteUrl] is kept as a compatibility fallback for published or
+  /// legacy photos that no longer have a draft object path.
+  bool get isUploaded =>
+      uploadStatus == ListingPhotoUploadStatus.uploaded &&
+      (storagePath.isNotEmpty || remoteUrl.isNotEmpty);
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -104,7 +113,8 @@ class ListingPhoto {
     uploadStatus: ListingPhotoUploadStatus.values.firstWhere(
       (value) => value.name == json['upload_status'],
       orElse: () =>
-          ((json['original_url'] as String? ?? '').isNotEmpty ||
+          ((json['storage_path'] as String? ?? '').isNotEmpty ||
+              (json['original_url'] as String? ?? '').isNotEmpty ||
               (json['remote_url'] as String? ?? '').isNotEmpty)
           ? ListingPhotoUploadStatus.uploaded
           : ListingPhotoUploadStatus.pending,
@@ -385,7 +395,7 @@ class ListingDraft {
 
   String? validateForPublish() {
     if (photos.isEmpty) return 'Добавьте хотя бы одну фотографию';
-    if (uploadedImageUrls.length != photos.length) {
+    if (photos.any((photo) => !photo.isUploaded)) {
       return 'Дождитесь загрузки всех фотографий';
     }
     if (!hasAllSellerDeclarations) {

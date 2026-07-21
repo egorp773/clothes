@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -73,6 +74,11 @@ void main() {
     expect(workflow, contains('codesign --verify --deep --strict'));
     expect(workflow, contains('Provisioning profile bundle mismatch'));
     expect(workflow, contains('IOS_RELEASE_DART_DEFINES_BASE64'));
+    expect(workflow, contains('PRODUCT_ANALYZER_URL'));
+    expect(
+      workflow,
+      contains('ALLOW_UNSAFE_LOCAL_DEMO must be false in release'),
+    );
     expect(workflow, contains('actions/upload-artifact@ea165f8d'));
 
     for (final file in Directory('.github/workflows').listSync()) {
@@ -93,9 +99,31 @@ void main() {
     expect(workflow, contains('Build unsigned IPA for Sideloadly'));
     expect(workflow, contains('workflow_dispatch:'));
     expect(workflow, isNot(contains('\n  push:')));
+    expect(workflow, contains('environment: ios-release'));
+    expect(workflow, contains('IOS_RELEASE_DART_DEFINES_BASE64'));
+    expect(workflow, contains('Missing release dart-defines'));
+    expect(workflow, contains('PRODUCT_ANALYZER_URL'));
+    expect(
+      workflow,
+      contains('ALLOW_UNSAFE_LOCAL_DEMO must be false in release'),
+    );
     expect(workflow, contains('flutter build ios --release --no-codesign'));
+    expect(workflow, contains('--dart-define-from-file="\$IOS_DEFINES_PATH"'));
     expect(workflow, contains('clothes-sideloadly-'));
     expect(workflow, contains('retention-days: 14'));
+  });
+
+  test('release config explicitly disables the local offline demo', () {
+    final template =
+        jsonDecode(read('config/release.dart-defines.example.json'))
+            as Map<String, dynamic>;
+    final supabaseConfig = read('lib/core/supabase_config.dart');
+    final appConfig = read('lib/core/app_config.dart');
+
+    expect(template['ALLOW_UNSAFE_LOCAL_DEMO'], isFalse);
+    expect(template['PRODUCT_ANALYZER_URL'], isNotEmpty);
+    expect(supabaseConfig, contains('throw StateError(_configurationError!)'));
+    expect(appConfig, contains('kDebugMode && _unsafeLocalDemoRequested'));
   });
 
   test('release builds never fall back to Android debug signing', () {

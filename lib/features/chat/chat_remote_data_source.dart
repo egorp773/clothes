@@ -68,14 +68,16 @@ class ChatRemoteDataSource {
   Future<ChatResult<RemoteThreadCreation>> createGroupThread({
     required List<String> memberIds,
     required String title,
-    required String clientThreadId,
+    required String requestId,
   }) => _rpcThread(
     operation: 'create_group_thread',
     function: 'create_group_thread',
     params: {
       'p_member_ids': memberIds,
       'p_title': title,
-      'p_client_thread_id': clientThreadId,
+      // Legacy production parameter name; Flutter treats this strictly as an
+      // idempotency request token and trusts only the id in the returned row.
+      'p_client_thread_id': requestId,
     },
   );
 

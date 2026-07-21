@@ -63,7 +63,6 @@ reconciliation, pentest и юридическая экспертиза.
 
 ```text
 flutter pub get
-flutter run
 ```
 
 Runtime-параметры задаются через `--dart-define-from-file`. Начальная форма —
@@ -73,6 +72,15 @@ Runtime-параметры задаются через `--dart-define-from-file`
 ```text
 flutter run --dart-define-from-file=config/release.dart-defines.json
 ```
+
+Без Supabase-конфигурации приложение намеренно не запускается. Только для
+локальной debug-разработки офлайн-демо включается явно:
+
+```text
+flutter run --dart-define=ALLOW_UNSAFE_LOCAL_DEMO=true
+```
+
+В release-режиме этот флаг игнорируется.
 
 `SUPABASE_ANON_KEY` является публичным клиентским ключом. `service_role`, ключи
 платежей/доставки, APNs private key и Firebase service account разрешены только

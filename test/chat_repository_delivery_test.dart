@@ -17,23 +17,96 @@ void main() {
     expect(repository.threads, isEmpty);
   });
 
-  test('client optimistic id is merged once and duplicate-safe', () {
+  test('server row replaces the matching optimistic client message', () {
     final pending = ChatMessage(
-      id: 'pending-client-1',
-      text: 'Привет',
+      id: 'local-pending-1',
+      text: 'pending text',
       createdAt: DateTime.utc(2026, 7, 18, 12),
       isMine: true,
+      senderId: 'me',
       isPending: true,
-      clientMessageId: 'pending-client-1',
+      clientMessageId: 'client-message-1',
     );
-    final delivered = pending.copyWith(
+    final delivered = ChatMessage(
       id: 'server-message-1',
-      isPending: false,
+      text: 'pending text',
+      createdAt: DateTime.utc(2026, 7, 18, 12, 0, 1),
+      isMine: true,
+      senderId: 'me',
+      clientMessageId: 'client-message-1',
     );
     final messages = AppRepository.mergeChatMessages([delivered], [pending]);
     expect(messages, hasLength(1));
     expect(messages.single.id, 'server-message-1');
+    expect(messages.single.clientMessageId, 'client-message-1');
     expect(messages.single.isPending, isFalse);
+  });
+
+  test('client message deduplication is scoped to the sender', () {
+    final fromAlice = ChatMessage(
+      id: 'server-alice-1',
+      text: 'Alice',
+      createdAt: DateTime.utc(2026, 7, 18, 12),
+      isMine: false,
+      senderId: 'alice',
+      clientMessageId: 'shared-client-id',
+    );
+    final fromBob = ChatMessage(
+      id: 'server-bob-1',
+      text: 'Bob',
+      createdAt: DateTime.utc(2026, 7, 18, 12, 0, 1),
+      isMine: false,
+      senderId: 'bob',
+      clientMessageId: 'shared-client-id',
+    );
+
+    expect(AppRepository.sameChatMessageIdentity(fromAlice, fromBob), isFalse);
+    final messages = AppRepository.mergeChatMessages([
+      fromAlice,
+      fromBob,
+    ], const []);
+
+    expect(messages.map((message) => message.id), [
+      'server-alice-1',
+      'server-bob-1',
+    ]);
+  });
+
+  test('stale server response cannot regress receipts or edited content', () {
+    final edited = ChatMessage(
+      id: 'server-message-2',
+      text: 'edited text',
+      createdAt: DateTime.utc(2026, 7, 18, 12),
+      isMine: true,
+      senderId: 'me',
+      clientMessageId: 'client-message-2',
+      editedAt: DateTime.utc(2026, 7, 18, 12, 1),
+      readBy: const ['recipient'],
+      deliveredTo: const ['recipient'],
+    );
+    final staleRpcResponse = ChatMessage(
+      id: 'server-message-2',
+      text: 'original text',
+      createdAt: DateTime.utc(2026, 7, 18, 12),
+      isMine: true,
+      senderId: 'me',
+      clientMessageId: 'client-message-2',
+    );
+
+    final messages = AppRepository.mergeChatMessages(
+      [staleRpcResponse],
+      [edited],
+    );
+
+    expect(messages, hasLength(1));
+    expect(messages.single.text, 'edited text');
+    expect(messages.single.editedAt, edited.editedAt);
+    expect(messages.single.readBy, ['recipient']);
+    expect(messages.single.deliveredTo, ['recipient']);
+    expect(
+      messages.single.effectiveStatus,
+      ChatMessageDeliveryStatus.delivered,
+    );
   });
 
   test('retry identity replaces failed state instead of appending a copy', () {

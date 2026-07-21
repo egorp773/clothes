@@ -15,6 +15,9 @@ jobs:
     name: Build clothes.ipa
     runs-on: macos-15
     timeout-minutes: 35
+    environment: ios-release
+    env:
+      IOS_RELEASE_DART_DEFINES_BASE64: ${{ secrets.IOS_RELEASE_DART_DEFINES_BASE64 }}
 
     steps:
       - name: Checkout
@@ -30,8 +33,43 @@ jobs:
       - name: Install dependencies
         run: flutter pub get --enforce-lockfile
 
+      - name: Decode and validate runtime configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$IOS_RELEASE_DART_DEFINES_BASE64" ]]; then
+            echo "::error::Missing ios-release environment value: IOS_RELEASE_DART_DEFINES_BASE64"
+            exit 1
+          fi
+          DEFINES_PATH="$RUNNER_TEMP/sideload.dart-defines.json"
+          printf '%s' "$IOS_RELEASE_DART_DEFINES_BASE64" | base64 -D > "$DEFINES_PATH"
+          echo "IOS_DEFINES_PATH=$DEFINES_PATH" >> "$GITHUB_ENV"
+          ruby -rjson -ruri -e '
+            data = JSON.parse(File.read(ARGV.fetch(0)))
+            required = %w[
+              SUPABASE_URL SUPABASE_ANON_KEY APP_URL_SCHEME
+              PUBLIC_WEB_BASE_URL PRODUCT_ANALYZER_URL
+              ALLOW_UNSAFE_LOCAL_DEMO FIREBASE_PROJECT_ID
+              FIREBASE_MESSAGING_SENDER_ID FIREBASE_IOS_API_KEY
+              FIREBASE_IOS_APP_ID FIREBASE_IOS_BUNDLE_ID
+            ]
+            missing = required.select { |key| data[key].to_s.strip.empty? }
+            abort "Missing release dart-defines: #{missing.join(", ")}" unless missing.empty?
+            placeholders = data.select do |_key, value|
+              value.to_s.match?(/YOUR_|your-production-domain|\.example(?:\/|$)/i)
+            end.keys
+            abort "Placeholder release dart-defines: #{placeholders.join(", ")}" unless placeholders.empty?
+            abort "ALLOW_UNSAFE_LOCAL_DEMO must be false in release" unless data["ALLOW_UNSAFE_LOCAL_DEMO"] == false
+            %w[SUPABASE_URL PUBLIC_WEB_BASE_URL PRODUCT_ANALYZER_URL].each do |key|
+              uri = URI(data.fetch(key)) rescue nil
+              abort "#{key} must be a valid HTTPS URL" unless uri&.scheme == "https" && uri.host
+            end
+          ' "$DEFINES_PATH"
+
       - name: Build iOS app without code signing
-        run: flutter build ios --release --no-codesign
+        run: >-
+          flutter build ios --release --no-codesign
+          --dart-define-from-file="$IOS_DEFINES_PATH"
 
       - name: Package unsigned IPA for Sideloadly
         shell: bash
@@ -67,3 +105,11 @@ jobs:
             build/ios/sideloadly/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Remove temporary runtime configuration
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${IOS_DEFINES_PATH:-}" ]]; then
+            rm -f "$IOS_DEFINES_PATH"
+          fi

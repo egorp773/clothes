@@ -128,6 +128,53 @@ void main() {
     expect(result.bestSimilarity, 0.64);
   });
 
+  test('refreshes private product image references before returning', () async {
+    final signedObjects = <String>[];
+    final service = VisualSearchService(
+      baseUrl: 'https://analyzer.example',
+      client: MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'products': [
+              {
+                'product_id': 'private-product',
+                'title': 'Private image product',
+                'main_image':
+                    'https://project.supabase.co/storage/v1/object/sign/'
+                    'product-images/seller/listing/main.jpg?token=expired',
+                'images': [
+                  'storage://product-images/seller/listing/main.jpg',
+                  'storage://product-images/seller/listing/side.jpg',
+                ],
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        ),
+      ),
+      mediaSigner: (bucket, objectPath) async {
+        signedObjects.add('$bucket/$objectPath');
+        return 'https://signed.example/$bucket/$objectPath?token=fresh';
+      },
+    );
+
+    final result = await service.search(
+      XFile.fromData(Uint8List.fromList(const [1]), name: 'query.jpg'),
+    );
+
+    expect(result.products.single.image, contains('token=fresh'));
+    expect(
+      result.products.single.images,
+      everyElement(startsWith('https://signed.example/')),
+    );
+    expect(result.products.single.image, isNot(contains('token=expired')));
+    expect(signedObjects.toSet(), {
+      'product-images/seller/listing/main.jpg',
+      'product-images/seller/listing/side.jpg',
+    });
+  });
+
   test(
     'reuses supplied image bytes instead of reading the source again',
     () async {

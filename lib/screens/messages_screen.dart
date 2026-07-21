@@ -1379,9 +1379,13 @@ class _ChatScreenState extends State<ChatScreen> {
         left.replyToSenderName == right.replyToSenderName &&
         left.editedAt == right.editedAt &&
         left.deletedAt == right.deletedAt &&
+        left.clientMessageId == right.clientMessageId &&
+        left.status == right.status &&
+        left.effectiveStatus == right.effectiveStatus &&
         left.isPending == right.isPending &&
         left.hasError == right.hasError &&
         listEquals(left.readBy, right.readBy) &&
+        listEquals(left.deliveredTo, right.deliveredTo) &&
         _sameReactions(left.reactions, right.reactions) &&
         leftAttachment?.url == rightAttachment?.url &&
         leftAttachment?.name == rightAttachment?.name &&
@@ -2004,10 +2008,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _retryMessage(ChatMessage message) async {
     final retry = message.type == 'text'
-        ? widget.actions?.retryText
+        ? widget.actions?.retryText ?? widget.actions?.retryMessage
         : message.isMedia
-        ? widget.actions?.retryMedia
-        : null;
+        ? widget.actions?.retryMedia ?? widget.actions?.retryMessage
+        : widget.actions?.retryMessage;
     if (retry == null ||
         !message.hasError ||
         _retryingMessageIds.contains(message.id)) {
@@ -2165,7 +2169,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                 onLongPress: () => _showMessageActions(message),
                                 onRetry:
                                     message.hasError &&
-                                        ((message.type == 'text' &&
+                                        (widget.actions?.retryMessage != null ||
+                                            (message.type == 'text' &&
                                                 widget.actions?.retryText !=
                                                     null) ||
                                             (message.isMedia &&

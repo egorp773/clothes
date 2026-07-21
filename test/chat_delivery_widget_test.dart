@@ -623,6 +623,62 @@ void main() {
     expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
   });
 
+  testWidgets('failed product uses the generic retry with the same identity', (
+    tester,
+  ) async {
+    final listenable = ValueNotifier<int>(0);
+    addTearDown(listenable.dispose);
+    final failed = ChatMessage(
+      id: 'local-product-share-1',
+      text: 'Listing: Jacket',
+      createdAt: DateTime.utc(2026, 7, 18, 12),
+      isMine: true,
+      senderId: 'me',
+      type: 'product',
+      sharedProduct: const SharedProductPreview(
+        id: 'product-1',
+        title: 'Jacket',
+        image: '',
+        price: '100',
+      ),
+      clientMessageId: 'client-product-share-1',
+      hasError: true,
+    );
+    final thread = _threadWithMessages([failed]);
+    ChatMessage? retried;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          thread: thread,
+          onSendMessage: (_, _) async {},
+          currentUserId: 'me',
+          threadsListenable: listenable,
+          resolveThread: (_) => thread,
+          lastSeenForUser: (_) => null,
+          actions: ChatActions(
+            retryMessage: (threadId, message) async {
+              expect(threadId, thread.id);
+              retried = message;
+              return true;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Повторить'), findsOneWidget);
+    await tester.tap(find.text('Повторить'));
+    await tester.pumpAndSettle();
+
+    expect(retried?.id, failed.id);
+    expect(retried?.clientMessageId, failed.clientMessageId);
+    expect(retried?.sharedProduct?.id, failed.sharedProduct?.id);
+    expect(find.text('Повторить'), findsNothing);
+    expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+  });
+
   testWidgets(
     'refreshes a delivery receipt without a new message or timestamp',
     (tester) async {
@@ -668,6 +724,59 @@ void main() {
       expect(find.byIcon(Icons.done_all_rounded), findsOneWidget);
     },
   );
+
+  testWidgets('delivered-to-only update rebuilds the matching message', (
+    tester,
+  ) async {
+    final listenable = ValueNotifier<int>(0);
+    addTearDown(listenable.dispose);
+    var thread = _threadWithMessages([
+      ChatMessage(
+        id: 'server-delivery-1',
+        text: 'Delivery probe',
+        createdAt: DateTime.utc(2026, 7, 17, 12),
+        isMine: true,
+        senderId: 'me',
+        clientMessageId: 'client-delivery-1',
+        deliveredTo: const ['me'],
+      ),
+    ]);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          thread: thread,
+          onSendMessage: (_, _) async {},
+          currentUserId: 'me',
+          threadsListenable: listenable,
+          resolveThread: (_) => thread,
+          lastSeenForUser: (_) => null,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final before = tester.widget<Text>(find.text('Delivery probe'));
+    expect(
+      thread.messages.single.effectiveStatus,
+      ChatMessageDeliveryStatus.sent,
+    );
+
+    thread = thread.copyWith(
+      messages: [
+        thread.messages.single.copyWith(deliveredTo: ['me', 'user']),
+      ],
+    );
+    expect(
+      thread.messages.single.effectiveStatus,
+      ChatMessageDeliveryStatus.delivered,
+    );
+    listenable.value++;
+    await tester.pump();
+
+    final after = tester.widget<Text>(find.text('Delivery probe'));
+    expect(identical(before, after), isFalse);
+  });
 
   testWidgets('marks messages arriving in an open chat as read', (
     tester,

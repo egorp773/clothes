@@ -188,6 +188,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     sendPendingText: _repository.sendPendingChatText,
     retryText: _repository.retryChatText,
     retryMedia: _repository.retryChatMedia,
+    retryMessage: _repository.retryChatMessage,
     sendReply: _repository.sendReply,
     sendImage: _repository.sendChatImage,
     sendMedia: _repository.sendChatMedia,

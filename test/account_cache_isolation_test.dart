@@ -31,16 +31,31 @@ void main() {
     final repository = File('lib/data/app_repository.dart').readAsStringSync();
 
     expect(repository, contains('auth.signOut(scope: SignOutScope.local)'));
+    final resetStart = repository.indexOf(
+      'if (previousUserId != currentUserId) {',
+    );
+    final resetEnd = repository.indexOf(
+      '_activateBlockedUserIdentity(user?.id ?? \'\');',
+      resetStart,
+    );
+    expect(resetStart, greaterThanOrEqualTo(0));
+    expect(resetEnd, greaterThan(resetStart));
+    final identityReset = repository.substring(resetStart, resetEnd);
+    expect(identityReset, contains('_chatMediaUrlCache.clear();'));
+    expect(identityReset, contains('_knownRemoteThreadIds.clear();'));
+    expect(identityReset, contains('_loadLocalUserState();'));
+    expect(
+      identityReset.indexOf('_loadLocalUserState();'),
+      greaterThan(identityReset.indexOf('_knownRemoteThreadIds.clear();')),
+    );
     expect(
       repository,
-      matches(
-        RegExp(
-          r'if \(previousUserId != currentUserId\) \{\s*'
-          r'_chatMediaUrlCache\.clear\(\);\s*'
-          r'_knownRemoteThreadIds\.clear\(\);\s*'
-          r'_loadLocalUserState\(\);',
-        ),
-      ),
+      contains('final generation = ++_authTransitionGeneration;'),
+    );
+    expect(repository, contains('await previous;'));
+    expect(
+      repository,
+      contains('if (generation != _authTransitionGeneration) return;'),
     );
     expect(repository, contains('await _handleAuthState(null);'));
   });

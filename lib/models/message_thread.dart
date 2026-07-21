@@ -619,6 +619,7 @@ class MessageThread {
   factory MessageThread.fromSupabase(
     Map<String, dynamic> json, {
     String currentUserId = '',
+    bool includeLegacyMessages = true,
   }) {
     return MessageThread(
       id: json['id'] as String,
@@ -641,17 +642,20 @@ class MessageThread {
       buyerAvatar: json['buyer_avatar'] as String? ?? '',
       sellerAvatar: json['seller_avatar'] as String? ?? '',
       unreadCount: json['unread_count'] as int? ?? 0,
-      messages:
-          (json['messages'] as List<dynamic>?)
-              ?.map(
-                (item) => ChatMessage.fromJson(
-                  item as Map<String, dynamic>,
-                  currentUserId: currentUserId,
-                ),
-              )
-              .toList() ??
-          const [],
-      isGroup: json['is_group'] as bool? ?? false,
+      messages: includeLegacyMessages
+          ? (json['messages'] as List<dynamic>?)
+                    ?.map(
+                      (item) => ChatMessage.fromJson(
+                        item as Map<String, dynamic>,
+                        currentUserId: currentUserId,
+                      ),
+                    )
+                    .toList() ??
+                const []
+          : const [],
+      isGroup:
+          json['is_group'] as bool? ??
+          (json['kind'] as String? ?? '') == 'group',
       title: json['title'] as String? ?? '',
       groupAvatar: json['group_avatar'] as String? ?? '',
       createdBy: json['created_by'] as String? ?? '',
@@ -664,7 +668,11 @@ class MessageThread {
       isArchived: false,
       draft: '',
       lastReadAt: null,
-      type: json['type'] as String? ?? json['thread_type'] as String? ?? '',
+      type:
+          json['kind'] as String? ??
+          json['type'] as String? ??
+          json['thread_type'] as String? ??
+          '',
       lastMessageId: json['last_message_id'] as String? ?? '',
     );
   }

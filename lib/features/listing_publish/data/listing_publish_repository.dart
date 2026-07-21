@@ -56,6 +56,7 @@ class ListingPublishRepository {
   static const _addressesKeyPrefix = 'listing_publish_addresses_v1';
   static const _deliveryKeyPrefix = 'listing_publish_delivery_v1';
   static const _bucketName = 'listing-drafts';
+  static const _maxImageBytes = 15 * 1024 * 1024;
 
   final String sellerName;
   final String sellerHandle;
@@ -95,9 +96,15 @@ class ListingPublishRepository {
   }) async {
     final id = const Uuid().v4();
     try {
+      final bytes = await source.readAsBytes();
+      if (bytes.isEmpty || bytes.length > _maxImageBytes) {
+        throw const ListingPublishException(
+          'Фотография должна быть не больше 15 МБ',
+        );
+      }
+      final extension = supportedImageExtension(bytes);
+      final mime = _mimeTypeForExtension(extension);
       if (kIsWeb) {
-        final bytes = await source.readAsBytes();
-        final mime = _mimeType(source.name, source.path);
         return ListingPhoto(
           id: id,
           localPath: 'data:$mime;base64,${base64Encode(bytes)}',
@@ -109,15 +116,11 @@ class ListingPublishRepository {
         path.join(support.path, 'listing_drafts', draft.id),
       );
       await directory.create(recursive: true);
-      final extension = _extension(source.name, source.path);
       final targetPath = path.join(directory.path, '$id$extension');
-      final sourceFile = File(source.path);
-      if (source.path.isNotEmpty && await sourceFile.exists()) {
-        await sourceFile.copy(targetPath);
-      } else {
-        await File(targetPath).writeAsBytes(await source.readAsBytes());
-      }
+      await File(targetPath).writeAsBytes(bytes, flush: true);
       return ListingPhoto(id: id, localPath: targetPath);
+    } on ListingPublishException {
+      rethrow;
     } catch (error, stackTrace) {
       debugPrint('Listing photo staging error: $error\n$stackTrace');
       throw ListingPublishException(
@@ -166,12 +169,12 @@ class ListingPublishRepository {
     final client = _client;
     final user = client?.auth.currentUser;
     if (client == null || user == null) return false;
-    if (photo.remoteUrl.isNotEmpty) return true;
+    if (photo.isUploaded) return true;
 
     photo.uploadStatus = ListingPhotoUploadStatus.uploading;
     try {
       final bytes = await _readPhotoBytes(photo.localPath);
-      final extension = _extension(photo.localPath, photo.localPath);
+      final extension = supportedImageExtension(bytes);
       final storagePath = canonicalDraftStoragePath(
         userId: user.id,
         listingId: draft.id,
@@ -185,9 +188,8 @@ class ListingPublishRepository {
             fileOptions: const FileOptions(cacheControl: '3600', upsert: false),
           );
       photo.storagePath = storagePath;
-      // A private object path is an upload receipt, not a public URL. The
+      // A private object path is an upload receipt, not a display URL. The
       // publish Edge function promotes/copies it and returns display URLs.
-      photo.remoteUrl = storagePath;
       photo.uploadStatus = ListingPhotoUploadStatus.uploaded;
       await syncRemoteDraft(draft);
       debugPrint('Listing photo uploaded: ${photo.id}');
@@ -621,32 +623,53 @@ class ListingPublishRepository {
     } catch (_) {}
   }
 
-  String _extension(String name, String fallbackPath) {
-    final candidate = path.extension(name).isNotEmpty
-        ? path.extension(name)
-        : path.extension(fallbackPath);
-    final normalized = candidate.toLowerCase();
-    return const {
-          '.jpg',
-          '.jpeg',
-          '.png',
-          '.webp',
-          '.heic',
-        }.contains(normalized)
-        ? normalized
-        : '.jpg';
-  }
-
-  String _mimeType(String name, String fallbackPath) {
-    switch (_extension(name, fallbackPath)) {
+  static String _mimeTypeForExtension(String extension) {
+    switch (extension) {
       case '.png':
         return 'image/png';
       case '.webp':
         return 'image/webp';
-      case '.heic':
-        return 'image/heic';
       default:
         return 'image/jpeg';
     }
+  }
+
+  /// Storage and the authoritative publication function accept exactly these
+  /// three formats. Checking magic bytes prevents HEIC (or another format)
+  /// from being renamed to .jpg and failing later as a misleading upload error.
+  @visibleForTesting
+  static String supportedImageExtension(Uint8List bytes) {
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xff &&
+        bytes[1] == 0xd8 &&
+        bytes[2] == 0xff) {
+      return '.jpg';
+    }
+    const pngSignature = <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+    if (bytes.length >= pngSignature.length) {
+      var isPng = true;
+      for (var index = 0; index < pngSignature.length; index++) {
+        if (bytes[index] != pngSignature[index]) {
+          isPng = false;
+          break;
+        }
+      }
+      if (isPng) return '.png';
+    }
+    if (bytes.length >= 12 &&
+        bytes[0] == 0x52 &&
+        bytes[1] == 0x49 &&
+        bytes[2] == 0x46 &&
+        bytes[3] == 0x46 &&
+        bytes[8] == 0x57 &&
+        bytes[9] == 0x45 &&
+        bytes[10] == 0x42 &&
+        bytes[11] == 0x50) {
+      return '.webp';
+    }
+    throw const ListingPublishException(
+      'Поддерживаются только JPEG, PNG и WebP. '
+      'Конвертируйте HEIC перед загрузкой.',
+    );
   }
 }
