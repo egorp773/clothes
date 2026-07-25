@@ -608,8 +608,10 @@ select extensions.throws_ok(
   'a listing with non-cancelled order history cannot be edited'
 );
 
+select set_config('clothes.order_transition', 'allowed', true);
 update public.orders set status = 'cancelled'
 where id = 'order_security_test';
+select set_config('clothes.order_transition', '', true);
 
 select extensions.is(
   (
