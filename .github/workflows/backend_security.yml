@@ -38,17 +38,7 @@ jobs:
           node-version: "22"
 
       - name: Start clean local Supabase
-        run: |
-          cp supabase/config.toml "$RUNNER_TEMP/supabase-config.toml"
-          trap 'cp "$RUNNER_TEMP/supabase-config.toml" supabase/config.toml' EXIT
-          sed -i '/^\[db\.migrations\]/,/^\[/ s/^enabled = true$/enabled = false/' supabase/config.toml
-          npx --yes supabase@2.109.1 start
-          database_container="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -n 1)"
-          test -n "$database_container"
-          docker exec --env PGPASSWORD=postgres "$database_container" \
-            psql --username supabase_admin --dbname postgres \
-            --set ON_ERROR_STOP=1 \
-            --command 'grant supabase_storage_admin to postgres;'
+        run: npx --yes supabase@2.109.1 start
 
       - name: Rebuild the database from migrations
         run: npx --yes supabase@2.109.1 db reset
