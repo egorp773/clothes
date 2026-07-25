@@ -38,7 +38,9 @@ jobs:
           node-version: "22"
 
       - name: Start migration-safe local Supabase
-        run: npx --yes supabase@2.109.1 start --exclude storage-api
+        run: |
+          npx --yes supabase@2.109.1 start \
+            --exclude gotrue,realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 
       - name: Rebuild the database from migrations
         run: npx --yes supabase@2.109.1 db reset
