@@ -934,6 +934,28 @@ grant execute on function public.archive_own_listing(uuid) to authenticated;
 -- Reuse the private canonical listing-draft namespace for replacement photos.
 -- A per-listing cap prevents an authenticated owner from turning edit staging
 -- into unbounded object storage.
+create or replace function public.listing_draft_object_count(
+  p_owner text,
+  p_product text
+)
+returns integer
+language sql
+stable
+security definer
+set search_path = public, storage
+as $$
+  select count(*)::integer
+  from storage.objects sibling
+  where sibling.bucket_id = 'listing-drafts'
+    and split_part(sibling.name, '/', 1) = p_owner
+    and split_part(sibling.name, '/', 2) = p_product
+$$;
+
+revoke all on function public.listing_draft_object_count(text, text)
+  from public, anon, authenticated;
+grant execute on function public.listing_draft_object_count(text, text)
+  to authenticated;
+
 set role supabase_storage_admin;
 drop policy if exists "Owners manage listing draft media" on storage.objects;
 create policy "Owners manage listing draft media"
@@ -970,12 +992,9 @@ create policy "Owners manage listing draft media"
           'draft', 'processing', 'ready', 'published', 'pending_moderation'
         )
     )
-    and (
-      select count(*)
-      from storage.objects sibling
-      where sibling.bucket_id = 'listing-drafts'
-        and split_part(sibling.name, '/', 1) = (select auth.uid()::text)
-        and split_part(sibling.name, '/', 2) = split_part(name, '/', 2)
+    and public.listing_draft_object_count(
+      (select auth.uid()::text),
+      split_part(name, '/', 2)
     ) < 8
   );
 
