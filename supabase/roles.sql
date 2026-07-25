@@ -6,5 +6,6 @@
 create extension if not exists dblink with schema extensions;
 select extensions.dblink_exec(
   'host=supabase_db_clothes port=5432 dbname=postgres user=supabase_admin password=postgres connect_timeout=5',
-  'grant supabase_storage_admin to postgres'
+  'grant supabase_storage_admin to postgres;
+   grant usage on schema auth to supabase_storage_admin'
 );
