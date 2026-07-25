@@ -315,7 +315,8 @@ $$;
 revoke all on function public.delete_current_user()
   from public, anon, authenticated;
 
-set local role supabase_storage_admin;
+grant supabase_storage_admin to postgres;
+set role supabase_storage_admin;
 insert into storage.buckets (id, name, public)
 values ('product-images', 'product-images', true)
 on conflict (id) do update set public = true;

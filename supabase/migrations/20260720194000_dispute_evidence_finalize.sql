@@ -4,7 +4,7 @@
 
 begin;
 
-set local role supabase_storage_admin;
+set role supabase_storage_admin;
 
 update storage.buckets
 set public = false,

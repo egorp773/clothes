@@ -526,7 +526,7 @@ revoke insert, update, delete on public.blocked_users
   from anon, authenticated;
 revoke delete on public.chat_messages from anon, authenticated;
 drop policy if exists "Users can manage own blocks" on public.blocked_users;
-set local role supabase_storage_admin;
+set role supabase_storage_admin;
 drop policy if exists "Uploaders can delete own chat media"
   on storage.objects;
 reset role;
@@ -1893,7 +1893,7 @@ alter table public.content_reports
 
 -- Dispute evidence uses a private owner-bound namespace and is linked through
 -- an RPC after a dispute exists: {uid}/{dispute_uuid}/{file}.
-set local role supabase_storage_admin;
+set role supabase_storage_admin;
 insert into storage.buckets (
   id,
   name,
@@ -2055,7 +2055,7 @@ revoke all on function public.dispute_evidence_is_readable(text)
 grant execute on function public.dispute_evidence_is_readable(text)
   to authenticated, service_role;
 
-set local role supabase_storage_admin;
+set role supabase_storage_admin;
 drop policy if exists "Participants read dispute evidence objects"
   on storage.objects;
 create policy "Participants read dispute evidence objects"

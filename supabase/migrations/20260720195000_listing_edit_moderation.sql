@@ -934,7 +934,7 @@ grant execute on function public.archive_own_listing(uuid) to authenticated;
 -- Reuse the private canonical listing-draft namespace for replacement photos.
 -- A per-listing cap prevents an authenticated owner from turning edit staging
 -- into unbounded object storage.
-set local role supabase_storage_admin;
+set role supabase_storage_admin;
 drop policy if exists "Owners manage listing draft media" on storage.objects;
 create policy "Owners manage listing draft media"
   on storage.objects for all to authenticated

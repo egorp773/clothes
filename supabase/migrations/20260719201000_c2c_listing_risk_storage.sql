@@ -1748,7 +1748,7 @@ grant execute on function public.product_media_is_public(text)
   to anon, authenticated, service_role;
 
 -- Storage contract.
-set local role supabase_storage_admin;
+set role supabase_storage_admin;
 insert into storage.buckets (
   id, name, public, file_size_limit, allowed_mime_types
 )

@@ -406,7 +406,7 @@ grant select, insert, update on public.message_threads to authenticated;
 grant select, insert, update on public.chat_messages to authenticated;
 grant select, insert, update on public.chat_thread_member_state to authenticated;
 
-set local role supabase_storage_admin;
+set role supabase_storage_admin;
 insert into storage.buckets (
   id, name, public, file_size_limit, allowed_mime_types
 )

@@ -24,7 +24,7 @@ before insert on public.chat_messages
 for each row
 execute function public.reject_new_chat_video();
 
-set local role supabase_storage_admin;
+set role supabase_storage_admin;
 update storage.buckets
 set file_size_limit = 20971520,
     allowed_mime_types = array[
