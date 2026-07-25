@@ -346,6 +346,7 @@ create policy "Users can manage own listing publish preferences"
 
 -- Keep legacy folders working, but prevent their broad policies from matching
 -- the new owner-scoped users/<uid>/listings/... namespace.
+set local role supabase_storage_admin;
 drop policy if exists "Authenticated users can upload product images"
   on storage.objects;
 create policy "Authenticated users can upload product images"
@@ -411,6 +412,7 @@ create policy "Owners can delete listing images"
     and (storage.foldername(name))[2] = auth.uid()::text
     and (storage.foldername(name))[3] = 'listings'
   );
+reset role;
 
 create or replace function public.publish_listing(p_listing_id uuid)
 returns public.products

@@ -116,4 +116,26 @@ void main() {
       expect(function, isNot(contains('.select("id,sender_id,text')));
     },
   );
+
+  test('new chat sends are text, photos, or product shares only', () {
+    final authority = File(
+      'supabase/migrations/20260720200000_chat_server_authority.sql',
+    ).readAsStringSync();
+    final photoOnly = File(
+      'supabase/migrations/20260725100000_chat_photo_only.sql',
+    ).readAsStringSync();
+    final screen = File('lib/screens/messages_screen.dart').readAsStringSync();
+    final repository = File('lib/data/app_repository.dart').readAsStringSync();
+
+    expect(
+      authority,
+      contains("clean_type not in ('text', 'product', 'image')"),
+    );
+    expect(photoOnly, contains('chat_video_messages_disabled'));
+    expect(photoOnly, contains("'image/heic'"));
+    expect(photoOnly, contains('file_size_limit = 20971520'));
+    expect(screen, contains('_chatVideoSendingEnabled() => false;'));
+    expect(repository, isNot(contains('_maxChatVideoBytes')));
+    expect(repository, contains('_cleanupUnreferencedChatMedia('));
+  });
 }

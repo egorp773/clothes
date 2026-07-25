@@ -168,14 +168,19 @@ where not exists (
   where member.thread_id = thread.id and member.left_at is null
 )
 union all
+-- Legacy rows were backfilled after their original timestamp; audit them
+-- separately via legacy_migration_issues instead of treating that timestamp
+-- mismatch as a current outsider message.
 select 'messages_sender_not_active_member', count(*)
 from public.chat_messages message
 where message.sender_id is not null
+  and message.legacy_source_key is null
   and not exists (
     select 1 from public.chat_thread_members member
     where member.thread_id = message.thread_id
       and member.user_id = message.sender_id
       and member.joined_at <= message.created_at
+      and (member.left_at is null or member.left_at >= message.created_at)
   )
 union all
 select 'messages_null_sender', count(*)

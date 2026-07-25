@@ -980,7 +980,9 @@ begin
      or p_client_message_id !~ '^[A-Za-z0-9._:-]+$' then
     raise exception 'invalid_client_message_id' using errcode = '22023';
   end if;
-  if clean_type not in ('text', 'product', 'image', 'video')
+  -- Video remains a readable legacy row type, but there is no production
+  -- command that can create new video messages.
+  if clean_type not in ('text', 'product', 'image')
      or char_length(clean_text) > 8000
      or (clean_type = 'text' and clean_text = '') then
     raise exception 'invalid_chat_message' using errcode = '22023';
@@ -1032,7 +1034,7 @@ begin
   ) then
     raise exception 'invalid_shared_product' using errcode = '22023';
   end if;
-  if clean_type in ('image', 'video') and p_attachment is null then
+  if clean_type = 'image' and p_attachment is null then
     raise exception 'invalid_chat_attachment' using errcode = '22023';
   end if;
   if p_reply_to_id is not null and not exists (
@@ -1049,7 +1051,7 @@ begin
     gen_random_uuid()::text, thread_row.id, actor_id, p_client_message_id,
     clean_text, clean_type,
     case when clean_type = 'product' then p_product end,
-    case when clean_type in ('image', 'video') then p_attachment end,
+    case when clean_type = 'image' then p_attachment end,
     p_reply_to_id, now()
   ) returning * into message_row;
 

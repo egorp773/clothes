@@ -1,15 +1,13 @@
 import 'dart:async';
 import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:video_player/video_player.dart';
 
 import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
-import 'package:video_player/video_player.dart';
-
 import '../features/chat/chat_actions.dart';
 import '../features/chat/chat_avatar.dart';
 import '../features/chat/conversation_info_screen.dart';
@@ -26,6 +24,8 @@ void _logChatUiFailure(String operation, Object error, StackTrace stackTrace) {
   debugPrint('Chat UI $operation error: $error');
   debugPrintStack(stackTrace: stackTrace);
 }
+
+bool _chatVideoSendingEnabled() => false;
 
 class MessagesScreen extends StatefulWidget {
   const MessagesScreen({
@@ -1745,7 +1745,10 @@ class _ChatScreenState extends State<ChatScreen> {
         widget.actions?.sendImage == null) {
       return;
     }
-    final canSendVideo = widget.actions?.sendMedia != null;
+    // Video upload is intentionally disabled. Legacy video rows remain
+    // readable, but new chat attachments are photos only.
+    final canSendVideo =
+        _chatVideoSendingEnabled() && widget.actions?.sendMedia != null;
     final choice = await showModalBottomSheet<_AttachmentChoice>(
       context: context,
       backgroundColor: Colors.transparent,

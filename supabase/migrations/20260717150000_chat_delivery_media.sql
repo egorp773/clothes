@@ -406,6 +406,7 @@ grant select, insert, update on public.message_threads to authenticated;
 grant select, insert, update on public.chat_messages to authenticated;
 grant select, insert, update on public.chat_thread_member_state to authenticated;
 
+set local role supabase_storage_admin;
 insert into storage.buckets (
   id, name, public, file_size_limit, allowed_mime_types
 )
@@ -464,6 +465,7 @@ create policy "Uploaders can delete own chat media"
     and (storage.foldername(name))[1] = 'threads'
     and (storage.foldername(name))[3] = auth.uid()::text
   );
+reset role;
 
 alter table public.message_threads replica identity full;
 alter table public.chat_messages replica identity full;

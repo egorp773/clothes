@@ -91,7 +91,6 @@ class AppRepository extends ChangeNotifier {
   static const _productImagesBucketName = 'product-images';
   static const _chatMediaBucketName = 'chat-media';
   static const _maxChatImageBytes = 20 * 1024 * 1024;
-  static const _maxChatVideoBytes = 100 * 1024 * 1024;
   static const _chatMediaSignedUrlSeconds = 60 * 60;
   static const _chatHydrationBatchSize = 40;
   static const _chatMessagePageSize = 50;
@@ -6114,6 +6113,10 @@ class AppRepository extends ChangeNotifier {
         !belongsToActor) {
       return false;
     }
+    if (candidate.isVideo) {
+      // Legacy video messages remain in history but are not uploaded again.
+      return false;
+    }
 
     if (attachment.hasRemoteObject) {
       // A restart may recover an upload that reached Storage but crashed
@@ -6156,7 +6159,6 @@ class AppRepository extends ChangeNotifier {
     }
 
     final mediaFile = XFile(localPath, name: attachment.name);
-    final kind = candidate.isVideo ? ChatMediaKind.video : ChatMediaKind.image;
     ChatMessage? retryingMessage;
     final sent = await _chatMediaSendCoordinator.send(
       ensureRemoteThread: () async => true,
@@ -6164,7 +6166,6 @@ class AppRepository extends ChangeNotifier {
         threadId: threadId,
         actorId: actorId,
         mediaFile: mediaFile,
-        kind: kind,
       ),
       persist: (uploaded) async {
         final latestThread = threadById(threadId);
@@ -6329,10 +6330,13 @@ class AppRepository extends ChangeNotifier {
     String caption = '',
     ChatMessage? replyTo,
   }) async {
+    if (kind != ChatMediaKind.image) {
+      // Video rows remain readable for history compatibility, but the
+      // production client no longer uploads or retries video attachments.
+      return false;
+    }
     final actorId = await _resolveChatActor(
-      message: kind == ChatMediaKind.video
-          ? 'Войдите в профиль, чтобы отправить видео'
-          : 'Войдите в профиль, чтобы отправить фотографию',
+      message: 'Войдите в профиль, чтобы отправить фотографию',
     );
     if (actorId == null) return false;
 
@@ -6367,7 +6371,6 @@ class AppRepository extends ChangeNotifier {
         threadId: threadId,
         actorId: actorId,
         mediaFile: mediaFile,
-        kind: kind,
       ),
       persist: (attachment) async {
         // Auth or membership may have changed while a large file uploaded.
@@ -6401,7 +6404,7 @@ class AppRepository extends ChangeNotifier {
           senderId: actorId,
           senderName: _profile.name,
           senderAvatar: _currentAvatarUrl(),
-          type: kind == ChatMediaKind.video ? 'video' : 'image',
+          type: 'image',
           attachment: attachment,
           replyToId: latestReplyTarget?.id ?? '',
           replyToText: latestReplyTarget?.previewText ?? '',
@@ -6464,7 +6467,6 @@ class AppRepository extends ChangeNotifier {
     required String threadId,
     required String actorId,
     required XFile mediaFile,
-    required ChatMediaKind kind,
   }) async {
     int size;
     try {
@@ -6474,34 +6476,21 @@ class AppRepository extends ChangeNotifier {
       return null;
     }
 
-    final maxBytes = kind == ChatMediaKind.video
-        ? _maxChatVideoBytes
-        : _maxChatImageBytes;
-    if (size <= 0 || size > maxBytes) {
-      _authError = kind == ChatMediaKind.video
-          ? 'Видео должно быть не больше 100 МБ'
-          : 'Фотография должна быть не больше 20 МБ';
+    if (size <= 0 || size > _maxChatImageBytes) {
+      _authError = 'Фотография должна быть не больше 20 МБ';
       notifyListeners();
       return null;
     }
 
-    final mimeType = _mimeTypeForChatMedia(
-      mediaFile.name,
-      mediaFile.path,
-      kind,
-    );
+    final mimeType = _mimeTypeForChatMedia(mediaFile.name, mediaFile.path);
     if (mimeType == null) {
-      _authError = kind == ChatMediaKind.video
-          ? 'Поддерживаются MP4, MOV и WebM'
-          : 'Поддерживаются JPEG, PNG, WebP, GIF и HEIC';
+      _authError = 'Поддерживаются JPEG, PNG, WebP, GIF и HEIC';
       notifyListeners();
       return null;
     }
 
     if (!_hasSupabase) {
-      final localUrl = kind == ChatMediaKind.image
-          ? await _inlineImage(mediaFile)
-          : mediaFile.path;
+      final localUrl = await _inlineImage(mediaFile);
       if (localUrl == null || localUrl.isEmpty) return null;
       return ChatAttachment(
         url: localUrl,
@@ -6511,7 +6500,7 @@ class AppRepository extends ChangeNotifier {
       );
     }
 
-    final extension = _chatMediaExtension(mediaFile.name, mediaFile.path, kind);
+    final extension = _chatMediaExtension(mediaFile.name, mediaFile.path);
     final storagePath = 'threads/$threadId/$actorId/${_uuid.v4()}$extension';
     final storage = _client.storage.from(_chatMediaBucketName);
     var uploadStarted = false;
@@ -6551,10 +6540,13 @@ class AppRepository extends ChangeNotifier {
     } catch (e) {
       debugPrint('Chat media upload error: $e');
       if (uploadStarted) {
-        await _removeRemoteChatMedia(
-          _chatMediaBucketName,
-          storagePath,
-          logContext: 'Incomplete chat media upload cleanup',
+        await _cleanupUnreferencedChatMedia(
+          threadId,
+          ChatAttachment(
+            url: '',
+            bucket: _chatMediaBucketName,
+            storagePath: storagePath,
+          ),
         );
       }
       _authError = 'Не удалось загрузить медиа. Проверьте подключение.';
@@ -6563,66 +6555,29 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
-  Future<void> _removeRemoteChatMedia(
-    String bucket,
-    String storagePath, {
-    required String logContext,
-  }) async {
-    final cleanBucket = bucket.trim();
-    final cleanPath = storagePath.trim();
-    if (!_hasSupabase || cleanBucket.isEmpty || cleanPath.isEmpty) return;
-    _chatMediaUrlCache.invalidate(_chatMediaCacheKey(cleanBucket, cleanPath));
-    try {
-      await _client.storage.from(cleanBucket).remove([cleanPath]);
-    } catch (e) {
-      debugPrint('$logContext error: $e');
-    }
-  }
-
-  String _chatMediaExtension(
-    String name,
-    String fallbackPath,
-    ChatMediaKind kind,
-  ) {
+  String _chatMediaExtension(String name, String fallbackPath) {
     final fromName = path.extension(name).toLowerCase();
     if (fromName.isNotEmpty) return fromName;
     final fromPath = path.extension(fallbackPath).toLowerCase();
     if (fromPath.isNotEmpty) return fromPath;
-    return kind == ChatMediaKind.video ? '.mp4' : '.jpg';
+    return '.jpg';
   }
 
-  String? _mimeTypeForChatMedia(
-    String name,
-    String fallbackPath,
-    ChatMediaKind kind,
-  ) {
-    final extension = _chatMediaExtension(name, fallbackPath, kind);
-    if (kind == ChatMediaKind.image) {
-      switch (extension) {
-        case '.jpg':
-        case '.jpeg':
-          return 'image/jpeg';
-        case '.png':
-          return 'image/png';
-        case '.webp':
-          return 'image/webp';
-        case '.gif':
-          return 'image/gif';
-        case '.heic':
-        case '.heif':
-          return 'image/heic';
-        default:
-          return null;
-      }
-    }
+  String? _mimeTypeForChatMedia(String name, String fallbackPath) {
+    final extension = _chatMediaExtension(name, fallbackPath);
     switch (extension) {
-      case '.mp4':
-      case '.m4v':
-        return 'video/mp4';
-      case '.mov':
-        return 'video/quicktime';
-      case '.webm':
-        return 'video/webm';
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.png':
+        return 'image/png';
+      case '.webp':
+        return 'image/webp';
+      case '.gif':
+        return 'image/gif';
+      case '.heic':
+      case '.heif':
+        return 'image/heic';
       default:
         return null;
     }

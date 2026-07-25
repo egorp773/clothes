@@ -1,6 +1,10 @@
 -- Remove the legacy product-images policies that allowed every authenticated
 -- account to write any non-users/* object.  New uploads are owner-scoped by
 -- both namespace and Storage's JWT-derived owner_id.
+--
+-- storage.objects is owned by supabase_storage_admin. The local Storage
+-- service can finish bootstrapping before this migration runs, so its policy
+-- DDL executes as the table owner below.
 
 -- Global/default accessories are catalogue content and must be created by a
 -- trusted service/admin workflow (service_role bypasses RLS), not by a mobile
@@ -29,6 +33,8 @@ create policy "Users can delete their outfit accessories"
   using (
     scope = 'private' and owner_id = (select auth.uid())
   );
+
+set local role supabase_storage_admin;
 
 drop policy if exists "Authenticated users can upload product images"
   on storage.objects;
@@ -150,4 +156,5 @@ create policy "Owners can delete product media"
     )
   );
 
+reset role;
 notify pgrst, 'reload schema';

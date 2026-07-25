@@ -1,5 +1,8 @@
 const Object _chatUnset = Object();
 
+/// Media that can be newly sent in chat. Legacy video messages are still
+/// deserialized and rendered as an unsupported attachment, but video upload is
+/// intentionally no longer part of the send API.
 enum ChatMediaKind { image, video }
 
 enum ChatMessageDeliveryStatus { sending, sent, delivered, failed }
