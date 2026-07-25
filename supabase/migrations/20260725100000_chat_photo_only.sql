@@ -24,7 +24,6 @@ before insert on public.chat_messages
 for each row
 execute function public.reject_new_chat_video();
 
-set role supabase_storage_admin;
 update storage.buckets
 set file_size_limit = 20971520,
     allowed_mime_types = array[
@@ -36,6 +35,5 @@ set file_size_limit = 20971520,
   'image/heif'
 ]::text[]
 where id = 'chat-media';
-reset role;
 
 notify pgrst, 'reload schema';

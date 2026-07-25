@@ -661,7 +661,6 @@ grant execute on function public.abort_private_outfit_accessory(uuid)
 
 -- A public bucket bypasses object SELECT RLS. Keep outfit media private and
 -- issue signed URLs only when the finalized outfit policy says it is readable.
-set role supabase_storage_admin;
 insert into storage.buckets (
   id,
   name,
@@ -680,8 +679,6 @@ on conflict (id) do update
 set public = false,
     file_size_limit = excluded.file_size_limit,
     allowed_mime_types = excluded.allowed_mime_types;
-reset role;
-
 create or replace function public.outfit_media_is_readable(
   p_storage_path text
 )
@@ -735,7 +732,6 @@ revoke all on function public.outfit_media_is_readable(text) from public;
 grant execute on function public.outfit_media_is_readable(text)
   to anon, authenticated, service_role;
 
-set role supabase_storage_admin;
 drop policy if exists "Owners manage profile images" on storage.objects;
 drop policy if exists "Owners upload profile avatars" on storage.objects;
 create policy "Owners upload profile avatars"
@@ -900,8 +896,6 @@ drop policy if exists "Owners can delete product media" on storage.objects;
 drop policy if exists "Owners can upload listing images" on storage.objects;
 drop policy if exists "Owners can update listing images" on storage.objects;
 drop policy if exists "Owners can delete listing images" on storage.objects;
-
-reset role;
 
 notify pgrst, 'reload schema';
 

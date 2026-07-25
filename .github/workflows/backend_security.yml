@@ -38,17 +38,17 @@ jobs:
           node-version: "22"
 
       - name: Start clean local Supabase
-        run: npx --yes supabase@2.98.2 start
+        run: npx --yes supabase@2.109.1 start
 
       - name: Rebuild the database from migrations
-        run: npx --yes supabase@2.98.2 db reset
+        run: npx --yes supabase@2.109.1 db reset
 
       - name: Run pgTAP security contracts
-        run: npx --yes supabase@2.98.2 test db
+        run: npx --yes supabase@2.109.1 test db
 
       - name: Stop local Supabase
         if: always()
-        run: npx --yes supabase@2.98.2 stop --no-backup
+        run: npx --yes supabase@2.109.1 stop --no-backup
 
   analyzer-security:
     name: Product analyzer tests

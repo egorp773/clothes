@@ -4,8 +4,6 @@
 
 begin;
 
-set role supabase_storage_admin;
-
 update storage.buckets
 set public = false,
     file_size_limit = 20971520,
@@ -47,8 +45,6 @@ create policy "Participants upload own dispute evidence"
         )
     )
   );
-
-reset role;
 
 create unique index if not exists dispute_evidence_storage_object_unique_idx
   on public.dispute_evidence (dispute_id, storage_bucket, storage_path)
