@@ -45,7 +45,7 @@ jobs:
           npx --yes supabase@2.109.1 start
           database_container="$(docker ps --filter name=supabase_db_ --format '{{.Names}}' | head -n 1)"
           test -n "$database_container"
-          docker exec "$database_container" \
+          docker exec --env PGPASSWORD=postgres "$database_container" \
             psql --username supabase_admin --dbname postgres \
             --set ON_ERROR_STOP=1 \
             --command 'grant supabase_storage_admin to postgres;'
