@@ -73,6 +73,7 @@ $$;
 
 create table if not exists public.users (
   id uuid primary key,
+  email text not null default '',
   -- id is the durable marketplace party id. auth_user_id can be nulled after
   -- anonymisation without destroying orders, disputes or audit evidence.
   auth_user_id uuid unique references auth.users(id) on delete set null,
@@ -91,6 +92,7 @@ create table if not exists public.users (
 -- boundary existed. CREATE TABLE IF NOT EXISTS does not add missing columns,
 -- so normalize that shape additively before the first backfill.
 alter table public.users
+  add column if not exists email text not null default '',
   add column if not exists auth_user_id uuid,
   add column if not exists account_status text not null default 'active',
   add column if not exists legal_onboarding_completed_at timestamptz,
