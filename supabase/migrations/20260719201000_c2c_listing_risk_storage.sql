@@ -1748,6 +1748,7 @@ grant execute on function public.product_media_is_public(text)
   to anon, authenticated, service_role;
 
 -- Storage contract.
+set role supabase_storage_admin;
 insert into storage.buckets (
   id, name, public, file_size_limit, allowed_mime_types
 )
@@ -1885,6 +1886,8 @@ create policy "Uploaders can delete own chat media"
     and split_part(name, '/', 1) = 'threads'
     and split_part(name, '/', 3) = (select auth.uid()::text)
   );
+
+reset role;
 
 revoke all on function public.prevent_seller_confirmation_mutation()
   from public, anon, authenticated;

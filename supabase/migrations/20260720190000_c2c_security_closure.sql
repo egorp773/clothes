@@ -71,7 +71,9 @@ revoke all on function public.hide_ineligible_seller_listings()
 
 -- Final product media is readable only through a listing-linked policy. The
 -- owner_id-only fallback made arbitrary legacy objects a permanent side door.
+set role supabase_storage_admin;
 drop policy if exists "Owners read legacy product media" on storage.objects;
+reset role;
 
 -- These pre-authoritative RPCs can mutate enrichment state without the current
 -- seller-entitlement and publication boundary. Workers keep service-role access.

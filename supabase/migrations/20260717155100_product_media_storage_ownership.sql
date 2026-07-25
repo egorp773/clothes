@@ -30,6 +30,8 @@ create policy "Users can delete their outfit accessories"
     scope = 'private' and owner_id = (select auth.uid())
   );
 
+set role supabase_storage_admin;
+
 drop policy if exists "Authenticated users can upload product images"
   on storage.objects;
 drop policy if exists "Authenticated users can update product images"
@@ -149,5 +151,7 @@ create policy "Owners can delete product media"
       or (storage.foldername(name))[1] = 'outfits'
     )
   );
+
+reset role;
 
 notify pgrst, 'reload schema';

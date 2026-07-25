@@ -315,6 +315,7 @@ $$;
 revoke all on function public.delete_current_user()
   from public, anon, authenticated;
 
+set role supabase_storage_admin;
 insert into storage.buckets (id, name, public)
 values ('product-images', 'product-images', true)
 on conflict (id) do update set public = true;
@@ -324,6 +325,8 @@ drop policy if exists "Public product images are readable"
 create policy "Public product images are readable"
   on storage.objects for select
   using (bucket_id = 'product-images');
+reset role;
+
 alter table public.profiles enable row level security;
 alter table public.profile_private_details enable row level security;
 alter table public.products enable row level security;
