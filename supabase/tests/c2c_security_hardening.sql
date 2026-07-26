@@ -581,6 +581,7 @@ update public.products
 set status = 'published',
     is_hidden = false,
     published_at = now() - interval '10 days',
+    first_published_at = now() - interval '10 days',
     images = array['storage://product-images/existing.jpg'],
     main_image = 'storage://product-images/existing.jpg'
 where id = '30000000-0000-0000-0000-000000000001';
