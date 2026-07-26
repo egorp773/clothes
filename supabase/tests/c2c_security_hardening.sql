@@ -297,7 +297,8 @@ insert into public.products (
   shipping_address_id,
   delivery_methods,
   status,
-  is_hidden
+  is_hidden,
+  first_published_at
 )
 values
   (
@@ -319,7 +320,8 @@ values
     '20000000-0000-0000-0000-000000000001',
     array['cdek']::text[],
     'draft',
-    true
+    true,
+    now() - interval '10 days'
   ),
   (
     '30000000-0000-0000-0000-000000000002',
@@ -340,7 +342,8 @@ values
     '20000000-0000-0000-0000-000000000002',
     array['cdek']::text[],
     'draft',
-    true
+    true,
+    null
   );
 
 select extensions.throws_ok(
