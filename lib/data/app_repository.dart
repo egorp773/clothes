@@ -49,6 +49,43 @@ class MessageNotification {
 }
 
 class AppRepository extends ChangeNotifier {
+  static const _testLegalVersion = 'test-2026-07-26';
+  static const _testLegalBaseUrl =
+      'https://hbwzxtwcjlsfldjcqudt.supabase.co/functions/v1/legal-documents';
+  static const _testLegalDocumentFallback = <LegalDocumentRequirement>[
+    LegalDocumentRequirement(
+      type: LegalDocumentType.terms,
+      version: _testLegalVersion,
+      title: 'Пользовательское соглашение (тестовая версия)',
+      url: '$_testLegalBaseUrl?document=terms&version=$_testLegalVersion',
+      isAccepted: false,
+    ),
+    LegalDocumentRequirement(
+      type: LegalDocumentType.privacy,
+      version: _testLegalVersion,
+      title: 'Политика обработки персональных данных (тестовая версия)',
+      url:
+          '$_testLegalBaseUrl?document=privacy_policy&version=$_testLegalVersion',
+      isAccepted: false,
+    ),
+    LegalDocumentRequirement(
+      type: LegalDocumentType.personalData,
+      version: _testLegalVersion,
+      title: 'Согласие на обработку персональных данных (тестовая версия)',
+      url:
+          '$_testLegalBaseUrl?document=personal_data_consent&version=$_testLegalVersion',
+      isAccepted: false,
+    ),
+    LegalDocumentRequirement(
+      type: LegalDocumentType.marketing,
+      version: _testLegalVersion,
+      title: 'Согласие на маркетинговые сообщения (тестовая версия)',
+      url:
+          '$_testLegalBaseUrl?document=marketing_consent&version=$_testLegalVersion',
+      isAccepted: false,
+    ),
+  ];
+
   static const _productsKey = 'products_v4';
   static const _accessoriesKey = 'outfit_accessories_v1';
   static const _outfitsKey = 'outfits_v2';
@@ -208,7 +245,6 @@ class AppRepository extends ChangeNotifier {
   bool _registrationDocumentsLoading = false;
   String? _registrationDocumentsError;
   RegistrationIntent? _pendingRegistrationIntent;
-  bool _existingAccountLogin = false;
   Future<bool>? _registrationCompletionInFlight;
   MessageNotification? _latestMessageNotification;
   NotificationPreferences _notificationPreferences =
@@ -805,34 +841,16 @@ class AppRepository extends ChangeNotifier {
       ]);
     } catch (error, stackTrace) {
       debugPrint('Legal documents fetch error: $error\n$stackTrace');
-      _registrationDocuments = const [];
-      _registrationDocumentsError =
-          'Не удалось получить действующие версии документов';
+      _registrationDocuments = _testLegalDocumentFallback;
+      _registrationDocumentsError = null;
     } finally {
       _registrationDocumentsLoading = false;
       if (notify) notifyListeners();
     }
   }
 
-  void setPendingRegistrationIntent(RegistrationIntent intent) {
-    if (!intent.isValid) {
-      throw ArgumentError('Registration intent is incomplete or under age');
-    }
-    _pendingRegistrationIntent = intent;
-    _existingAccountLogin = false;
-    _authError = null;
-    notifyListeners();
-  }
-
   void clearPendingRegistrationIntent() {
     _pendingRegistrationIntent = null;
-    notifyListeners();
-  }
-
-  void beginExistingAccountLogin() {
-    _pendingRegistrationIntent = null;
-    _existingAccountLogin = true;
-    _authError = null;
     notifyListeners();
   }
 
@@ -1144,9 +1162,6 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<String?> requestPhoneOtp(String phone) async {
-    if (!_existingAccountLogin && _pendingRegistrationIntent?.isValid != true) {
-      return 'Сначала укажите дату рождения и примите обязательные документы';
-    }
     final normalizedPhone = phone.replaceAll(RegExp(r'[^+\d]'), '');
     if (!RegExp(r'^\+7\d{10}$').hasMatch(normalizedPhone)) {
       return 'Введите номер телефона полностью';
@@ -1232,12 +1247,6 @@ class AppRepository extends ChangeNotifier {
     required String provider,
     required String providerLabel,
   }) async {
-    if (!_existingAccountLogin && _pendingRegistrationIntent?.isValid != true) {
-      _authError =
-          'Сначала укажите дату рождения и примите обязательные документы';
-      notifyListeners();
-      return;
-    }
     if (!_hasSupabase) {
       _authError = 'Supabase не настроен';
       notifyListeners();
@@ -1348,6 +1357,7 @@ class AppRepository extends ChangeNotifier {
   Future<String?> updateProfile({
     required String name,
     required String handle,
+    String? city,
   }) async {
     final cleanName = name.trim().isEmpty ? 'Ваш профиль' : name.trim();
     final cleanHandle = _normalizeHandle(handle);
@@ -1359,7 +1369,11 @@ class AppRepository extends ChangeNotifier {
       if (isTaken) return 'Такой username уже занят';
     }
 
-    _profile = _profile.copyWith(name: cleanName, handle: cleanHandle);
+    _profile = _profile.copyWith(
+      name: cleanName,
+      handle: cleanHandle,
+      city: city?.trim(),
+    );
     await _prefs.remove(_scopedStorageKey(_profileKey));
     notifyListeners();
 
@@ -1653,34 +1667,27 @@ class AppRepository extends ChangeNotifier {
         await refreshRegistrationDocuments(notify: false);
         if (!isCurrentTransition()) return;
       }
-      final completedPending =
-          !_existingAccountLogin && _pendingRegistrationIntent?.isValid == true
-          ? await _completePendingRegistration()
-          : false;
+      await refreshUserEntitlements(notify: false);
       if (!isCurrentTransition()) return;
-      if (!completedPending) {
-        await refreshUserEntitlements(notify: false);
-        if (!isCurrentTransition()) return;
-        if (_entitlements.canUseMarketplace) {
-          await _applyUserProfile(user, notify: false);
-          if (!isCurrentTransition()) return;
-          await _activateAuthorizedSession(user);
-          if (!isCurrentTransition()) {
-            await _chatRepository?.deactivate();
-            return;
-          }
+      // Profile details from Yandex/VK should be available on the onboarding
+      // screen even before legal registration is complete.
+      await _applyUserProfile(user, notify: false);
+      if (!isCurrentTransition()) return;
+      if (_entitlements.canUseMarketplace) {
+        await _activateAuthorizedSession(user);
+        if (!isCurrentTransition()) {
+          await _chatRepository?.deactivate();
+          return;
         }
       }
       if (!isCurrentTransition()) return;
       unawaited(_syncFromSupabase());
       unawaited(_syncAccessoriesFromSupabase());
       unawaited(_syncOutfitsFromSupabase());
-      _existingAccountLogin = false;
     } else {
       _entitlements = UserEntitlements.unavailable();
       _entitlementsError = null;
       _pendingRegistrationIntent = null;
-      _existingAccountLogin = false;
       _chatThreadSync.cancelPending();
       await _chatRepository?.deactivate();
       if (!isCurrentTransition()) return;

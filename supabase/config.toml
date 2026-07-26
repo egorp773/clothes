@@ -117,3 +117,6 @@ verify_jwt = false
 
 [functions.vk-auth]
 verify_jwt = false
+
+[functions.legal-documents]
+verify_jwt = false

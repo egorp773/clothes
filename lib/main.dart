@@ -1248,6 +1248,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           return LegalOnboardingScreen(
             documents: _repository.registrationDocuments,
             initialIntent: _repository.pendingRegistrationIntent,
+            initialName: _repository.profile.name,
+            initialHandle: _repository.profile.handle,
+            initialCity: _repository.profile.city,
             isSubmitting: _repository.entitlementsLoading,
             errorMessage:
                 _repository.entitlementsError ??
@@ -1256,6 +1259,11 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                 unawaited(_repository.refreshRegistrationDocuments()),
             onSignOut: _repository.signOut,
             onDeleteAccount: _repository.deleteAccount,
+            onSaveProfile: (name, handle, city) => _repository.updateProfile(
+              name: name,
+              handle: handle,
+              city: city,
+            ),
             onSubmit: _repository.completeRegistration,
           );
         }
@@ -1536,7 +1544,6 @@ class _RegistrationLoginFlow extends StatefulWidget {
 }
 
 class _RegistrationLoginFlowState extends State<_RegistrationLoginFlow> {
-  bool _hasRegistrationIntent = false;
   bool _authenticationCallbackQueued = false;
 
   @override
@@ -1549,25 +1556,6 @@ class _RegistrationLoginFlowState extends State<_RegistrationLoginFlow> {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) widget.onAuthenticated();
           });
-        }
-        if (!_hasRegistrationIntent) {
-          return LegalOnboardingScreen(
-            preAuthentication: true,
-            documents: widget.repository.registrationDocuments,
-            initialIntent: widget.repository.pendingRegistrationIntent,
-            errorMessage: widget.repository.registrationDocumentsError,
-            onRetryDocuments: () =>
-                unawaited(widget.repository.refreshRegistrationDocuments()),
-            onExistingAccountLogin: () {
-              widget.repository.beginExistingAccountLogin();
-              if (mounted) setState(() => _hasRegistrationIntent = true);
-            },
-            onSubmit: (intent) async {
-              widget.repository.setPendingRegistrationIntent(intent);
-              if (mounted) setState(() => _hasRegistrationIntent = true);
-              return null;
-            },
-          );
         }
         return LoginScreen(
           onClose: _close,

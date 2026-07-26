@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -10,31 +13,39 @@ class LegalOnboardingScreen extends StatefulWidget {
     required this.documents,
     required this.onSubmit,
     this.initialIntent,
+    this.initialName = '',
+    this.initialHandle = '',
+    this.initialCity = '',
     this.isSubmitting = false,
     this.errorMessage,
     this.onRetryDocuments,
     this.onSignOut,
     this.onDeleteAccount,
-    this.onExistingAccountLogin,
-    this.preAuthentication = false,
+    this.onSaveProfile,
   });
 
   final List<LegalDocumentRequirement> documents;
   final Future<String?> Function(RegistrationIntent intent) onSubmit;
   final RegistrationIntent? initialIntent;
+  final String initialName;
+  final String initialHandle;
+  final String initialCity;
   final bool isSubmitting;
   final String? errorMessage;
   final VoidCallback? onRetryDocuments;
   final Future<void> Function()? onSignOut;
   final Future<AccountDeletionResult> Function()? onDeleteAccount;
-  final VoidCallback? onExistingAccountLogin;
-  final bool preAuthentication;
+  final Future<String?> Function(String name, String handle, String city)?
+  onSaveProfile;
 
   @override
   State<LegalOnboardingScreen> createState() => _LegalOnboardingScreenState();
 }
 
 class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _handleController;
+  late final TextEditingController _cityController;
   DateTime? _birthDate;
   final Set<LegalDocumentType> _accepted = {};
   bool _marketingAccepted = false;
@@ -44,6 +55,9 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
   @override
   void initState() {
     super.initState();
+    _nameController = TextEditingController(text: widget.initialName);
+    _handleController = TextEditingController(text: widget.initialHandle);
+    _cityController = TextEditingController(text: widget.initialCity);
     final initial = widget.initialIntent;
     if (initial != null) {
       _birthDate = initial.birthDate;
@@ -52,6 +66,46 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
       );
       _marketingAccepted = initial.marketingAccepted;
     }
+  }
+
+  @override
+  void didUpdateWidget(covariant LegalOnboardingScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _refreshInitialValue(
+      _nameController,
+      oldWidget.initialName,
+      widget.initialName,
+    );
+    _refreshInitialValue(
+      _handleController,
+      oldWidget.initialHandle,
+      widget.initialHandle,
+    );
+    _refreshInitialValue(
+      _cityController,
+      oldWidget.initialCity,
+      widget.initialCity,
+    );
+  }
+
+  void _refreshInitialValue(
+    TextEditingController controller,
+    String previous,
+    String next,
+  ) {
+    if (previous == next ||
+        (controller.text != previous && controller.text.isNotEmpty)) {
+      return;
+    }
+    controller.text = next;
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _handleController.dispose();
+    _cityController.dispose();
+    super.dispose();
   }
 
   Map<LegalDocumentType, LegalDocumentRequirement> get _byType => {
@@ -68,12 +122,21 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
 
   bool get _isAdult => _birthDate != null && isAtLeast18(_birthDate!);
 
+  bool get _profileReady {
+    if (widget.onSaveProfile == null) return true;
+    final name = _nameController.text.trim();
+    final handle = _handleController.text.trim();
+    return name.length >= 2 &&
+        RegExp(r'^@?[A-Za-z0-9_]{3,24}$').hasMatch(handle);
+  }
+
   bool get _canSubmit =>
       !_submitting &&
       !widget.isSubmitting &&
       _documentsReady &&
       _allMandatoryAccepted &&
-      _isAdult;
+      _isAdult &&
+      _profileReady;
 
   @override
   Widget build(BuildContext context) {
@@ -81,11 +144,7 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: Text(
-          widget.preAuthentication
-              ? 'Перед регистрацией'
-              : 'Завершите регистрацию',
-        ),
+        title: const Text('Завершите регистрацию'),
         actions: [
           if (widget.onDeleteAccount != null)
             IconButton(
@@ -108,6 +167,68 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
           children: [
+            if (widget.onSaveProfile != null) ...[
+              Text(
+                'Расскажите немного о себе',
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Эти данные будут видны другим пользователям. Их можно изменить позже.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                key: const Key('onboarding-profile-name'),
+                controller: _nameController,
+                enabled: !_submitting,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.next,
+                onChanged: (_) => setState(() => _localError = null),
+                decoration: const InputDecoration(
+                  labelText: 'Имя',
+                  hintText: 'Как к вам обращаться',
+                  prefixIcon: Icon(Icons.person_outline),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('onboarding-profile-handle'),
+                controller: _handleController,
+                enabled: !_submitting,
+                autocorrect: false,
+                textInputAction: TextInputAction.next,
+                onChanged: (_) => setState(() => _localError = null),
+                decoration: const InputDecoration(
+                  labelText: 'Username',
+                  hintText: '@username',
+                  helperText: '3–24 символа: латиница, цифры и _',
+                  prefixIcon: Icon(Icons.alternate_email),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('onboarding-profile-city'),
+                controller: _cityController,
+                enabled: !_submitting,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.done,
+                onChanged: (_) => setState(() => _localError = null),
+                decoration: const InputDecoration(
+                  labelText: 'Город',
+                  hintText: 'Необязательно',
+                  prefixIcon: Icon(Icons.location_on_outlined),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 28),
+            ],
             Text(
               'Покупать и продавать на площадке могут только пользователи старше 18 лет.',
               style: theme.textTheme.bodyMedium,
@@ -137,10 +258,15 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
               ),
             ],
             const SizedBox(height: 24),
-            Text('Обязательные документы', style: theme.textTheme.titleMedium),
+            Text(
+              'Условия и согласия',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
             const SizedBox(height: 6),
             const Text(
-              'Каждый документ принимается отдельно. Сервер сохранит точную версию и время согласия.',
+              'Примите обязательные условия. Маркетинговые сообщения — по желанию.',
             ),
             const SizedBox(height: 8),
             if (!_documentsReady)
@@ -166,9 +292,7 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
                           });
                         },
                 ),
-            const SizedBox(height: 18),
-            Text('Маркетинговые сообщения', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 4),
+            const SizedBox(height: 8),
             if (_byType[LegalDocumentType.marketing] case final marketing?)
               _DocumentConsentTile(
                 key: const Key('legal-consent-marketing'),
@@ -201,20 +325,8 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
                       dimension: 20,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : Text(
-                      widget.preAuthentication
-                          ? 'Продолжить к способу входа'
-                          : 'Завершить регистрацию',
-                    ),
+                  : const Text('Завершить регистрацию'),
             ),
-            if (widget.onExistingAccountLogin != null) ...[
-              const SizedBox(height: 10),
-              TextButton(
-                key: const Key('legal-existing-account-login'),
-                onPressed: _submitting ? null : widget.onExistingAccountLogin,
-                child: const Text('У меня уже есть аккаунт'),
-              ),
-            ],
           ],
         ),
       ),
@@ -223,12 +335,15 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
 
   Future<void> _pickBirthDate() async {
     final now = DateTime.now();
-    final picked = await showDatePicker(
+    final picked = await showModalBottomSheet<DateTime>(
       context: context,
-      initialDate: _birthDate ?? DateTime(now.year - 18, now.month, now.day),
-      firstDate: DateTime(1900),
-      lastDate: now,
-      helpText: 'Дата рождения',
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (context) => _BirthDateWheelPicker(
+        initialDate: _birthDate ?? DateTime(now.year - 18, now.month, now.day),
+        minimumYear: now.year - 120,
+        maximumYear: now.year,
+      ),
     );
     if (picked != null && mounted) {
       setState(() {
@@ -258,6 +373,18 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
       _localError = null;
     });
     try {
+      final saveProfile = widget.onSaveProfile;
+      if (saveProfile != null) {
+        final profileError = await saveProfile(
+          _nameController.text,
+          _handleController.text,
+          _cityController.text,
+        );
+        if (profileError != null) {
+          if (mounted) setState(() => _localError = profileError);
+          return;
+        }
+      }
       final error = await widget.onSubmit(intent);
       if (!mounted) return;
       if (error != null) setState(() => _localError = error);
@@ -315,6 +442,221 @@ class _LegalOnboardingScreenState extends State<LegalOnboardingScreen> {
   static String _formatDate(DateTime value) {
     String two(int number) => number.toString().padLeft(2, '0');
     return '${two(value.day)}.${two(value.month)}.${value.year}';
+  }
+}
+
+class _BirthDateWheelPicker extends StatefulWidget {
+  const _BirthDateWheelPicker({
+    required this.initialDate,
+    required this.minimumYear,
+    required this.maximumYear,
+  });
+
+  final DateTime initialDate;
+  final int minimumYear;
+  final int maximumYear;
+
+  @override
+  State<_BirthDateWheelPicker> createState() => _BirthDateWheelPickerState();
+}
+
+class _BirthDateWheelPickerState extends State<_BirthDateWheelPicker> {
+  static const _months = <String>[
+    'Январь',
+    'Февраль',
+    'Март',
+    'Апрель',
+    'Май',
+    'Июнь',
+    'Июль',
+    'Август',
+    'Сентябрь',
+    'Октябрь',
+    'Ноябрь',
+    'Декабрь',
+  ];
+
+  late int _day;
+  late int _month;
+  late int _year;
+  late final int _yearCount;
+  late final FixedExtentScrollController _dayController;
+  late final FixedExtentScrollController _monthController;
+  late final FixedExtentScrollController _yearController;
+
+  @override
+  void initState() {
+    super.initState();
+    _day = widget.initialDate.day;
+    _month = widget.initialDate.month;
+    _year = widget.initialDate.year
+        .clamp(widget.minimumYear, widget.maximumYear)
+        .toInt();
+    _yearCount = widget.maximumYear - widget.minimumYear + 1;
+    _dayController = FixedExtentScrollController(
+      initialItem: 31 * 1000 + _day - 1,
+    );
+    _monthController = FixedExtentScrollController(
+      initialItem: 12 * 1000 + _month - 1,
+    );
+    _yearController = FixedExtentScrollController(
+      initialItem: _yearCount * 1000 + _year - widget.minimumYear,
+    );
+  }
+
+  @override
+  void dispose() {
+    _dayController.dispose();
+    _monthController.dispose();
+    _yearController.dispose();
+    super.dispose();
+  }
+
+  int get _maximumDay => DateTime(_year, _month + 1, 0).day;
+
+  void _keepDayValid() {
+    final validDay = math.min(_day, _maximumDay);
+    if (validDay == _day) return;
+    _day = validDay;
+    _snapDayWheel(validDay);
+  }
+
+  void _snapDayWheel(int validDay) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_dayController.hasClients) {
+        _dayController.jumpToItem(31 * 1000 + validDay - 1);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: 48,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Отмена'),
+                  ),
+                ),
+                Text(
+                  'Дата рождения',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    key: const Key('birth-date-wheel-done'),
+                    onPressed: () =>
+                        Navigator.pop(context, DateTime(_year, _month, _day)),
+                    child: const Text('Готово'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 220,
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: _wheel(
+                    key: const Key('birth-date-day-wheel'),
+                    controller: _dayController,
+                    itemCount: 31,
+                    labelBuilder: (index) => '${index + 1}',
+                    onChanged: (index) {
+                      final next = index % 31 + 1;
+                      final valid = math.min(next, _maximumDay);
+                      setState(() => _day = valid);
+                      if (valid != next) _snapDayWheel(valid);
+                    },
+                  ),
+                ),
+                Expanded(
+                  flex: 4,
+                  child: _wheel(
+                    key: const Key('birth-date-month-wheel'),
+                    controller: _monthController,
+                    itemCount: 12,
+                    labelBuilder: (index) => _months[index],
+                    onChanged: (index) {
+                      setState(() {
+                        _month = index % 12 + 1;
+                        _keepDayValid();
+                      });
+                    },
+                  ),
+                ),
+                Expanded(
+                  flex: 3,
+                  child: _wheel(
+                    key: const Key('birth-date-year-wheel'),
+                    controller: _yearController,
+                    itemCount: _yearCount,
+                    labelBuilder: (index) => '${widget.minimumYear + index}',
+                    onChanged: (index) {
+                      setState(() {
+                        _year = widget.minimumYear + index % _yearCount;
+                        _keepDayValid();
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _wheel({
+    required Key key,
+    required FixedExtentScrollController controller,
+    required int itemCount,
+    required String Function(int index) labelBuilder,
+    required ValueChanged<int> onChanged,
+  }) {
+    return CupertinoPicker(
+      key: key,
+      scrollController: controller,
+      itemExtent: 44,
+      looping: true,
+      selectionOverlay: CupertinoPickerDefaultSelectionOverlay(
+        capStartEdge: false,
+        capEndEdge: false,
+        background: Theme.of(
+          context,
+        ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      ),
+      onSelectedItemChanged: onChanged,
+      children: [
+        for (var index = 0; index < itemCount; index++)
+          Center(
+            child: Text(
+              labelBuilder(index),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+      ],
+    );
   }
 }
 
