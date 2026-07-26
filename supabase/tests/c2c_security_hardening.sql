@@ -574,6 +574,10 @@ select set_config(
 );
 
 update public.products
+set created_at = now() - interval '10 days'
+where id = '30000000-0000-0000-0000-000000000001';
+
+update public.products
 set status = 'published',
     is_hidden = false,
     published_at = now() - interval '10 days',
@@ -689,23 +693,6 @@ select public.moderate_listing_edit_authoritatively(
   'reviewed and approved',
   '127.0.0.1'::inet,
   'pgTAP listing moderation test'
-);
-
-select extensions.diag(
-  (
-    select jsonb_build_object(
-      'status', product.status,
-      'is_hidden', product.is_hidden,
-      'published_at', product.published_at,
-      'first_published_at', product.first_published_at,
-      'timestamps_equal', product.published_at = product.first_published_at,
-      'older_than_nine_days',
-        product.published_at < now() - interval '9 days',
-      'risk', product.moderation_risk
-    )::text
-    from public.products product
-    where product.id = '30000000-0000-0000-0000-000000000001'
-  )
 );
 
 select extensions.ok(
