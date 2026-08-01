@@ -88,7 +88,7 @@ class AppAppearanceSettings {
   }
 
   Map<String, Object> toJson() => <String, Object>{
-    'version': 5,
+    'version': 4,
     'theme': theme.name,
     'liquid_glass': liquidGlassEnabled,
     'background': background.name,

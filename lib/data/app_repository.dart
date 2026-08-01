@@ -488,7 +488,7 @@ class AppRepository extends ChangeNotifier {
     final user = _currentUser;
     if (user == null) return;
     await refreshUserEntitlements();
-    if (_entitlements.canUseMarketplace) await _applyUserProfile(user);
+    await _applyUserProfile(user);
   }
 
   DeliveryProfile _deliveryProfileWithFallbacks() {
@@ -1041,7 +1041,6 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<void> _activateAuthorizedSession(User user) async {
-    if (!_entitlements.canUseMarketplace) return;
     _chatRepository ??= ChatRepository(client: _client, preferences: _prefs)
       ..addListener(_handleChatDiagnosticsChanged);
     await _chatRepository!.activate(
@@ -1095,7 +1094,7 @@ class AppRepository extends ChangeNotifier {
       if (_currentUser != null) {
         await refreshUserEntitlements(notify: false);
       }
-      if (_currentUser != null && _entitlements.canUseMarketplace) {
+      if (_currentUser != null) {
         await _applyUserProfile(_currentUser, notify: false);
       }
       if (_currentUser != null) {
@@ -1118,7 +1117,7 @@ class AppRepository extends ChangeNotifier {
       _syncFromSupabase();
       _syncAccessoriesFromSupabase();
       _syncOutfitsFromSupabase();
-      if (_entitlements.canUseMarketplace) {
+      if (_currentUser != null) {
         _syncBlockedUsers();
         _syncUserCollectionsFromSupabase();
         _syncProfileFeaturesFromSupabase();
@@ -1130,7 +1129,7 @@ class AppRepository extends ChangeNotifier {
           _syncFromSupabase();
           _syncAccessoriesFromSupabase();
           _syncOutfitsFromSupabase();
-          if (_entitlements.canUseMarketplace) {
+          if (_currentUser != null) {
             _syncBlockedUsers();
             _syncUserCollectionsFromSupabase();
             _syncProfileFeaturesFromSupabase();
@@ -1676,12 +1675,10 @@ class AppRepository extends ChangeNotifier {
       // screen even before legal registration is complete.
       await _applyUserProfile(user, notify: false);
       if (!isCurrentTransition()) return;
-      if (_entitlements.canUseMarketplace) {
-        await _activateAuthorizedSession(user);
-        if (!isCurrentTransition()) {
-          await _chatRepository?.deactivate();
-          return;
-        }
+      await _activateAuthorizedSession(user);
+      if (!isCurrentTransition()) {
+        await _chatRepository?.deactivate();
+        return;
       }
       if (!isCurrentTransition()) return;
       unawaited(_syncFromSupabase());

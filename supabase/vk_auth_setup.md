@@ -15,10 +15,13 @@ Configure deployment secrets:
 ```bash
 supabase secrets set \
   VK_CLIENT_ID=<VK_CLIENT_ID> \
-  OAUTH_ALLOWED_REDIRECT_URIS=com.example.clothes://login-callback/ \
+  OAUTH_ALLOWED_REDIRECT_URIS=com.example.clothes://login-callback/,com.example.clothes://oauth-callback/ \
   OAUTH_DEFAULT_REDIRECT_URI=com.example.clothes://login-callback/ \
   OAUTH_ALLOWED_WEB_ORIGINS=https://<APP_WEB_HOST>
 ```
+
+Keep both exact native routes: `login-callback` for application deep links and
+Telegram, and `oauth-callback` for the native Yandex/VK browser flow.
 
 Replace the example application ID/scheme with the final organization-owned
 identifier in Flutter, Android, iOS, Supabase, and this allowlist together.

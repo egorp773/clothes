@@ -102,6 +102,14 @@ void main() {
     expect(workflow, contains('environment: ios-release'));
     expect(workflow, contains('IOS_RELEASE_DART_DEFINES_BASE64'));
     expect(workflow, contains('Missing release dart-defines'));
+    expect(workflow, contains('APP_URL_SCHEME'));
+    expect(
+      workflow,
+      contains('APP_URL_SCHEME must be a reverse-DNS identifier'),
+    );
+    expect(workflow, contains('Expected placeholder identity was not found'));
+    expect(workflow, contains('ios/Runner/Info.plist'));
+    expect(workflow, contains('ios/Runner.xcodeproj/project.pbxproj'));
     expect(workflow, contains('PRODUCT_ANALYZER_URL'));
     expect(
       workflow,

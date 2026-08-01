@@ -23,7 +23,7 @@ supabase secrets set \
   TELEGRAM_BOT_ID=<NUMERIC_BOT_ID> \
   TELEGRAM_BOT_TOKEN=<BOT_TOKEN> \
   TELEGRAM_AUTH_MAX_AGE_SECONDS=300 \
-  OAUTH_ALLOWED_REDIRECT_URIS=com.example.clothes://login-callback/ \
+  OAUTH_ALLOWED_REDIRECT_URIS=com.example.clothes://login-callback/,com.example.clothes://oauth-callback/ \
   OAUTH_DEFAULT_REDIRECT_URI=com.example.clothes://login-callback/ \
   OAUTH_ALLOWED_WEB_ORIGINS=https://<APP_WEB_HOST>
 ```

@@ -308,37 +308,14 @@ export function redirectWithParams(
   for (const [key, value] of Object.entries(parameters)) {
     target.searchParams.set(key, value);
   }
-  if (target.protocol === "http:" || target.protocol === "https:") {
-    return new Response(null, {
-      status: 303,
-      headers: {
-        "Cache-Control": "no-store",
-        "Referrer-Policy": "no-referrer",
-        Location: target.toString(),
-      },
-    });
-  }
-  const appUrl = target.toString();
-  return new Response(
-    `<!doctype html><html><head><meta charset="utf-8"><meta name="referrer" content="no-referrer">` +
-      `<meta http-equiv="Cache-Control" content="no-store">` +
-      `<title>Return to application</title></head><body>` +
-      `<p>Authentication finished. Return to the application.</p>` +
-      `<a rel="noreferrer" href="${escapeHtml(appUrl)}">Open application</a>` +
-      `<script>window.location.replace(${JSON.stringify(appUrl)});</script>` +
-      `</body></html>`,
-    {
-      status: 200,
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Security-Policy":
-          "default-src 'none'; script-src 'unsafe-inline'; style-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-        "Content-Type": "text/html; charset=utf-8",
-        "Referrer-Policy": "no-referrer",
-        "X-Content-Type-Options": "nosniff",
-      },
+  return new Response(null, {
+    status: 303,
+    headers: {
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+      Location: target.toString(),
     },
-  );
+  });
 }
 
 export function requestMetadata(request: Request): {
@@ -445,13 +422,4 @@ function isIpLiteral(value: string): boolean {
     return candidate.split(".").every((part) => Number(part) <= 255);
   }
   return candidate.includes(":") && /^[0-9a-f:.]+$/i.test(candidate);
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }

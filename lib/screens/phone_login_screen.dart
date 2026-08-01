@@ -272,7 +272,7 @@ class _PhoneLoginScreenState extends State<PhoneLoginScreen> {
                   right: 20 * sx,
                   bottom: 44 * sy,
                   child: Text(
-                    'Выбранные ранее согласия будут зафиксированы сервером после подтверждения кода.',
+                    'При входе и регистрации вы соглашаетесь с политикой обработки персональных данных.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontFamily: 'Montserrat',
