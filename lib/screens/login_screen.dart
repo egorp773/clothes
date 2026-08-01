@@ -130,7 +130,7 @@ class LoginScreen extends StatelessWidget {
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
                 child: Text(
-                  'После входа вы заполните профиль, укажете дату рождения и примете условия сервиса.',
+                  'При входе и регистрации вы соглашаетесь с политикой\nобработки персональных данных.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 10.5,

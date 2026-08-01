@@ -13,7 +13,6 @@ import 'appearance_editor_screen.dart';
 import 'catalog_screen.dart';
 
 const _muted = Color(0xFF8A8A8F);
-const _lime = Color(0xFFB6FF00);
 const _pagePadding = 18.0;
 const _darkPanel = Color(0xFF1C1C1E);
 const _featureTitleStyle = TextStyle(
@@ -3534,6 +3533,7 @@ class _SellerScoreCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final rating = stats.rating.clamp(0, 5).toDouble();
     final hasRating = stats.ordersCount > 0 && rating > 0;
     return Container(
@@ -3560,7 +3560,7 @@ class _SellerScoreCard extends StatelessWidget {
                 style: _featureTitleStyle.copyWith(
                   fontSize: 34,
                   height: 1,
-                  color: _lime,
+                  color: palette.accentInk,
                 ),
               ),
               const SizedBox(width: 4),
@@ -3587,7 +3587,11 @@ class _SellerScoreCard extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.info_outline_rounded, size: 18, color: _lime),
+                Icon(
+                  Icons.info_outline_rounded,
+                  size: 18,
+                  color: palette.accentInk,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
@@ -3621,12 +3625,13 @@ class _MetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final foreground = isAccent ? Colors.black : Colors.white;
+    final palette = context.appPalette;
+    final foreground = isAccent ? palette.onAccent : Colors.white;
     return Container(
       height: 116,
       padding: const EdgeInsets.fromLTRB(16, 16, 12, 14),
       decoration: BoxDecoration(
-        color: isAccent ? _lime : _darkPanel,
+        color: isAccent ? palette.accent : _darkPanel,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -3636,7 +3641,7 @@ class _MetricCard extends StatelessWidget {
             title,
             style: _featureSmallStyle.copyWith(
               fontSize: 9.5,
-              color: isAccent ? Colors.black : _muted,
+              color: isAccent ? foreground.withValues(alpha: 0.76) : _muted,
             ),
           ),
           const SizedBox(height: 10),

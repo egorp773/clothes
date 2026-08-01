@@ -1662,6 +1662,9 @@ class AppRepository extends ChangeNotifier {
     }
     _activateBlockedUserIdentity(user?.id ?? '');
     _authError = null;
+    // Authentication is complete as soon as Supabase returns a valid user.
+    // Profile and entitlement RPCs must not keep the login sheet open.
+    notifyListeners();
     if (user != null) {
       if (_registrationDocuments.isEmpty) {
         await refreshRegistrationDocuments(notify: false);
