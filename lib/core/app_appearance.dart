@@ -9,6 +9,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'app_typography.dart';
 import 'appearance_wallpaper_store.dart';
 
+const appLightAccentColorValue = 0xFF0F203F;
+const appDarkAccentColorValue = 0xFF142A54;
+const appLightAccentColor = Color(appLightAccentColorValue);
+const appDarkAccentColor = Color(appDarkAccentColorValue);
+
 enum AppThemePreference { system, light, dark, custom }
 
 enum AppBackgroundStyle { plain, pattern, photo }
@@ -25,7 +30,7 @@ class AppAppearanceSettings {
     this.liquidGlassEnabled = false,
     this.background = AppBackgroundStyle.plain,
     this.customDark = true,
-    this.accentColorValue = 0xFFC1FF36,
+    this.accentColorValue = appDarkAccentColorValue,
     this.backgroundColorValue = 0xFF202228,
     this.pattern = AppPatternStyle.doodles,
     this.patternColorValue = 0xFFF2F2F4,
@@ -114,7 +119,9 @@ class AppAppearanceSettings {
         orElse: () => AppBackgroundStyle.plain,
       ),
       customDark: customDark,
-      accentColorValue: _jsonInt(json['accent_color'], 0xFFC1FF36),
+      accentColorValue: _migrateLegacyAccentColor(
+        _jsonInt(json['accent_color'], appDarkAccentColorValue),
+      ),
       backgroundColorValue: _jsonInt(json['background_color'], 0xFF202228),
       pattern: AppPatternStyle.values.firstWhere(
         (value) => value.name == json['pattern'],
@@ -137,6 +144,14 @@ class AppAppearanceSettings {
 
 int _jsonInt(Object? value, int fallback) =>
     value is num ? value.toInt() : fallback;
+
+int _migrateLegacyAccentColor(int value) => switch (value) {
+  0xFFB6FF00 ||
+  0xFFC1FF36 ||
+  0xFF2855A6 ||
+  0xFF193568 => appDarkAccentColorValue,
+  _ => value,
+};
 
 double _jsonDouble(Object? value, double fallback) =>
     value is num ? value.toDouble() : fallback;
@@ -297,7 +312,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     border: Color(0xFFE5E5E9),
     ink: Color(0xFF111113),
     muted: Color(0xFF77777F),
-    accent: Color(0xFFB6FF00),
+    accent: appLightAccentColor,
     shadow: Color(0x14000000),
   );
 
@@ -309,7 +324,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     border: Color(0xFF3B3E45),
     ink: Color(0xFFF2F2F4),
     muted: Color(0xFFB1B2B8),
-    accent: Color(0xFFC1FF36),
+    accent: appDarkAccentColor,
     shadow: Color(0x40000000),
   );
 
@@ -592,18 +607,20 @@ class AppGlassStyle extends ThemeExtension<AppGlassStyle> {
       // The accent contributes only a small, desaturated specular cue.
       accentGlint: Color.lerp(neutralGlint, accent.withValues(alpha: 1), 0.08)!,
       navigation: material(
-        blur: 18,
-        tintOpacity: isDark ? 0.38 : 0.34,
-        rimOpacity: isDark ? 0.24 : 0.27,
-        highlightOpacity: isDark ? 0.24 : 0.32,
-        depthOpacity: isDark ? 0.16 : 0.09,
+        // Navigation sits directly above moving cards and text. Keep their
+        // colours as a watery backdrop, but blur them beyond readability.
+        blur: 32,
+        tintOpacity: isDark ? 0.62 : 0.58,
+        rimOpacity: isDark ? 0.29 : 0.34,
+        highlightOpacity: isDark ? 0.28 : 0.38,
+        depthOpacity: isDark ? 0.2 : 0.12,
         shadowOpacity: isDark ? 0.28 : 0.13,
         shadowBlur: 26,
         shadowSpread: -8,
         shadowOffset: const Offset(0, 12),
         radius: 29,
         duration: const Duration(milliseconds: 210),
-        glintOpacity: isDark ? 0.14 : 0.16,
+        glintOpacity: isDark ? 0.16 : 0.18,
         glintRadius: 0.86,
       ),
       toolbar: material(

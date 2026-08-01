@@ -19,7 +19,6 @@ import 'models/profile_feature.dart';
 import 'screens/catalog_screen.dart';
 import 'screens/appearance_editor_screen.dart';
 import 'screens/login_screen.dart';
-import 'screens/legal_onboarding_screen.dart';
 import 'screens/messages_screen.dart';
 import 'screens/outfit_create_screen.dart';
 import 'screens/outfits_screen.dart';
@@ -181,7 +180,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   OverlayEntry? _messageNotificationEntry;
   final List<Product> _draftOutfitProducts = [];
   final AppRepository _repository = AppRepository();
-  VoidCallback? _postOnboardingAction;
+  VoidCallback? _postSignInAction;
 
   ChatActions get _chatActions => ChatActions(
     sendText: _repository.sendChatText,
@@ -941,10 +940,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _openLoginScreen(onSignedIn: _openCreateItem);
       return;
     }
-    if (!_repository.canUseMarketplace) {
-      _postOnboardingAction = _openCreateItem;
-      return;
-    }
     if (!_repository.canSell) {
       unawaited(_openSellerActivation(onActivated: _openCreateItem));
       return;
@@ -1145,10 +1140,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _openLoginScreen(onSignedIn: _openCreateItemForOutfit);
       return;
     }
-    if (!_repository.canUseMarketplace) {
-      _postOnboardingAction = _openCreateItemForOutfit;
-      return;
-    }
     if (!_repository.canSell) {
       unawaited(_openSellerActivation(onActivated: _openCreateItemForOutfit));
       return;
@@ -1180,8 +1171,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   void _openLoginScreen({VoidCallback? onSignedIn}) {
-    _postOnboardingAction = onSignedIn;
-    unawaited(_repository.refreshRegistrationDocuments());
+    _postSignInAction = onSignedIn;
     var didComplete = false;
 
     void closeLoginFlow(BuildContext loginContext) {
@@ -1212,10 +1202,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     );
   }
 
-  void _runPostOnboardingAction() {
-    final action = _postOnboardingAction;
-    if (action == null || !_repository.canUseMarketplace) return;
-    _postOnboardingAction = null;
+  void _runPostSignInAction() {
+    final action = _postSignInAction;
+    if (action == null || !_repository.isSignedIn) return;
+    _postSignInAction = null;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) action();
     });
@@ -1244,22 +1234,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           );
         }
 
-        if (_repository.isSignedIn && !_repository.canUseMarketplace) {
-          return LegalOnboardingScreen(
-            documents: _repository.registrationDocuments,
-            initialIntent: _repository.pendingRegistrationIntent,
-            isSubmitting: _repository.entitlementsLoading,
-            errorMessage:
-                _repository.entitlementsError ??
-                _repository.registrationDocumentsError,
-            onRetryDocuments: () =>
-                unawaited(_repository.refreshRegistrationDocuments()),
-            onSignOut: _repository.signOut,
-            onDeleteAccount: _repository.deleteAccount,
-            onSubmit: _repository.completeRegistration,
-          );
-        }
-        _runPostOnboardingAction();
+        _runPostSignInAction();
 
         return Scaffold(
           backgroundColor: context.appBackdrop.scaffoldColor,
@@ -1536,7 +1511,6 @@ class _RegistrationLoginFlow extends StatefulWidget {
 }
 
 class _RegistrationLoginFlowState extends State<_RegistrationLoginFlow> {
-  bool _hasRegistrationIntent = false;
   bool _authenticationCallbackQueued = false;
 
   @override
@@ -1549,25 +1523,6 @@ class _RegistrationLoginFlowState extends State<_RegistrationLoginFlow> {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) widget.onAuthenticated();
           });
-        }
-        if (!_hasRegistrationIntent) {
-          return LegalOnboardingScreen(
-            preAuthentication: true,
-            documents: widget.repository.registrationDocuments,
-            initialIntent: widget.repository.pendingRegistrationIntent,
-            errorMessage: widget.repository.registrationDocumentsError,
-            onRetryDocuments: () =>
-                unawaited(widget.repository.refreshRegistrationDocuments()),
-            onExistingAccountLogin: () {
-              widget.repository.beginExistingAccountLogin();
-              if (mounted) setState(() => _hasRegistrationIntent = true);
-            },
-            onSubmit: (intent) async {
-              widget.repository.setPendingRegistrationIntent(intent);
-              if (mounted) setState(() => _hasRegistrationIntent = true);
-              return null;
-            },
-          );
         }
         return LoginScreen(
           onClose: _close,

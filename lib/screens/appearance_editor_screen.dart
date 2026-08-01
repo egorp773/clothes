@@ -754,7 +754,7 @@ class _ColorPickerField extends StatelessWidget {
                   colors: [
                     Color(0xFFFF5C7A),
                     Color(0xFFFFB84D),
-                    Color(0xFF65D6A6),
+                    appDarkAccentColor,
                     Color(0xFF67B7FF),
                     Color(0xFF9A7CFF),
                   ],

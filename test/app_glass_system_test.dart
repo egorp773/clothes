@@ -8,10 +8,18 @@ void main() {
   test('glass roles expose distinct optical weights', () {
     final glass = AppGlassStyle.liquid(
       brightness: Brightness.light,
-      accent: const Color(0xFFB6FF00),
+      accent: appLightAccentColor,
     );
 
     expect(glass.enabled, isTrue);
+    expect(
+      glass.materialFor(AppGlassRole.navigation).blurSigma,
+      greaterThanOrEqualTo(30),
+    );
+    expect(
+      glass.materialFor(AppGlassRole.navigation).tintOpacity,
+      greaterThanOrEqualTo(0.55),
+    );
     expect(
       glass.materialFor(AppGlassRole.navigation).blurSigma,
       greaterThan(glass.materialFor(AppGlassRole.compactButton).blurSigma),

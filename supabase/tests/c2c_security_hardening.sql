@@ -4,8 +4,12 @@ create extension if not exists pgtap with schema extensions;
 
 select extensions.plan(25);
 
--- Published test documents are transaction-local fixtures. Production
--- migrations deliberately seed no legal text/version.
+-- Replace any migration-seeded active versions with transaction-local
+-- fixtures so the assertions keep stable content hashes and timestamps.
+update public.legal_document_versions
+set is_active = false
+where is_active;
+
 insert into public.legal_document_versions (
   document_id,
   version,

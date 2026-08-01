@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:clothes/core/oauth_callback.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -87,5 +89,23 @@ void main() {
       ),
       throwsA(isA<OAuthCallbackException>()),
     );
+  });
+
+  test('native OAuth callback is allowlisted by every Supabase setup', () {
+    const oauthCallback = 'com.example.clothes://oauth-callback/';
+    const loginCallback = 'com.example.clothes://login-callback/';
+    final config = File('supabase/config.toml').readAsStringSync();
+
+    expect(config, contains(loginCallback));
+    expect(config, contains(oauthCallback));
+    for (final path in <String>[
+      'supabase/yandex_auth_setup.md',
+      'supabase/vk_auth_setup.md',
+      'supabase/telegram_auth_setup.md',
+    ]) {
+      final setup = File(path).readAsStringSync();
+      expect(setup, contains(loginCallback), reason: path);
+      expect(setup, contains(oauthCallback), reason: path);
+    }
   });
 }

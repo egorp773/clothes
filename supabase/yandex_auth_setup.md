@@ -30,13 +30,15 @@ Do not register wildcard callbacks.
 supabase secrets set \
   YANDEX_CLIENT_ID=<YANDEX_CLIENT_ID> \
   YANDEX_CLIENT_SECRET=<YANDEX_CLIENT_SECRET> \
-  OAUTH_ALLOWED_REDIRECT_URIS=com.example.clothes://login-callback/ \
+  OAUTH_ALLOWED_REDIRECT_URIS=com.example.clothes://login-callback/,com.example.clothes://oauth-callback/ \
   OAUTH_DEFAULT_REDIRECT_URI=com.example.clothes://login-callback/ \
   OAUTH_ALLOWED_WEB_ORIGINS=https://<APP_WEB_HOST>
 ```
 
 List every allowed redirect explicitly, comma-separated. Development HTTP
 redirects are accepted only for `localhost`, `127.0.0.1`, or `[::1]`.
+The `login-callback` route is used by application deep links and Telegram;
+the `oauth-callback` route is reserved for the native Yandex/VK browser flow.
 Replace the example application ID/scheme with the final organization-owned
 identifier in Flutter, Android, iOS, Supabase, and this allowlist together.
 

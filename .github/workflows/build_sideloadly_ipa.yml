@@ -46,9 +46,11 @@ jobs:
           echo "IOS_DEFINES_PATH=$DEFINES_PATH" >> "$GITHUB_ENV"
           ruby -rjson -ruri -e '
             data = JSON.parse(File.read(ARGV.fetch(0)))
-            required = %w[SUPABASE_URL SUPABASE_ANON_KEY]
+            required = %w[SUPABASE_URL SUPABASE_ANON_KEY APP_URL_SCHEME]
             missing = required.select { |key| data[key].to_s.strip.empty? }
             abort "Missing release dart-defines: #{missing.join(", ")}" unless missing.empty?
+            scheme = data.fetch("APP_URL_SCHEME").to_s
+            abort "APP_URL_SCHEME must be a reverse-DNS identifier" unless scheme.match?(/\A[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+\z/)
             placeholders = data.select do |_key, value|
               value.to_s.match?(/YOUR_|your-production-domain|\.example(?:\/|$)/i)
             end.keys
@@ -60,6 +62,20 @@ jobs:
               abort "#{key} must be a valid HTTPS URL" unless uri&.scheme == "https" && uri.host
             end
           ' "$DEFINES_PATH"
+
+      - name: Apply runtime identity to the temporary checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruby -rjson -e '
+            defines_path, *paths = ARGV
+            scheme = JSON.parse(File.read(defines_path)).fetch("APP_URL_SCHEME")
+            paths.each do |path|
+              source = File.read(path)
+              abort "Expected placeholder identity was not found in #{path}" unless source.include?("com.example.clothes")
+              File.write(path, source.gsub("com.example.clothes", scheme))
+            end
+          ' "$IOS_DEFINES_PATH" ios/Runner/Info.plist ios/Runner.xcodeproj/project.pbxproj
 
       - name: Build iOS app without code signing
         run: >-

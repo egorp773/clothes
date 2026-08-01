@@ -7,6 +7,7 @@ import {
   assertPkceChallenge,
   exactRedirect,
   normalizeRedirect,
+  redirectWithParams,
   sha256Base64Url,
 } from "./edge.ts";
 
@@ -17,7 +18,11 @@ Deno.test("strict redirect allowlist rejects an arbitrary HTTPS origin", {
   try {
     Deno.env.set(
       "OAUTH_ALLOWED_REDIRECT_URIS",
-      "com.example.clothes://login-callback/,https://app.example.ru/oauth",
+      "com.example.clothes://login-callback/,com.example.clothes://oauth-callback/,https://app.example.ru/oauth",
+    );
+    assertEquals(
+      exactRedirect("com.example.clothes://oauth-callback/"),
+      "com.example.clothes://oauth-callback/",
     );
     assertEquals(
       exactRedirect("https://app.example.ru/oauth"),
@@ -35,6 +40,22 @@ Deno.test("strict redirect allowlist rejects an arbitrary HTTPS origin", {
       Deno.env.set("OAUTH_ALLOWED_REDIRECT_URIS", previous);
     }
   }
+});
+
+Deno.test("native OAuth callback uses a direct browser redirect", () => {
+  const response = redirectWithParams(
+    "com.example.clothes://oauth-callback/",
+    {
+      oauth_code: "one-time-code",
+      oauth_provider: "yandex",
+    },
+  );
+
+  assertEquals(response.status, 303);
+  assertEquals(
+    response.headers.get("location"),
+    "com.example.clothes://oauth-callback/?oauth_code=one-time-code&oauth_provider=yandex",
+  );
 });
 
 Deno.test("redirect URI rejects credentials, fragments, and non-loopback HTTP", () => {
