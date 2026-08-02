@@ -62,6 +62,7 @@ typedef MarkThreadReadCallback = Future<void> Function(String threadId);
 typedef LoadOlderChatMessagesCallback = Future<bool> Function(String threadId);
 typedef SetChatVisibilityCallback =
     void Function(String threadId, bool isVisible);
+typedef ChatErrorMessageCallback = String? Function();
 
 /// Optional enhanced chat operations.
 ///
@@ -87,6 +88,7 @@ class ChatActions {
     this.markRead,
     this.loadOlder,
     this.setVisibility,
+    this.errorMessage,
   });
 
   final SendChatTextCallback? sendText;
@@ -106,4 +108,10 @@ class ChatActions {
   final MarkThreadReadCallback? markRead;
   final LoadOlderChatMessagesCallback? loadOlder;
   final SetChatVisibilityCallback? setVisibility;
+
+  /// Returns the concrete failure produced by the latest chat operation.
+  ///
+  /// The app repository supplies a `ChatFailure.diagnosticMessage` here so a
+  /// failed boolean callback does not discard its server/operation code.
+  final ChatErrorMessageCallback? errorMessage;
 }

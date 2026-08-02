@@ -240,6 +240,7 @@ class AppRepository extends ChangeNotifier {
   User? _currentUser;
   bool _isSigningIn = false;
   String? _authError;
+  ChatFailure? _lastChatFailure;
   UserEntitlements _entitlements = UserEntitlements.unavailable();
   bool _entitlementsLoading = false;
   String? _entitlementsError;
@@ -441,6 +442,8 @@ class AppRepository extends ChangeNotifier {
   bool get isSignedIn => _currentUser != null;
   bool get isSigningIn => _isSigningIn;
   String? get authError => _authError;
+  String? get chatErrorMessage =>
+      _lastChatFailure?.diagnosticMessage ?? _authError;
   UserEntitlements get entitlements => _entitlements;
   bool get entitlementsLoading => _entitlementsLoading;
   String? get entitlementsError => _entitlementsError;
@@ -1367,11 +1370,13 @@ class AppRepository extends ChangeNotifier {
     notifyListeners();
 
     if (_hasSupabase && _client.auth.currentUser != null) {
+      var saveOperation = 'public_profile';
       try {
         await _upsertProfile(
           userId: _client.auth.currentUser!.id,
           profile: _profile,
         );
+        saveOperation = 'auth_metadata';
         final response = await _client.auth.updateUser(
           UserAttributes(
             data: {
@@ -1383,13 +1388,22 @@ class AppRepository extends ChangeNotifier {
           ),
         );
         _currentUser = response.user ?? _client.auth.currentUser;
+      } catch (error, stackTrace) {
+        debugPrint('Profile update error: $error\n$stackTrace');
+        return profileSaveFailureMessage(
+          operation: saveOperation,
+          error: error,
+        );
+      }
+      try {
         await _syncOwnedProductSellerFields(
           userId: _client.auth.currentUser!.id,
           profile: _profile,
         );
-      } catch (e) {
-        debugPrint('Profile update error: $e');
-        return 'Не удалось сохранить профиль';
+      } catch (error, stackTrace) {
+        debugPrint(
+          'Local profile projection update error: $error\n$stackTrace',
+        );
       }
     }
     return null;
@@ -1413,10 +1427,21 @@ class AppRepository extends ChangeNotifier {
 
     var avatarUrl = updatedProfile.avatarUrl;
     if (avatarFile != null) {
-      avatarUrl = _hasSupabase
-          ? await _uploadProfileAvatar(avatarFile) ?? ''
-          : await _inlineImage(avatarFile) ?? '';
-      if (avatarUrl.isEmpty) return 'Не удалось сохранить фото профиля';
+      try {
+        avatarUrl = _hasSupabase
+            ? await _uploadProfileAvatar(avatarFile) ?? ''
+            : await _inlineImage(avatarFile) ?? '';
+      } catch (error, stackTrace) {
+        debugPrint('Profile avatar save error: $error\n$stackTrace');
+        return profileSaveFailureMessage(
+          operation: 'avatar_upload',
+          error: error,
+        );
+      }
+      if (avatarUrl.isEmpty) {
+        return 'Не удалось сохранить фото профиля.\n'
+            'Код: PROFILE_AVATAR_UPLOAD';
+      }
     }
 
     final candidate = updatedProfile.copyWith(
@@ -1431,13 +1456,18 @@ class AppRepository extends ChangeNotifier {
       notifyListeners();
       return null;
     }
+    var saveOperation = 'public_profile';
     try {
       await _upsertProfile(userId: user.id, profile: candidate);
+      saveOperation = 'private_profile';
       await _savePrivateProfileDetails(user.id, candidate);
+      saveOperation = 'birth_date';
       await _updateMyBirthDateRemote(candidate.birthDate);
       if (candidate.sellerType != null) {
+        saveOperation = 'seller_type';
         await _setMySellerTypeRemote(candidate.sellerType!);
       }
+      saveOperation = 'auth_metadata';
       final response = await _client.auth.updateUser(
         UserAttributes(
           data: {
@@ -1451,17 +1481,24 @@ class AppRepository extends ChangeNotifier {
       );
       _currentUser = response.user ?? _client.auth.currentUser;
       _profile = candidate;
+      saveOperation = 'entitlements';
       await refreshUserEntitlements(notify: false);
       _profile = _profile.withSellerType(
         _entitlements.seller.type ?? candidate.sellerType,
       );
-      await _prefs.remove(_scopedStorageKey(_profileKey));
-      await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
-      notifyListeners();
     } catch (error, stackTrace) {
       debugPrint('Personal profile update error: $error\n$stackTrace');
-      return 'Не удалось сохранить профиль. Проверьте связь и попробуйте ещё раз';
+      return profileSaveFailureMessage(operation: saveOperation, error: error);
     }
+    try {
+      await _prefs.remove(_scopedStorageKey(_profileKey));
+      await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
+    } catch (error, stackTrace) {
+      // The authoritative server save already succeeded. A local projection
+      // failure must not turn that into a misleading save error for the user.
+      debugPrint('Local profile cache update error: $error\n$stackTrace');
+    }
+    notifyListeners();
     return null;
   }
 
@@ -1613,20 +1650,31 @@ class AppRepository extends ChangeNotifier {
     String userId,
     AppProfile profile,
   ) async {
-    try {
-      await _client.from('profile_private_details').upsert({
-        'user_id': userId,
-        'first_name': profile.firstName,
-        'last_name': profile.lastName,
-        'middle_name': profile.middleName,
-        'gender': profile.gender,
-        'phone': profile.phone,
-        'email': profile.email,
-      }, onConflict: 'user_id');
-    } on PostgrestException catch (e) {
-      if (e.code != 'PGRST205') rethrow;
-      debugPrint('Private profile table is not installed yet');
-    }
+    final values = <String, dynamic>{
+      'first_name': profile.firstName,
+      'last_name': profile.lastName,
+      'middle_name': profile.middleName,
+      'gender': profile.gender,
+      'phone': profile.phone,
+      'email': profile.email,
+    };
+    await updateThenInsert(
+      update: () async {
+        final updated = await _client
+            .from('profile_private_details')
+            .update(values)
+            .eq('user_id', userId)
+            .select('user_id')
+            .maybeSingle();
+        return updated != null;
+      },
+      insert: () async {
+        await _client.from('profile_private_details').insert({
+          'user_id': userId,
+          ...values,
+        });
+      },
+    );
   }
 
   Future<void> _loadPrivateProfileDetails(String userId) async {
@@ -1879,13 +1927,94 @@ class AppRepository extends ChangeNotifier {
     required AppProfile profile,
   }) async {
     if (!_hasSupabase) return;
-    await _client.from('profiles').upsert({
-      'id': userId,
+    final values = <String, dynamic>{
       'name': profile.name,
       'handle': profile.handle,
       'avatar_url': profile.avatarUrl,
       'city': profile.city,
-    }, onConflict: 'id');
+    };
+    await updateThenInsert(
+      update: () async {
+        final updated = await _client
+            .from('profiles')
+            .update(values)
+            .eq('id', userId)
+            .select('id')
+            .maybeSingle();
+        return updated != null;
+      },
+      insert: () async {
+        await _client.from('profiles').insert({'id': userId, ...values});
+      },
+    );
+  }
+
+  @visibleForTesting
+  static Future<void> updateThenInsert({
+    required Future<bool> Function() update,
+    required Future<void> Function() insert,
+  }) async {
+    if (await update()) return;
+    try {
+      await insert();
+    } on PostgrestException catch (error) {
+      if (error.code != '23505' || !await update()) rethrow;
+    }
+  }
+
+  @visibleForTesting
+  static String profileSaveFailureMessage({
+    required String operation,
+    required Object error,
+  }) {
+    final normalizedOperation = operation
+        .trim()
+        .replaceAll(RegExp(r'[^a-zA-Z0-9]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '')
+        .toUpperCase();
+    final operationCode = normalizedOperation.isEmpty
+        ? 'UNKNOWN'
+        : normalizedOperation;
+    final summary = switch (operation) {
+      'public_profile' => 'Не удалось сохранить основные данные профиля.',
+      'private_profile' => 'Не удалось сохранить личные данные профиля.',
+      'birth_date' => 'Не удалось сохранить дату рождения.',
+      'avatar_upload' => 'Не удалось сохранить фото профиля.',
+      'seller_type' => 'Не удалось сохранить тип продавца.',
+      'auth_metadata' => 'Профиль сохранён, но данные аккаунта не обновились.',
+      'entitlements' => 'Профиль сохранён, но права аккаунта не обновились.',
+      _ => 'Не удалось сохранить профиль.',
+    };
+
+    String serverCode = '';
+    String details = '';
+    if (error is PostgrestException) {
+      serverCode = error.code?.trim() ?? '';
+      details = <String>{
+        error.message.trim(),
+        error.details?.toString().trim() ?? '',
+        error.hint?.toString().trim() ?? '',
+      }.where((value) => value.isNotEmpty).join(' · ');
+    } else if (error is AuthException) {
+      serverCode = error.code?.trim() ?? error.statusCode?.trim() ?? '';
+      details = error.message;
+    } else {
+      details = error.toString();
+    }
+    final safeDetails = sanitizeChatDiagnosticText(details);
+    final safeServerCode = serverCode
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_.-]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
+    final diagnostic = <String>[
+      'PROFILE_$operationCode',
+      if (safeServerCode.isNotEmpty) 'сервер: $safeServerCode',
+    ].join(' · ');
+    return [
+      summary,
+      'Код: $diagnostic',
+      if (safeDetails.isNotEmpty) 'Детали: $safeDetails',
+    ].join('\n');
   }
 
   Future<void> _registerPushToken(String userId) async {
@@ -4163,7 +4292,7 @@ class AppRepository extends ChangeNotifier {
           .getPublicUrl(objectPath);
     } catch (error, stackTrace) {
       debugPrint('Profile avatar upload error: $error\n$stackTrace');
-      return null;
+      rethrow;
     }
   }
 
@@ -5049,11 +5178,11 @@ class AppRepository extends ChangeNotifier {
     try {
       await _client.rpc('block_user', params: {'p_blocked_user_id': blockedId});
       return true;
-    } catch (e) {
+    } catch (error, stackTrace) {
       _blockedUserIds.remove(blockedId);
       await _saveBlockedUsers();
-      notifyListeners();
-      debugPrint('Block user error: $e');
+      debugPrint('Block user error: $error');
+      _setChatFailureFrom(error, stackTrace, operation: 'block_user');
       return false;
     }
   }
@@ -5398,12 +5527,25 @@ class AppRepository extends ChangeNotifier {
     Product product, {
     bool imageOnly = false,
   }) async {
+    _beginChatOperation();
     final user = _hasSupabase
         ? await _ensureAuthSession(
             message: 'Войдите в профиль, чтобы написать продавцу',
           )
         : null;
     if (_hasSupabase && user == null) return null;
+
+    final actorId = user?.id ?? currentUserId;
+    if (actorId.isNotEmpty && product.ownerId == actorId) {
+      _setChatFailureMessage(
+        const ChatFailure(
+          code: ChatFailureCode.validationError,
+          operation: 'create_product_thread',
+          message: 'cannot_message_own_product',
+        ),
+      );
+      return null;
+    }
 
     if (_hasSupabase) {
       final repository = _chatRepository;
@@ -5641,11 +5783,23 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<MessageThread?> startDirectChat(AppUserProfile recipient) async {
+    _beginChatOperation();
     final user = _hasSupabase
         ? await _ensureAuthSession(message: 'Войдите в профиль, чтобы написать')
         : null;
     if (_hasSupabase && user == null) return null;
-    if (recipient.id.isEmpty || recipient.id == currentUserId) return null;
+    if (recipient.id.isEmpty || recipient.id == currentUserId) {
+      _setChatFailureMessage(
+        ChatFailure(
+          code: ChatFailureCode.validationError,
+          operation: 'create_direct_thread',
+          message: recipient.id.isEmpty
+              ? 'recipient_id_required'
+              : 'cannot_message_yourself',
+        ),
+      );
+      return null;
+    }
 
     if (_hasSupabase) {
       final repository = _chatRepository;
@@ -5737,6 +5891,7 @@ class AppRepository extends ChangeNotifier {
     List<AppUserProfile> recipients, {
     String title = '',
   }) async {
+    _beginChatOperation();
     final user = _hasSupabase
         ? await _ensureAuthSession(message: 'Войдите, чтобы создать беседу')
         : null;
@@ -5860,6 +6015,7 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<bool> shareProductToThread(String threadId, Product product) async {
+    _beginChatOperation();
     final user = _hasSupabase
         ? await _ensureAuthSession(message: 'Войдите, чтобы поделиться')
         : null;
@@ -5873,9 +6029,13 @@ class AppRepository extends ChangeNotifier {
         );
         if (currentUserId != actorId) return false;
         if (remoteThread != null) _upsertLocalThread(remoteThread);
-      } catch (_) {
-        _authError = 'Не удалось загрузить диалог. Попробуйте ещё раз.';
-        notifyListeners();
+      } catch (error, stackTrace) {
+        _setChatFailureFrom(
+          error,
+          stackTrace,
+          operation: 'load_thread_before_product_share',
+          threadId: threadId,
+        );
         return false;
       }
     }
@@ -5906,6 +6066,7 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<bool> sendChatText(String threadId, String text) async {
+    _beginChatOperation();
     final trimmed = text.trim();
     if (trimmed.isEmpty) return false;
 
@@ -5927,9 +6088,13 @@ class AppRepository extends ChangeNotifier {
         if (remoteThread != null) {
           _upsertLocalThread(remoteThread);
         }
-      } catch (_) {
-        _authError = 'Не удалось загрузить диалог. Попробуйте ещё раз.';
-        notifyListeners();
+      } catch (error, stackTrace) {
+        _setChatFailureFrom(
+          error,
+          stackTrace,
+          operation: 'load_thread_before_send',
+          threadId: threadId,
+        );
         return false;
       }
     }
@@ -5965,6 +6130,7 @@ class AppRepository extends ChangeNotifier {
     String threadId,
     ChatMessage pendingMessage,
   ) async {
+    _beginChatOperation();
     final trimmed = pendingMessage.text.trim();
     if (threadId.isEmpty || pendingMessage.id.isEmpty || trimmed.isEmpty) {
       return false;
@@ -5997,6 +6163,7 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<bool> retryChatText(String threadId, ChatMessage failedMessage) async {
+    _beginChatOperation();
     final trimmed = failedMessage.text.trim();
     if (threadId.isEmpty ||
         failedMessage.id.isEmpty ||
@@ -6051,6 +6218,7 @@ class AppRepository extends ChangeNotifier {
     String threadId,
     ChatMessage failedMessage,
   ) async {
+    _beginChatOperation();
     final failedAttachment = failedMessage.attachment;
     if (threadId.isEmpty ||
         failedMessage.id.isEmpty ||
@@ -6194,6 +6362,7 @@ class AppRepository extends ChangeNotifier {
     if (failedMessage.isMedia) {
       return retryChatMedia(threadId, failedMessage);
     }
+    _beginChatOperation();
     if (threadId.isEmpty ||
         failedMessage.type != 'product' ||
         failedMessage.sharedProduct == null ||
@@ -6244,6 +6413,7 @@ class AppRepository extends ChangeNotifier {
     String text,
     ChatMessage replyTo,
   ) async {
+    _beginChatOperation();
     final trimmed = text.trim();
     if (trimmed.isEmpty || replyTo.id.isEmpty) return false;
 
@@ -6304,6 +6474,7 @@ class AppRepository extends ChangeNotifier {
     String caption = '',
     ChatMessage? replyTo,
   }) async {
+    _beginChatOperation();
     if (kind != ChatMediaKind.image) {
       // Video rows remain readable for history compatibility, but the
       // production client no longer uploads or retries video attachments.
@@ -6445,29 +6616,55 @@ class AppRepository extends ChangeNotifier {
     int sourceSize;
     try {
       sourceSize = await mediaFile.length();
-    } catch (e) {
-      debugPrint('Chat media size read error: $e');
+    } catch (error, stackTrace) {
+      debugPrint('Chat media size read error: $error');
+      _setChatFailureFrom(
+        error,
+        stackTrace,
+        operation: 'read_chat_media',
+        threadId: threadId,
+      );
       return null;
     }
 
     if (sourceSize <= 0 || sourceSize > _maxChatImageBytes) {
-      _authError = 'Фотография должна быть не больше 20 МБ';
-      notifyListeners();
+      _setChatFailureMessage(
+        ChatFailure(
+          code: ChatFailureCode.validationError,
+          operation: 'validate_chat_media',
+          threadId: threadId,
+          message: 'Фотография должна быть не больше 20 МБ',
+        ),
+      );
       return null;
     }
 
     late final NormalizedUploadImage image;
     try {
       image = await UploadImageNormalizer.fromXFile(mediaFile);
-    } on FormatException {
-      _authError = 'Поддерживаются JPEG, PNG, WebP, GIF и HEIC';
-      notifyListeners();
+    } on FormatException catch (error, stackTrace) {
+      _setChatFailureMessage(
+        ChatFailure(
+          code: ChatFailureCode.validationError,
+          operation: 'normalize_chat_media',
+          threadId: threadId,
+          message: 'Поддерживаются JPEG, PNG, WebP, GIF и HEIC',
+          cause: error,
+          stackTrace: stackTrace,
+        ),
+      );
       return null;
     }
     final size = image.bytes.length;
     if (size <= 0 || size > _maxChatImageBytes) {
-      _authError = 'Фотография должна быть не больше 20 МБ';
-      notifyListeners();
+      _setChatFailureMessage(
+        ChatFailure(
+          code: ChatFailureCode.validationError,
+          operation: 'validate_chat_media',
+          threadId: threadId,
+          message: 'Фотография должна быть не больше 20 МБ',
+        ),
+      );
       return null;
     }
     final mimeType = image.contentType;
@@ -6508,8 +6705,8 @@ class AppRepository extends ChangeNotifier {
         bucket: _chatMediaBucketName,
         storagePath: storagePath,
       );
-    } catch (e) {
-      debugPrint('Chat media upload error: $e');
+    } catch (error, stackTrace) {
+      debugPrint('Chat media upload error: $error');
       if (uploadStarted) {
         await _cleanupUnreferencedChatMedia(
           threadId,
@@ -6520,8 +6717,12 @@ class AppRepository extends ChangeNotifier {
           ),
         );
       }
-      _authError = 'Не удалось загрузить медиа. Проверьте подключение.';
-      notifyListeners();
+      _setChatFailureFrom(
+        error,
+        stackTrace,
+        operation: 'upload_chat_media',
+        threadId: threadId,
+      );
       return null;
     }
   }
@@ -6594,6 +6795,7 @@ class AppRepository extends ChangeNotifier {
     String messageId,
     String text,
   ) async {
+    _beginChatOperation();
     final trimmed = text.trim();
     if (messageId.isEmpty || trimmed.isEmpty) return false;
 
@@ -6627,9 +6829,15 @@ class AppRepository extends ChangeNotifier {
             'p_text': trimmed,
           },
         );
-      } catch (e) {
-        debugPrint('Message edit sync error: $e');
+      } catch (error, stackTrace) {
+        debugPrint('Message edit sync error: $error');
         await _replaceLocalMessage(threadId, original, updateLastPreview: true);
+        _setChatFailureFrom(
+          error,
+          stackTrace,
+          operation: 'edit_message',
+          threadId: threadId,
+        );
         return false;
       }
     }
@@ -6637,6 +6845,7 @@ class AppRepository extends ChangeNotifier {
   }
 
   Future<bool> deleteMessage(String threadId, String messageId) async {
+    _beginChatOperation();
     if (messageId.isEmpty) return false;
     final actorId = await _resolveChatActor();
     if (actorId == null) return false;
@@ -6668,9 +6877,15 @@ class AppRepository extends ChangeNotifier {
           'delete_chat_message',
           params: {'p_thread_id': threadId, 'p_message_id': messageId},
         );
-      } catch (e) {
-        debugPrint('Message delete sync error: $e');
+      } catch (error, stackTrace) {
+        debugPrint('Message delete sync error: $error');
         await _replaceLocalMessage(threadId, original, updateLastPreview: true);
+        _setChatFailureFrom(
+          error,
+          stackTrace,
+          operation: 'delete_message',
+          threadId: threadId,
+        );
         return false;
       }
     }
@@ -6682,6 +6897,7 @@ class AppRepository extends ChangeNotifier {
     String messageId,
     String reason,
   ) async {
+    _beginChatOperation();
     final thread = threadById(threadId);
     final normalizedReason = reason.trim();
     if (thread == null ||
@@ -6704,11 +6920,18 @@ class AppRepository extends ChangeNotifier {
       return true;
     } catch (error, stackTrace) {
       debugPrint('Message report error: $error\n$stackTrace');
+      _setChatFailureFrom(
+        error,
+        stackTrace,
+        operation: 'report_message',
+        threadId: threadId,
+      );
       return false;
     }
   }
 
   Future<bool> blockChatUser(String threadId) async {
+    _beginChatOperation();
     final thread = threadById(threadId);
     if (thread == null || thread.isGroup) return false;
     final otherPartyId = thread.otherPartyId(currentUserId).trim();
@@ -6723,6 +6946,7 @@ class AppRepository extends ChangeNotifier {
     bool? isArchived,
     String? title,
   }) async {
+    _beginChatOperation();
     final actorId = await _resolveChatActor();
     if (actorId == null) return false;
     final thread = threadById(threadId);
@@ -6763,11 +6987,17 @@ class AppRepository extends ChangeNotifier {
         try {
           await _client.rpc('update_chat_thread_settings', params: params);
           if (currentUserId != actorId) return false;
-        } catch (e) {
+        } catch (error, stackTrace) {
           if (currentUserId != actorId) return false;
-          debugPrint('Thread preferences sync error: $e');
+          debugPrint('Thread preferences sync error: $error');
           _upsertLocalThread(thread);
           await _saveThreadsLocal();
+          _setChatFailureFrom(
+            error,
+            stackTrace,
+            operation: 'update_thread_preferences',
+            threadId: threadId,
+          );
           notifyListeners();
           return false;
         }
@@ -7071,14 +7301,35 @@ class AppRepository extends ChangeNotifier {
   }
 
   void _setChatFailureMessage(ChatFailure? failure) {
-    _authError =
-        (failure ??
-                const ChatFailure(
-                  code: ChatFailureCode.unknown,
-                  operation: 'chat',
-                ))
-            .userMessage;
+    final resolved =
+        failure ??
+        const ChatFailure(code: ChatFailureCode.unknown, operation: 'chat');
+    _lastChatFailure = resolved;
+    _authError = resolved.diagnosticMessage;
     notifyListeners();
+  }
+
+  void _setChatFailureFrom(
+    Object error,
+    StackTrace stackTrace, {
+    required String operation,
+    String threadId = '',
+    String clientMessageId = '',
+  }) {
+    _setChatFailureMessage(
+      ChatFailure.from(
+        error,
+        stackTrace,
+        operation: operation,
+        threadId: threadId,
+        clientMessageId: clientMessageId,
+      ),
+    );
+  }
+
+  void _beginChatOperation() {
+    _lastChatFailure = null;
+    _authError = null;
   }
 
   Future<MessageThread> _materializeRemoteThread(

@@ -1,6 +1,7 @@
 import 'package:clothes/core/app_appearance.dart';
 import 'package:clothes/models/profile_feature.dart';
 import 'package:clothes/screens/product_screen.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -220,6 +221,54 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'own unavailable listing keeps its price and hides commerce actions',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var contactCalls = 0;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _buildProductScreen(
+            onContactSeller: () => contactCalls++,
+            product: const ProductDetailData(
+              id: 'own-unavailable-product',
+              title: 'My jacket',
+              description: 'Own listing description',
+              price: '12 345',
+              priceValue: 12345,
+              image: '',
+              images: [],
+              category: 'Jackets',
+              brand: 'Test',
+              color: 'Black',
+              sellerName: 'Me',
+              sellerHandle: '@me',
+              size: 'M',
+              condition: 'New',
+              location: 'Moscow',
+              isLiked: false,
+              canPurchase: false,
+              isOwnListing: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('12 345'), findsOneWidget);
+      expect(find.byKey(productScreenFooterKey), findsNothing);
+      expect(find.byKey(productScreenMessageButtonKey), findsNothing);
+      expect(find.byKey(productScreenBuyDeliveryButtonKey), findsNothing);
+      expect(find.byKey(productUnavailablePurchaseSheetKey), findsNothing);
+      expect(find.byIcon(CupertinoIcons.paperplane), findsNothing);
+      expect(contactCalls, 0);
+    },
+  );
 }
 
 class _RouteHarness extends StatefulWidget {
@@ -333,26 +382,31 @@ class _TransparentRoutePage extends StatelessWidget {
   }
 }
 
-ProductScreen _buildProductScreen({required VoidCallback onContactSeller}) {
+ProductScreen _buildProductScreen({
+  required VoidCallback onContactSeller,
+  ProductDetailData? product,
+}) {
   return ProductScreen(
-    product: const ProductDetailData(
-      id: 'product-route-test',
-      title: 'Test jacket',
-      description: 'Product route test description',
-      price: '10 000',
-      priceValue: 10000,
-      image: '',
-      images: [],
-      category: 'Jackets',
-      brand: 'Test',
-      color: 'Black',
-      sellerName: 'Seller',
-      sellerHandle: '@seller',
-      size: 'M',
-      condition: 'New',
-      location: 'Moscow',
-      isLiked: false,
-    ),
+    product:
+        product ??
+        const ProductDetailData(
+          id: 'product-route-test',
+          title: 'Test jacket',
+          description: 'Product route test description',
+          price: '10 000',
+          priceValue: 10000,
+          image: '',
+          images: [],
+          category: 'Jackets',
+          brand: 'Test',
+          color: 'Black',
+          sellerName: 'Seller',
+          sellerHandle: '@seller',
+          size: 'M',
+          condition: 'New',
+          location: 'Moscow',
+          isLiked: false,
+        ),
     onLike: () {},
     onContactSeller: onContactSeller,
     onOpenSeller: () {},

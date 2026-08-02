@@ -10,6 +10,7 @@ import '../core/app_appearance.dart';
 import '../core/app_typography.dart';
 import '../features/chat/chat_actions.dart';
 import '../features/chat/chat_avatar.dart';
+import '../features/chat/chat_errors.dart';
 import '../features/chat/conversation_info_screen.dart';
 import '../models/app_profile.dart';
 import '../models/message_thread.dart';
@@ -25,7 +26,46 @@ void _logChatUiFailure(String operation, Object error, StackTrace stackTrace) {
   debugPrintStack(stackTrace: stackTrace);
 }
 
+String _chatFailureMessage({
+  required String fallback,
+  required String operation,
+  ChatErrorMessageCallback? errorMessage,
+  Object? error,
+  StackTrace? stackTrace,
+}) {
+  String? repositoryMessage;
+  if (error == null && errorMessage != null) {
+    try {
+      repositoryMessage = errorMessage();
+    } catch (callbackError, callbackStackTrace) {
+      _logChatUiFailure(
+        'read failure details',
+        callbackError,
+        callbackStackTrace,
+      );
+    }
+  }
+  return chatOperationFailureMessage(
+    fallback: fallback,
+    operation: operation,
+    repositoryMessage: repositoryMessage,
+    error: error,
+    stackTrace: stackTrace,
+  );
+}
+
 bool _chatVideoSendingEnabled() => false;
+
+@visibleForTesting
+bool canShowChatPurchaseAction(MessageThread thread, String currentUserId) {
+  final actorId = currentUserId.trim();
+  return actorId.isNotEmpty &&
+      thread.isProductChat &&
+      !thread.isGroup &&
+      thread.buyerId == actorId &&
+      thread.sellerId.isNotEmpty &&
+      thread.sellerId != actorId;
+}
 
 class MessagesScreen extends StatefulWidget {
   const MessagesScreen({
@@ -94,6 +134,23 @@ class _MessagesScreenState extends State<MessagesScreen> {
     _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _showDiagnosticError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 10),
+        showCloseIcon: true,
+        action: SnackBarAction(
+          label: 'Копировать',
+          onPressed: () =>
+              unawaited(Clipboard.setData(ClipboardData(text: message))),
+        ),
+      ),
+    );
   }
 
   void _onSearchChanged(String value) {
@@ -191,10 +248,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
         return;
       }
       if (thread == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Не удалось открыть диалог. Попробуйте ещё раз.'),
-            behavior: SnackBarBehavior.floating,
+        _showDiagnosticError(
+          _chatFailureMessage(
+            fallback: 'Не удалось открыть диалог. Попробуйте ещё раз.',
+            operation: 'open_direct_chat',
+            errorMessage: widget.actions?.errorMessage,
           ),
         );
         return;
@@ -210,10 +268,13 @@ class _MessagesScreenState extends State<MessagesScreen> {
       if (mounted &&
           sourceRoute?.isCurrent == true &&
           TickerMode.valuesOf(context).enabled) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Не удалось открыть диалог. Попробуйте ещё раз.'),
-            behavior: SnackBarBehavior.floating,
+        _showDiagnosticError(
+          _chatFailureMessage(
+            fallback: 'Не удалось открыть диалог. Попробуйте ещё раз.',
+            operation: 'open_direct_chat',
+            errorMessage: widget.actions?.errorMessage,
+            error: error,
+            stackTrace: stackTrace,
           ),
         );
       }
@@ -236,6 +297,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         builder: (context) => _NewConversationSheet(
           onSearchUsers: widget.onSearchUsers,
           onCreateConversation: widget.onCreateConversation,
+          errorMessage: widget.actions?.errorMessage,
         ),
       );
       if (!mounted || thread == null) return;
@@ -336,6 +398,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
     bool? isArchived,
   }) async {
     var saved = false;
+    Object? updateError;
+    StackTrace? updateStackTrace;
     try {
       saved = await update(
         threadId,
@@ -345,15 +409,19 @@ class _MessagesScreenState extends State<MessagesScreen> {
       );
     } catch (error, stackTrace) {
       _logChatUiFailure('update conversation', error, stackTrace);
+      updateError = error;
+      updateStackTrace = stackTrace;
       saved = false;
     }
     if (!mounted || saved) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Не удалось изменить настройки чата'),
-        behavior: SnackBarBehavior.floating,
-      ),
+    final message = _chatFailureMessage(
+      fallback: 'Не удалось изменить настройки чата.',
+      operation: 'update_thread_preferences',
+      errorMessage: widget.actions?.errorMessage,
+      error: updateError,
+      stackTrace: updateStackTrace,
     );
+    _showDiagnosticError(message);
   }
 
   Future<void> _markThreadReadFromInbox(String threadId) async {
@@ -847,6 +915,7 @@ class _NewConversationSheet extends StatefulWidget {
   const _NewConversationSheet({
     required this.onSearchUsers,
     required this.onCreateConversation,
+    this.errorMessage,
   });
 
   final Future<List<AppUserProfile>> Function(String query) onSearchUsers;
@@ -855,6 +924,7 @@ class _NewConversationSheet extends StatefulWidget {
     String title,
   })
   onCreateConversation;
+  final ChatErrorMessageCallback? errorMessage;
 
   @override
   State<_NewConversationSheet> createState() => _NewConversationSheetState();
@@ -935,6 +1005,8 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
       _createError = null;
     });
     MessageThread? thread;
+    Object? creationError;
+    StackTrace? creationStackTrace;
     try {
       thread = await widget.onCreateConversation(
         _selected.values.toList(growable: false),
@@ -942,6 +1014,8 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
       );
     } catch (error, stackTrace) {
       _logChatUiFailure('create conversation', error, stackTrace);
+      creationError = error;
+      creationStackTrace = stackTrace;
       thread = null;
     }
     if (!mounted) return;
@@ -950,8 +1024,14 @@ class _NewConversationSheetState extends State<_NewConversationSheet> {
     } else {
       setState(() {
         _creating = false;
-        _createError =
-            'Не удалось создать беседу. Проверьте подключение и повторите.';
+        _createError = _chatFailureMessage(
+          fallback:
+              'Не удалось создать беседу. Проверьте подключение и повторите.',
+          operation: 'create_conversation',
+          errorMessage: widget.errorMessage,
+          error: creationError,
+          stackTrace: creationStackTrace,
+        );
       });
     }
   }
@@ -1557,14 +1637,25 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (confirmed != true) return;
     var removed = false;
+    Object? removalError;
+    StackTrace? removalStackTrace;
     try {
       removed = await remove(_thread.id, message.id);
     } catch (error, stackTrace) {
       _logChatUiFailure('delete message', error, stackTrace);
+      removalError = error;
+      removalStackTrace = stackTrace;
       removed = false;
     }
     if (!mounted || removed) return;
-    _showError('Не удалось удалить сообщение. Попробуйте ещё раз.');
+    _showError(
+      _operationFailure(
+        fallback: 'Не удалось удалить сообщение. Попробуйте ещё раз.',
+        operation: 'delete_message',
+        error: removalError,
+        stackTrace: removalStackTrace,
+      ),
+    );
   }
 
   Future<void> _reportChatMessage(ChatMessage message) async {
@@ -1594,14 +1685,30 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
     if (reason == null || !mounted) return;
-    final submitted = await report(_thread.id, message.id, reason);
+    var submitted = false;
+    Object? reportError;
+    StackTrace? reportStackTrace;
+    try {
+      submitted = await report(_thread.id, message.id, reason);
+    } catch (error, stackTrace) {
+      _logChatUiFailure('report message', error, stackTrace);
+      reportError = error;
+      reportStackTrace = stackTrace;
+    }
     if (!mounted) return;
     if (submitted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Жалоба отправлена на модерацию')),
       );
     } else {
-      _showError('Не удалось отправить жалобу. Попробуйте ещё раз.');
+      _showError(
+        _operationFailure(
+          fallback: 'Не удалось отправить жалобу. Попробуйте ещё раз.',
+          operation: 'report_message',
+          error: reportError,
+          stackTrace: reportStackTrace,
+        ),
+      );
     }
   }
 
@@ -1629,14 +1736,30 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
     if (confirmed != true || !mounted) return;
-    final blocked = await block(_thread.id);
+    var blocked = false;
+    Object? blockError;
+    StackTrace? blockStackTrace;
+    try {
+      blocked = await block(_thread.id);
+    } catch (error, stackTrace) {
+      _logChatUiFailure('block chat user', error, stackTrace);
+      blockError = error;
+      blockStackTrace = stackTrace;
+    }
     if (!mounted) return;
     if (blocked) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Пользователь заблокирован')),
       );
     } else {
-      _showError('Не удалось заблокировать пользователя.');
+      _showError(
+        _operationFailure(
+          fallback: 'Не удалось заблокировать пользователя.',
+          operation: 'block_chat_user',
+          error: blockError,
+          stackTrace: blockStackTrace,
+        ),
+      );
     }
   }
 
@@ -1868,6 +1991,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if (media == null) return;
     setState(() => _isSending = true);
     var sent = false;
+    Object? sendError;
+    StackTrace? sendStackTrace;
     try {
       final sendMedia = widget.actions!.sendMedia;
       if (sendMedia != null) {
@@ -1888,6 +2013,8 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (error, stackTrace) {
       _logChatUiFailure('send media', error, stackTrace);
+      sendError = error;
+      sendStackTrace = stackTrace;
       sent = false;
     }
     if (!mounted) return;
@@ -1899,7 +2026,14 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
     if (!sent && mounted) {
-      _showError('Не удалось отправить медиа. Попробуйте ещё раз.');
+      _showError(
+        _operationFailure(
+          fallback: 'Не удалось отправить медиа. Попробуйте ещё раз.',
+          operation: isVideo ? 'send_video' : 'send_image',
+          error: sendError,
+          stackTrace: sendStackTrace,
+        ),
+      );
     }
   }
 
@@ -1917,10 +2051,14 @@ class _ChatScreenState extends State<ChatScreen> {
       if (edit == null) return;
       setState(() => _isSending = true);
       var saved = false;
+      Object? editError;
+      StackTrace? editStackTrace;
       try {
         saved = await edit(_thread.id, editing.id, text);
       } catch (error, stackTrace) {
         _logChatUiFailure('edit message', error, stackTrace);
+        editError = error;
+        editStackTrace = stackTrace;
         saved = false;
       }
       if (!mounted) return;
@@ -1932,7 +2070,14 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       });
       if (!saved) {
-        _showError('Не удалось сохранить изменения. Попробуйте ещё раз.');
+        _showError(
+          _operationFailure(
+            fallback: 'Не удалось сохранить изменения. Попробуйте ещё раз.',
+            operation: 'edit_message',
+            error: editError,
+            stackTrace: editStackTrace,
+          ),
+        );
       }
       return;
     }
@@ -1958,6 +2103,8 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     var sent = false;
+    Object? sendError;
+    StackTrace? sendStackTrace;
     try {
       // The pending-aware path owns the client id for both plain messages and
       // replies, so realtime reconciliation and retry stay idempotent.
@@ -1976,6 +2123,8 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (error, stackTrace) {
       _logChatUiFailure('send text message', error, stackTrace);
+      sendError = error;
+      sendStackTrace = stackTrace;
       sent = false;
     }
     if (!mounted) return;
@@ -2003,7 +2152,14 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
     if (!sent) {
-      _showError('Сообщение не доставлено. Проверьте подключение.');
+      _showError(
+        _operationFailure(
+          fallback: 'Сообщение не доставлено.',
+          operation: reply == null ? 'send_text' : 'send_reply',
+          error: sendError,
+          stackTrace: sendStackTrace,
+        ),
+      );
     }
     await Future<void>.delayed(const Duration(milliseconds: 30));
     _scrollToBottom();
@@ -2033,10 +2189,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     var sent = false;
+    Object? retryError;
+    StackTrace? retryStackTrace;
     try {
       sent = await retry(_thread.id, message);
     } catch (error, stackTrace) {
       _logChatUiFailure('retry message', error, stackTrace);
+      retryError = error;
+      retryStackTrace = stackTrace;
       sent = false;
     }
     if (!mounted) return;
@@ -2052,14 +2212,52 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
     if (!sent) {
-      _showError('Повторная отправка не удалась. Проверьте подключение.');
+      _showError(
+        _operationFailure(
+          fallback: 'Повторная отправка не удалась.',
+          operation: message.type == 'text'
+              ? 'retry_text'
+              : message.isMedia
+              ? 'retry_media'
+              : 'retry_product',
+          error: retryError,
+          stackTrace: retryStackTrace,
+        ),
+      );
     }
   }
+
+  String _operationFailure({
+    required String fallback,
+    required String operation,
+    Object? error,
+    StackTrace? stackTrace,
+  }) => _chatFailureMessage(
+    fallback: fallback,
+    operation: operation,
+    errorMessage: widget.actions?.errorMessage,
+    error: error,
+    stackTrace: stackTrace,
+  );
 
   void _showError(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: message.contains('Код:')
+            ? const Duration(seconds: 10)
+            : const Duration(seconds: 4),
+        showCloseIcon: true,
+        action: message.contains('Код:')
+            ? SnackBarAction(
+                label: 'Копировать',
+                onPressed: () =>
+                    unawaited(Clipboard.setData(ClipboardData(text: message))),
+              )
+            : null,
+      ),
     );
   }
 
@@ -2121,7 +2319,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
                 child: _ProductContextCard(
                   thread: _thread,
-                  onBuy: widget.onBuyProduct,
+                  onBuy:
+                      widget.onBuyProduct != null &&
+                          canShowChatPurchaseAction(
+                            _thread,
+                            widget.currentUserId,
+                          )
+                      ? widget.onBuyProduct
+                      : null,
                   onTap: widget.onOpenProduct == null
                       ? null
                       : () => widget.onOpenProduct!(_thread.productId),
@@ -2995,6 +3200,7 @@ class _ProductContextCard extends StatelessWidget {
                   SizedBox(
                     height: 36,
                     child: FilledButton(
+                      key: const Key('chat-buy-product'),
                       onPressed: onBuy,
                       style: FilledButton.styleFrom(
                         overlayColor: Colors.transparent,

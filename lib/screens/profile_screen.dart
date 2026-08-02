@@ -152,8 +152,8 @@ class ProfileScreen extends StatelessWidget {
       onReviewsTap: () => _openReviews(context),
     );
 
-    return Material(
-      type: MaterialType.transparency,
+    return _ProfilePageSurface(
+      backgroundColor: context.appBackdrop.scaffoldColor,
       child: ListView(
         physics: const BouncingScrollPhysics(),
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
@@ -520,6 +520,24 @@ class ProfileScreen extends StatelessWidget {
         builder: (context) =>
             SellerDashboardScreen(stats: sellerDashboardStats),
       ),
+    );
+  }
+}
+
+class _ProfilePageSurface extends StatelessWidget {
+  const _ProfilePageSurface({
+    required this.backgroundColor,
+    required this.child,
+  });
+
+  final Color backgroundColor;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      type: MaterialType.transparency,
+      child: ColoredBox(color: backgroundColor, child: child),
     );
   }
 }

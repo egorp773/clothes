@@ -86,6 +86,8 @@ void main() {
     );
     expect(button.onPressed, isNotNull);
     expect(find.byType(SnackBar), findsOneWidget);
+    expect(find.textContaining('CHAT_UNKNOWN'), findsOneWidget);
+    expect(find.textContaining('offline'), findsOneWidget);
   });
 
   testWidgets('searching an existing recipient reuses the direct thread', (

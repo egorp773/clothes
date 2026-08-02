@@ -182,9 +182,51 @@ void main() {
     await tester.pumpAndSettle();
     expect(contactCalls, 1);
   });
+
+  testWidgets('catalog marks the current user product as an own listing', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final product = _testProduct(
+      'product-owned-by-viewer',
+      ownerId: 'viewer-1',
+    );
+    final threads = ValueNotifier<int>(0);
+    addTearDown(threads.dispose);
+
+    await tester.pumpWidget(
+      _catalogHarness(
+        product: product,
+        threads: threads,
+        onContactSeller: (_) async => null,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byType(ProductCard));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(ProductCard));
+    await tester.pumpAndSettle();
+
+    final screen = tester.widget<ProductScreen>(find.byType(ProductScreen));
+    expect(screen.product.isOwnListing, isTrue);
+    expect(
+      find.descendant(
+        of: find.byType(ProductScreen),
+        matching: find.text(screen.product.price),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(productScreenFooterKey), findsNothing);
+    expect(find.byKey(productScreenMessageButtonKey), findsNothing);
+    expect(find.byKey(productScreenBuyDeliveryButtonKey), findsNothing);
+  });
 }
 
-Product _testProduct(String id) => Product(
+Product _testProduct(String id, {String ownerId = ''}) => Product(
   id: id,
   title: 'Тестовый свитер',
   detailTitle: 'Тестовый свитер',
@@ -198,6 +240,7 @@ Product _testProduct(String id) => Product(
   size: 'M',
   color: 'Белый',
   condition: 'Отличное',
+  ownerId: ownerId,
   dotsOnDark: false,
 );
 

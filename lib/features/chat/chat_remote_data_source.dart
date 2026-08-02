@@ -121,12 +121,17 @@ class ChatRemoteDataSource {
       final envelope = _requiredRow(response);
       final rawThread = envelope['thread'];
       final rawMessage = envelope['message'];
-      if (rawThread is! Map) {
+      final thread = rawThread is Map
+          ? Map<String, dynamic>.from(rawThread)
+          : envelope['id'] != null
+          ? envelope
+          : null;
+      if (thread == null) {
         throw const FormatException('chat_product_rpc_missing_thread');
       }
       return ChatSuccess(
         RemoteProductMessageResult(
-          threadRow: Map<String, dynamic>.from(rawThread),
+          threadRow: thread,
           messageRow: rawMessage is Map
               ? Map<String, dynamic>.from(rawMessage)
               : null,

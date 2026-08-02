@@ -58,4 +58,72 @@ void main() {
     await tester.tap(find.text('Кожаная куртка'));
     expect(openedProduct, 'product-1');
   });
+
+  testWidgets('hides Buy in a chat about the current seller own listing', (
+    tester,
+  ) async {
+    final listenable = ValueNotifier(0);
+    addTearDown(listenable.dispose);
+    final thread = _productThread();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          thread: thread,
+          onSendMessage: (_, _) async {},
+          currentUserId: 'seller',
+          threadsListenable: listenable,
+          resolveThread: (_) => thread,
+          lastSeenForUser: (_) => null,
+          onBuyProduct: () => fail('seller must not see a purchase action'),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('chat-buy-product')), findsNothing);
+    expect(find.text('Купить'), findsNothing);
+  });
+
+  testWidgets('shows Buy only to the explicit buyer in a product chat', (
+    tester,
+  ) async {
+    final listenable = ValueNotifier(0);
+    addTearDown(listenable.dispose);
+    final thread = _productThread();
+    var buyCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          thread: thread,
+          onSendMessage: (_, _) async {},
+          currentUserId: 'buyer',
+          threadsListenable: listenable,
+          resolveThread: (_) => thread,
+          lastSeenForUser: (_) => null,
+          onBuyProduct: () => buyCalls++,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const Key('chat-buy-product')));
+    expect(buyCalls, 1);
+  });
 }
+
+MessageThread _productThread() => MessageThread(
+  id: 'product-thread',
+  sellerName: 'Seller',
+  buyerName: 'Buyer',
+  productTitle: 'Кожаная куртка',
+  productId: 'product-1',
+  productImage: '',
+  lastMessage: '',
+  updatedAt: DateTime(2026, 7, 12),
+  buyerId: 'buyer',
+  sellerId: 'seller',
+  members: const [
+    ConversationMember(id: 'buyer', name: 'Buyer', handle: '@buyer'),
+    ConversationMember(id: 'seller', name: 'Seller', handle: '@seller'),
+  ],
+);

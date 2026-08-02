@@ -18,6 +18,12 @@ const productScreenContentKey = Key('product-screen-content');
 const productScreenBackButtonKey = Key('product-screen-back-button');
 const productScreenFooterKey = Key('product-screen-footer');
 const productScreenMessageButtonKey = Key('product-screen-message-button');
+const productScreenBuyDeliveryButtonKey = Key(
+  'product-screen-buy-delivery-button',
+);
+const productUnavailablePurchaseSheetKey = Key(
+  'product-unavailable-purchase-sheet',
+);
 const productRouteMotionKey = Key('product-route-motion');
 
 const _productRouteEnterDuration = Duration(milliseconds: 420);
@@ -199,6 +205,7 @@ class ProductDetailData {
     required this.isLiked,
     this.shippingAddress = '',
     this.canPurchase = true,
+    this.isOwnListing = false,
     this.publishedAt,
     this.viewsCount = 0,
     this.likesCount = 0,
@@ -223,6 +230,7 @@ class ProductDetailData {
   final bool isLiked;
   final String shippingAddress;
   final bool canPurchase;
+  final bool isOwnListing;
   final DateTime? publishedAt;
   final int viewsCount;
   final int likesCount;
@@ -311,7 +319,11 @@ class _ProductScreenState extends State<ProductScreen> {
             .toInt();
     _loadSellerStats();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || widget.product.canPurchase) return;
+      if (!mounted ||
+          widget.product.canPurchase ||
+          widget.product.isOwnListing) {
+        return;
+      }
       _showUnavailablePurchaseSheet();
     });
   }
@@ -366,6 +378,7 @@ class _ProductScreenState extends State<ProductScreen> {
   }
 
   Future<void> _openDeliveryCheckout() async {
+    if (widget.product.isOwnListing) return;
     await Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
         builder: (context) => DeliveryCheckoutScreen(
@@ -379,7 +392,7 @@ class _ProductScreenState extends State<ProductScreen> {
   }
 
   void _showUnavailablePurchaseSheet() {
-    if (_didShowUnavailableSheet) return;
+    if (_didShowUnavailableSheet || widget.product.isOwnListing) return;
     _didShowUnavailableSheet = true;
     showModalBottomSheet<void>(
       context: context,
@@ -389,6 +402,7 @@ class _ProductScreenState extends State<ProductScreen> {
         final bottomInset = MediaQuery.of(sheetContext).viewPadding.bottom;
         final palette = sheetContext.appPalette;
         return Container(
+          key: productUnavailablePurchaseSheetKey,
           width: double.infinity,
           padding: EdgeInsets.fromLTRB(20, 18, 20, 20 + bottomInset),
           decoration: BoxDecoration(
@@ -482,7 +496,9 @@ class _ProductScreenState extends State<ProductScreen> {
     final sellerFollowers = (_sellerProfile?.followersCount ?? 0)
         .clamp(0, 1 << 31)
         .toInt();
-    final priceText = canPurchase ? product.price : 'Не продается';
+    final priceText = canPurchase || product.isOwnListing
+        ? product.price
+        : 'Не продается';
     final messageButtonText = canPurchase
         ? 'Написать сообщение'
         : 'Уточнить у продавца';
@@ -611,15 +627,17 @@ class _ProductScreenState extends State<ProductScreen> {
                                           isWishlist: true,
                                         ),
                                       ),
-                                      Positioned(
-                                        right: 18,
-                                        child: _InlineIcon(
-                                          icon: CupertinoIcons.paperplane,
-                                          onTap:
-                                              widget.onShare ??
-                                              widget.onContactSeller,
+                                      if (!product.isOwnListing ||
+                                          widget.onShare != null)
+                                        Positioned(
+                                          right: 18,
+                                          child: _InlineIcon(
+                                            icon: CupertinoIcons.paperplane,
+                                            onTap:
+                                                widget.onShare ??
+                                                widget.onContactSeller,
+                                          ),
                                         ),
-                                      ),
                                     ],
                                   ),
                                 ),
@@ -658,7 +676,8 @@ class _ProductScreenState extends State<ProductScreen> {
                                     ),
                                   ],
                                   SizedBox(height: spacing),
-                                  if (!widget.isPreview) ...[
+                                  if (!widget.isPreview &&
+                                      !product.isOwnListing) ...[
                                     _BuyDeliveryBlock(
                                       onTap: _openDeliveryCheckout,
                                     ),
@@ -701,7 +720,7 @@ class _ProductScreenState extends State<ProductScreen> {
                         ),
                         SliverToBoxAdapter(
                           child: SizedBox(
-                            height: widget.isPreview
+                            height: widget.isPreview || product.isOwnListing
                                 ? 16
                                 : 52 +
                                       16 +
@@ -713,7 +732,7 @@ class _ProductScreenState extends State<ProductScreen> {
                   ),
                 ),
               ),
-              if (!widget.isPreview)
+              if (!widget.isPreview && !product.isOwnListing)
                 Positioned(
                   left: 0,
                   right: 0,
@@ -1381,6 +1400,7 @@ class _BuyDeliveryBlock extends StatelessWidget {
       width: double.infinity,
       height: 48,
       child: ElevatedButton(
+        key: productScreenBuyDeliveryButtonKey,
         onPressed: onTap,
         style: ElevatedButton.styleFrom(
           backgroundColor: palette.ink,

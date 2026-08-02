@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/app_appearance.dart';
 import '../../models/message_thread.dart';
 import '../../widgets/app_image.dart';
 import 'chat_actions.dart';
 import 'chat_avatar.dart';
+import 'chat_errors.dart';
 import 'chat_tokens.dart';
 
 enum ConversationInfoResult { search }
@@ -62,6 +66,8 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
       if (title != null && title.trim().isNotEmpty) _title = title.trim();
     });
     var saved = false;
+    Object? updateError;
+    StackTrace? updateStackTrace;
     try {
       saved = await callback(
         widget.thread.id,
@@ -70,7 +76,9 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
         isArchived: isArchived,
         title: title,
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      updateError = error;
+      updateStackTrace = stackTrace;
       saved = false;
     }
     if (!mounted) return;
@@ -82,10 +90,32 @@ class _ConversationInfoScreenState extends State<ConversationInfoScreen> {
         _isArchived = widget.thread.isArchived;
         _title = widget.thread.displayTitle(widget.currentUserId);
       });
+      String? repositoryMessage;
+      if (updateError == null) {
+        try {
+          repositoryMessage = widget.actions?.errorMessage?.call();
+        } catch (_) {
+          repositoryMessage = null;
+        }
+      }
+      final message = chatOperationFailureMessage(
+        fallback: 'Не удалось сохранить настройку.',
+        operation: 'update_thread_preferences',
+        repositoryMessage: repositoryMessage,
+        error: updateError,
+        stackTrace: updateStackTrace,
+      );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Не удалось сохранить настройку'),
+        SnackBar(
+          content: Text(message),
           behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 10),
+          showCloseIcon: true,
+          action: SnackBarAction(
+            label: 'Копировать',
+            onPressed: () =>
+                unawaited(Clipboard.setData(ClipboardData(text: message))),
+          ),
         ),
       );
     }

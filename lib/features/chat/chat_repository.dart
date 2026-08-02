@@ -229,6 +229,30 @@ class ChatRepository extends ChangeNotifier {
         ),
       );
     }
+    if (_userId != requestUserId) return result;
+    if (result case ChatFailureResult<RemoteProductMessageResult>(
+      :final failure,
+    ) when failure.code == ChatFailureCode.schemaMismatch) {
+      // Rolling deployments can briefly have the established product-thread
+      // RPC before the newer atomic first-message RPC reaches PostgREST's
+      // schema cache. Opening an empty thread is still useful and avoids the
+      // misleading "could not open chat" dead end. The user can send their
+      // own text through the normal, fully diagnosed composer path.
+      final threadResult = await _record(remote.createProductThread(productId));
+      if (_userId != requestUserId) return result;
+      final creation = threadResult.valueOrNull;
+      if (creation != null) {
+        return ChatSuccess(
+          RemoteProductMessageResult(
+            threadRow: creation.row,
+            messageRow: null,
+            createdThread: creation.created,
+            createdMessage: false,
+          ),
+        );
+      }
+      return ChatFailureResult(threadResult.failureOrNull ?? failure);
+    }
     return result;
   }
 
