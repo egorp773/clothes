@@ -23,6 +23,7 @@ class OutfitsScreen extends StatefulWidget {
   final double sidePadding;
   final List<CreatedOutfit> createdOutfits;
   final List<Product> products;
+  final String currentUserId;
   final VoidCallback onCreateTap;
   final Future<void> Function(String productId) onToggleProductLike;
   final Future<void> Function(String outfitId) onToggleOutfitLike;
@@ -61,6 +62,7 @@ class OutfitsScreen extends StatefulWidget {
     required this.sidePadding,
     this.createdOutfits = const [],
     this.products = const [],
+    this.currentUserId = '',
     required this.onCreateTap,
     required this.onToggleProductLike,
     required this.onToggleOutfitLike,
@@ -374,8 +376,13 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
 
   void _showProductDetails(_OutfitProduct product) {
     final source = product.sourceProduct;
-    final canPurchase = product.canPurchase;
-    if (!canPurchase) {
+    final isOwnListing =
+        source != null &&
+        widget.currentUserId.trim().isNotEmpty &&
+        source.ownerId.trim() == widget.currentUserId.trim();
+    final isAvailable = product.canPurchase;
+    final canPurchase = isAvailable && !isOwnListing;
+    if (!isAvailable && !isOwnListing) {
       _showUnavailableProductSheet(product);
       return;
     }
@@ -411,12 +418,13 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
             shippingAddress: source?.shippingAddress ?? '',
             isLiked: source?.isLiked ?? product.isLiked,
             canPurchase: canPurchase,
+            isOwnListing: isOwnListing,
             publishedAt: source?.publishedAt,
             viewsCount: source?.viewsCount ?? 0,
             likesCount: source?.likesCount ?? 0,
             deliveryMethods: source?.deliveryMethods ?? const [],
           ),
-          onLike: product.id.isEmpty || !canPurchase
+          onLike: product.id.isEmpty || !isAvailable
               ? () {}
               : () => widget.onToggleProductLike(product.id),
           sellerFollowListenable: widget.sellerFollowListenable,
@@ -436,7 +444,7 @@ class _OutfitsScreenState extends State<OutfitsScreen> {
               _showProductDetails(_outfitProductForSourceProduct(related)),
           deliveryProfile: widget.deliveryProfile,
           onSaveDeliveryProfile: widget.onSaveDeliveryProfile,
-          onCreateDeliveryOrder: source == null
+          onCreateDeliveryOrder: source == null || isOwnListing
               ? ({required deliveryService, required deliveryPrice}) async =>
                     null
               : ({required deliveryService, required deliveryPrice}) =>

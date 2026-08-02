@@ -203,7 +203,32 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     markRead: _repository.markThreadRead,
     loadOlder: _repository.loadOlderChatMessages,
     setVisibility: _repository.setChatThreadVisibility,
+    errorMessage: () => _repository.chatErrorMessage,
   );
+
+  void _showChatFailure({
+    required String fallback,
+    required String fallbackCode,
+  }) {
+    if (!mounted) return;
+    final repositoryMessage = _repository.chatErrorMessage?.trim() ?? '';
+    final message = repositoryMessage.isNotEmpty
+        ? repositoryMessage
+        : '$fallback\nКод: $fallbackCode';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 10),
+        showCloseIcon: true,
+        action: SnackBarAction(
+          label: 'Копировать',
+          onPressed: () =>
+              unawaited(Clipboard.setData(ClipboardData(text: message))),
+        ),
+      ),
+    );
+  }
 
   Future<T?> _trackModalSurface<T>(Future<T?> Function() show) async {
     if (mounted) setState(() => _modalSurfaceDepth++);
@@ -480,11 +505,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       );
       if (!mounted || (sourceRoute != null && !sourceRoute.isCurrent)) return;
       if (thread == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Не удалось открыть чат'),
-            behavior: SnackBarBehavior.floating,
-          ),
+        _showChatFailure(
+          fallback: 'Не удалось открыть чат. Попробуйте ещё раз.',
+          fallbackCode: 'CHAT_UI_OPEN_PRODUCT_CHAT',
         );
         return;
       }
@@ -531,11 +554,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       final thread = await _repository.startDirectChat(recipient);
       if (!mounted || (sourceRoute != null && !sourceRoute.isCurrent)) return;
       if (thread == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Не удалось открыть диалог. Попробуйте ещё раз.'),
-            behavior: SnackBarBehavior.floating,
-          ),
+        _showChatFailure(
+          fallback: 'Не удалось открыть диалог. Попробуйте ещё раз.',
+          fallbackCode: 'CHAT_UI_OPEN_DIRECT_CHAT',
         );
         return;
       }
@@ -561,6 +582,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   void _openProductDetails(Product product) {
+    final isOwnListing =
+        _repository.currentUserId.isNotEmpty &&
+        product.ownerId == _repository.currentUserId;
     final route = buildProductRoute<void>(
       builder: (context) {
         return ProductScreen(
@@ -585,7 +609,9 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             location: product.location,
             isLiked: product.isLiked,
             shippingAddress: product.shippingAddress,
-            canPurchase: !product.isHidden && _repository.canBuy,
+            canPurchase:
+                !product.isHidden && _repository.canBuy && !isOwnListing,
+            isOwnListing: isOwnListing,
             publishedAt: product.publishedAt,
             viewsCount: product.viewsCount,
             likesCount: product.likesCount,
@@ -692,6 +718,10 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       );
       return;
     }
+    if (_repository.currentUserId.isNotEmpty &&
+        product.ownerId == _repository.currentUserId) {
+      return;
+    }
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
         builder: (context) => DeliveryCheckoutScreen(
@@ -714,6 +744,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
             isLiked: product.isLiked,
             shippingAddress: product.shippingAddress,
             canPurchase: true,
+            isOwnListing: false,
             deliveryMethods: product.deliveryMethods,
           ),
           deliveryProfile: _repository.deliveryProfile,
@@ -877,6 +908,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
         searchUsers: _repository.searchUserProfiles,
         shareToThread: _repository.shareProductToThread,
         shareToUser: _repository.shareProductToUser,
+        errorMessage: () => _repository.chatErrorMessage,
       ),
     );
   }
@@ -1436,17 +1468,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                   onOpenAppearance: _openAppearancePicker,
                   onOpenDirectChat: _openDirectChat,
                   navigationCompactController: _navigationCompact,
-                  onChatAuthenticationRequired:
-                      SupabaseConfig.isInitialized && !_repository.isSignedIn
-                      ? (product, {sourceRoute}) => _openLoginScreen(
-                          onSignedIn: () => unawaited(
-                            _contactSellerFromProduct(
-                              product,
-                              sourceRoute: sourceRoute,
-                            ),
-                          ),
-                        )
-                      : null,
+                  // Route every product-chat open through the shell so login,
+                  // single-flight protection and copyable diagnostics are
+                  // identical for catalog cards and every other entry point.
+                  onChatAuthenticationRequired: (product, {sourceRoute}) =>
+                      unawaited(
+                        _contactSellerFromProduct(
+                          product,
+                          sourceRoute: sourceRoute,
+                        ),
+                      ),
                   onNavigationCompactChanged: (value) {
                     if (_currentIndex == 0) _navigationCompact.value = value;
                   },
@@ -1458,6 +1489,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
                     sidePadding: _sidePadding,
                     createdOutfits: _repository.outfits,
                     products: _repository.products,
+                    currentUserId: _repository.currentUserId,
                     onCreateTap: _openPublishOutfit,
                     onToggleProductLike: _repository.toggleProductLike,
                     onToggleOutfitLike: _repository.toggleOutfitLike,

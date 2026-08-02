@@ -36,7 +36,12 @@ void main() {
           threadsListenable: listenable,
           resolveThread: (_) => thread,
           lastSeenForUser: (_) => null,
-          actions: ChatActions(sendText: (_, _) async => false),
+          actions: ChatActions(
+            sendText: (_, _) async => false,
+            errorMessage: () =>
+                'Нет доступа к этому диалогу.\n'
+                'Код: CHAT_FORBIDDEN · операция: send_message · сервер: 42501',
+          ),
         ),
       ),
     );
@@ -47,10 +52,8 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Сообщение не доставлено. Проверьте подключение.'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('CHAT_FORBIDDEN'), findsOneWidget);
+    expect(find.text('Копировать'), findsOneWidget);
     final field = tester.widget<TextField>(composer);
     expect(field.controller?.text, 'Проверка доставки');
     expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);

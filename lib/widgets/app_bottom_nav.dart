@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui' show lerpDouble;
 
+import 'package:cupertino_liquid_glass/cupertino_liquid_glass.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -223,7 +224,9 @@ class _AppBottomNavState extends State<AppBottomNav>
 
   @override
   Widget build(BuildContext context) {
-    final navigationGlassStyle = _navigationGlassStyle(context);
+    final navigationGlassTheme = _navigationGlassTheme(context);
+    final palette = context.appPalette;
+    final highContrast = MediaQuery.maybeOf(context)?.highContrast ?? false;
     return RepaintBoundary(
       key: const Key('app-bottom-nav'),
       child: SafeArea(
@@ -267,19 +270,25 @@ class _AppBottomNavState extends State<AppBottomNav>
                       key: const Key('app-bottom-nav-panel'),
                       width: width,
                       height: height,
-                      child: AppGlassSurface(
-                        role: AppGlassRole.navigation,
-                        glassStyle: navigationGlassStyle,
-                        grouped: false,
-                        opaqueInHighContrast: true,
-                        interactive: true,
-                        borderRadius: BorderRadius.circular(999),
-                        child: _NavigationMaterial(
-                          progress: progress,
-                          currentIndex: widget.currentIndex,
-                          onTabSelected: widget.onTabSelected,
-                          onCreateTap: widget.onCreateTap,
-                          unreadCount: widget.unreadCount,
+                      // The package surface uses a grouped backdrop filter.
+                      // Isolate the navigation in its own group so overlapping
+                      // glass cards elsewhere in the app cannot share its
+                      // backdrop key and weaken the blur.
+                      child: BackdropGroup(
+                        child: CupertinoLiquidGlass(
+                          key: const Key('app-bottom-nav-glass'),
+                          theme: navigationGlassTheme,
+                          borderRadius: BorderRadius.circular(999),
+                          enabled: !highContrast,
+                          disabledColor: palette.surfaceRaised,
+                          effectIntensity: 0.72,
+                          child: _NavigationMaterial(
+                            progress: progress,
+                            currentIndex: widget.currentIndex,
+                            onTabSelected: widget.onTabSelected,
+                            onCreateTap: widget.onCreateTap,
+                            unreadCount: widget.unreadCount,
+                          ),
                         ),
                       ),
                     ),
@@ -293,36 +302,38 @@ class _AppBottomNavState extends State<AppBottomNav>
     );
   }
 
-  AppGlassStyle _navigationGlassStyle(BuildContext context) {
+  LiquidGlassThemeData _navigationGlassTheme(BuildContext context) {
     final brightness = Theme.of(context).brightness;
     final isDark = brightness == Brightness.dark;
-    final base = AppGlassStyle.liquid(
-      brightness: brightness,
-      accent: context.appPalette.accent,
-    );
+    final base = isDark
+        ? LiquidGlassThemeData.dark()
+        : LiquidGlassThemeData.light();
     return base.copyWith(
-      enabled: true,
-      materialTint: isDark ? const Color(0xFF142A54) : const Color(0xFF0F203F),
-      rimColor: Colors.white,
-      depthColor: const Color(0xFF020714),
-      shadowColor: Colors.black,
-      accentGlint: const Color(0xFFBBD2FF),
-      navigation: AppGlassMaterial(
-        blurSigma: 34,
-        tintOpacity: isDark ? 0.72 : 0.70,
-        rimOpacity: isDark ? 0.34 : 0.42,
-        topHighlightOpacity: isDark ? 0.22 : 0.28,
-        bottomDepthOpacity: isDark ? 0.20 : 0.16,
-        shadowOpacity: isDark ? 0.42 : 0.34,
-        shadowBlur: 30,
-        shadowSpread: -8,
-        shadowOffset: const Offset(0, 12),
-        cornerRadius: 29,
-        padding: EdgeInsets.zero,
-        motionDuration: const Duration(milliseconds: 210),
-        glintOpacity: isDark ? 0.15 : 0.18,
-        glintRadius: 0.86,
-      ),
+      // Keep the Instagram-like material neutral. The previous navy tint
+      // coloured the entire navigation and remained visible even when a user
+      // disabled the app-wide glass preference.
+      blurSigma: 40,
+      tintColor: isDark ? const Color(0xFF191A1D) : Colors.white,
+      tintOpacity: isDark ? 0.78 : 0.82,
+      borderRadius: BorderRadius.circular(999),
+      edgeLightColor: Colors.white.withValues(alpha: isDark ? 0.25 : 0.72),
+      edgeShadowColor: Colors.black.withValues(alpha: isDark ? 0.28 : 0.10),
+      borderWidth: 0.75,
+      specularOpacity: isDark ? 0.08 : 0.10,
+      innerShadowColor: Colors.black.withValues(alpha: isDark ? 0.12 : 0.06),
+      innerShadowBlurRadius: isDark ? 5 : 3,
+      noiseOpacity: isDark ? 0.014 : 0.010,
+      // A low vibrancy value preserves a hint of the background without
+      // letting saturated product photos dye the whole capsule blue.
+      vibrancyIntensity: 0.03,
+      shadows: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: isDark ? 0.38 : 0.17),
+          blurRadius: isDark ? 30 : 26,
+          spreadRadius: -8,
+          offset: const Offset(0, 11),
+        ),
+      ],
     );
   }
 }
@@ -618,7 +629,6 @@ class _NavigationMaterialState extends State<_NavigationMaterial>
                     painter: _NavLensPainter(
                       lens: _lens,
                       palette: palette,
-                      glassEnabled: true,
                       isDark: isDark,
                       progress: widget.progress,
                     ),
@@ -720,14 +730,12 @@ class _NavLensPainter extends CustomPainter {
   _NavLensPainter({
     required this.lens,
     required this.palette,
-    required this.glassEnabled,
     required this.isDark,
     required this.progress,
   }) : super(repaint: lens);
 
   final ValueListenable<_NavLensVisual> lens;
   final AppPalette palette;
-  final bool glassEnabled;
   final bool isDark;
   final double progress;
 
@@ -762,31 +770,30 @@ class _NavLensPainter extends CustomPainter {
         RRect.fromRectAndRadius(trailRect, Radius.circular(trailHeight * 0.52)),
         Paint()
           ..isAntiAlias = true
-          ..color = palette.accentSoft.withValues(
-            alpha:
-                (glassEnabled ? 0.1 : 0.065) * visual.stretch * visual.pressure,
+          ..color = palette.ink.withValues(
+            alpha: (isDark ? 0.08 : 0.045) * visual.stretch * visual.pressure,
           )
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3.5),
       );
     }
 
     final haloAlpha =
-        (glassEnabled ? 0.14 : 0.09) +
-        visual.pressure * 0.07 +
-        visual.stretch * 0.05;
+        (isDark ? 0.09 : 0.055) +
+        visual.pressure * 0.035 +
+        visual.stretch * 0.025;
     canvas.drawRRect(
       shape.inflate(1.8 + visual.pressure * 1.8),
       Paint()
         ..isAntiAlias = true
-        ..color = palette.accentSoft.withValues(alpha: haloAlpha)
+        ..color = palette.ink.withValues(alpha: haloAlpha)
         ..maskFilter = MaskFilter.blur(
           BlurStyle.normal,
           6 + visual.pressure * 3,
         ),
     );
 
-    final neutralAlpha = isDark ? 0.15 : 0.085;
-    final accentAlpha = isDark ? 0.42 : 0.32;
+    final neutralAlpha = isDark ? 0.15 : 0.08;
+    final centerAlpha = isDark ? 0.12 : 0.065;
     canvas.drawRRect(
       shape,
       Paint()
@@ -796,9 +803,7 @@ class _NavLensPainter extends CustomPainter {
           end: Alignment(0.9 + visual.direction * visual.stretch * 0.25, 1),
           colors: [
             palette.ink.withValues(alpha: neutralAlpha * 0.72),
-            palette.accentSoft.withValues(
-              alpha: accentAlpha + visual.pressure * 0.025,
-            ),
+            palette.ink.withValues(alpha: centerAlpha + visual.pressure * 0.02),
             palette.ink.withValues(alpha: neutralAlpha),
           ],
           stops: const [0, 0.48, 1],
@@ -816,7 +821,7 @@ class _NavLensPainter extends CustomPainter {
           end: Alignment.bottomRight,
           colors: [
             Colors.white.withValues(alpha: isDark ? 0.24 : 0.52),
-            palette.accentBorder.withValues(alpha: isDark ? 0.18 : 0.14),
+            palette.ink.withValues(alpha: isDark ? 0.12 : 0.08),
             palette.ink.withValues(alpha: isDark ? 0.14 : 0.07),
           ],
         ).createShader(rect),
@@ -848,7 +853,6 @@ class _NavLensPainter extends CustomPainter {
   bool shouldRepaint(covariant _NavLensPainter oldDelegate) {
     return lens != oldDelegate.lens ||
         palette != oldDelegate.palette ||
-        glassEnabled != oldDelegate.glassEnabled ||
         isDark != oldDelegate.isDark ||
         progress != oldDelegate.progress;
   }
@@ -879,6 +883,7 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = context.appPalette;
     final isActive = currentIndex == index;
     final isVisuallyActive = visualIndex == index;
     final reduceMotion =
@@ -969,9 +974,7 @@ class _NavItem extends StatelessWidget {
                       fontWeight: isVisuallyActive
                           ? FontWeight.w700
                           : FontWeight.w500,
-                      color: isVisuallyActive
-                          ? Colors.white
-                          : Colors.white.withValues(alpha: 0.70),
+                      color: isVisuallyActive ? palette.ink : palette.muted,
                     ),
                   ),
                 ),
@@ -1037,9 +1040,8 @@ class _NavIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = isActive
-        ? Colors.white
-        : Colors.white.withValues(alpha: 0.70);
+    final palette = context.appPalette;
+    final color = isActive ? palette.ink : palette.muted;
     final size = emphasize ? 21.5 : 21.0;
     return switch (kind) {
       _NavIconKind.home => _AssetIcon(

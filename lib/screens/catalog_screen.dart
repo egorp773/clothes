@@ -943,6 +943,7 @@ class _CatalogScreenState extends State<CatalogScreen>
             isLiked: product.isLiked,
             shippingAddress: product.shippingAddress,
             canPurchase: !product.isHidden,
+            isOwnListing: _isOwnListing(product),
             publishedAt: product.publishedAt,
             viewsCount: product.viewsCount,
             likesCount: product.likesCount,
@@ -1272,6 +1273,11 @@ class _CatalogScreenState extends State<CatalogScreen>
     return null;
   }
 
+  bool _isOwnListing(Product product) {
+    final currentUserId = widget.currentUserId.trim();
+    return currentUserId.isNotEmpty && product.ownerId.trim() == currentUserId;
+  }
+
   void _openSellerFromChat(MessageThread thread) {
     final product = _productForThread(thread);
     if (product == null) {
@@ -1287,6 +1293,7 @@ class _CatalogScreenState extends State<CatalogScreen>
       _showSnackBar('Товар больше недоступен');
       return;
     }
+    if (_isOwnListing(product)) return;
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute<void>(
         builder: (context) => DeliveryCheckoutScreen(
@@ -1309,6 +1316,7 @@ class _CatalogScreenState extends State<CatalogScreen>
             isLiked: product.isLiked,
             shippingAddress: product.shippingAddress,
             deliveryMethods: product.deliveryMethods,
+            isOwnListing: _isOwnListing(product),
           ),
           deliveryProfile: widget.deliveryProfile,
           onSaveProfile: widget.onSaveDeliveryProfile,

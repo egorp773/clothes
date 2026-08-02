@@ -7,6 +7,7 @@ import '../models/account_deletion.dart';
 import '../models/app_profile.dart';
 import '../models/user_entitlements.dart';
 import '../widgets/app_image.dart';
+import '../widgets/birth_date_wheel_picker.dart';
 import 'seller_activation_screen.dart';
 
 class EditProfileScreen extends StatefulWidget {
@@ -496,22 +497,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _selectBirthDate() async {
-    final today = DateUtils.dateOnly(DateTime.now());
-    final firstDate = DateTime(1900);
-    final current = _birthDate;
-    final initialDate = current == null || current.isBefore(firstDate)
-        ? DateTime(today.year - 18, today.month, today.day)
-        : current.isAfter(today)
-        ? today
-        : current;
-    final selected = await showDatePicker(
-      context: context,
-      initialDate: initialDate,
-      firstDate: firstDate,
-      lastDate: today,
-      helpText: 'Дата рождения',
-      cancelText: 'Отмена',
-      confirmText: 'Готово',
+    final selected = await showBirthDateWheelPicker(
+      context,
+      initialDate: _birthDate,
     );
     if (selected != null && mounted) {
       setState(() => _birthDate = DateUtils.dateOnly(selected));
@@ -570,8 +558,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
       _showMessage('Данные профиля сохранены');
       Navigator.of(context).pop();
-    } catch (_) {
-      _showMessage('Не удалось сохранить профиль. Попробуйте ещё раз.');
+    } catch (error, stackTrace) {
+      debugPrint('Edit profile save callback error: $error\n$stackTrace');
+      _showMessage(
+        'Не удалось сохранить профиль.\n'
+        'Код: PROFILE_UI_SAVE_EXCEPTION',
+      );
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -709,8 +701,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   static String _formatDate(DateTime date) {
-    String two(int value) => value.toString().padLeft(2, '0');
-    return '${two(date.day)}/${two(date.month)}/${date.year}';
+    return formatRussianDate(date);
   }
 
   static String _isoDate(DateTime date) {

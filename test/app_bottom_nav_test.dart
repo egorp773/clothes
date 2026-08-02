@@ -2,7 +2,7 @@ import 'package:clothes/core/app_appearance.dart';
 import 'package:clothes/models/profile_feature.dart';
 import 'package:clothes/screens/catalog_screen.dart';
 import 'package:clothes/widgets/app_bottom_nav.dart';
-import 'package:clothes/widgets/app_glass_surface.dart';
+import 'package:cupertino_liquid_glass/cupertino_liquid_glass.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -579,7 +579,7 @@ void main() {
   });
 
   testWidgets(
-    'navigation keeps dedicated navy glass when global glass is off',
+    'navigation uses strong neutral package glass when global glass is off',
     (tester) async {
       _setViewport(tester, const Size(320, 568));
       final compact = ValueNotifier<bool>(false);
@@ -598,18 +598,27 @@ void main() {
         tester.getSize(find.byKey(const Key('app-bottom-nav-panel'))),
         const Size(296, 60),
       );
-      final surface = tester.widget<AppGlassSurface>(
+      final surface = tester.widget<CupertinoLiquidGlass>(
         find.descendant(
           of: find.byKey(const Key('app-bottom-nav-panel')),
-          matching: find.byType(AppGlassSurface),
+          matching: find.byType(CupertinoLiquidGlass),
         ),
       );
-      expect(surface.grouped, isFalse);
-      expect(surface.opaqueInHighContrast, isTrue);
-      expect(surface.glassStyle?.enabled, isTrue);
-      expect(surface.glassStyle?.materialTint, const Color(0xFF0F203F));
-      expect(surface.glassStyle?.navigation.blurSigma, 34);
-      expect(surface.glassStyle?.navigation.tintOpacity, 0.70);
+      expect(surface.enabled, isTrue);
+      expect(surface.theme?.tintColor, Colors.white);
+      expect(surface.theme?.tintColor, isNot(const Color(0xFF0F203F)));
+      expect(surface.theme?.blurSigma, 40);
+      expect(surface.theme?.tintOpacity, 0.82);
+      expect(surface.theme?.vibrancyIntensity, 0.03);
+      expect(surface.effectIntensity, 0.72);
+
+      final activeIcon = tester.widget<Image>(
+        find.descendant(
+          of: find.byKey(const Key('bottom-nav-item-0')),
+          matching: find.byType(Image),
+        ),
+      );
+      expect(activeIcon.color, AppPalette.light.ink);
 
       await tester.tap(find.byKey(const Key('bottom-nav-item-4')));
       await tester.pump();
@@ -626,7 +635,7 @@ void main() {
     },
   );
 
-  testWidgets('navigation uses opaque dark navy fallback in high contrast', (
+  testWidgets('navigation uses opaque neutral fallback in high contrast', (
     tester,
   ) async {
     _setViewport(tester, const Size(390, 844));
@@ -642,21 +651,17 @@ void main() {
     );
 
     expect(find.byType(BackdropFilter), findsNothing);
-    final surface = tester.widget<AppGlassSurface>(
+    final surface = tester.widget<CupertinoLiquidGlass>(
       find.descendant(
         of: find.byKey(const Key('app-bottom-nav-panel')),
-        matching: find.byType(AppGlassSurface),
+        matching: find.byType(CupertinoLiquidGlass),
       ),
     );
-    expect(surface.glassStyle?.materialTint, const Color(0xFF142A54));
-    expect(surface.glassStyle?.navigation.tintOpacity, 0.72);
-    expect(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is ColoredBox && widget.color == const Color(0xFF142A54),
-      ),
-      findsOneWidget,
-    );
+    expect(surface.enabled, isFalse);
+    expect(surface.disabledColor, AppPalette.dark.surfaceRaised);
+    expect(surface.theme?.tintColor, const Color(0xFF191A1D));
+    expect(surface.theme?.tintColor, isNot(const Color(0xFF142A54)));
+    expect(surface.theme?.tintOpacity, 0.78);
   });
 
   testWidgets('chat unread badge is hidden at zero and exposes semantics', (

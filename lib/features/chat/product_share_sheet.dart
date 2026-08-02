@@ -11,6 +11,8 @@ import '../../models/message_thread.dart';
 import '../../models/product.dart';
 import '../../widgets/app_glass_surface.dart';
 import '../../widgets/app_image.dart';
+import 'chat_actions.dart';
+import 'chat_errors.dart';
 
 Future<void> showProductShareSheet(
   BuildContext context, {
@@ -25,6 +27,7 @@ Future<void> showProductShareSheet(
     Product product,
   )
   shareToUser,
+  ChatErrorMessageCallback? errorMessage,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
@@ -39,6 +42,7 @@ Future<void> showProductShareSheet(
       searchUsers: searchUsers,
       shareToThread: shareToThread,
       shareToUser: shareToUser,
+      errorMessage: errorMessage,
     ),
   );
 }
@@ -51,6 +55,7 @@ class _ProductShareSheet extends StatefulWidget {
     required this.searchUsers,
     required this.shareToThread,
     required this.shareToUser,
+    this.errorMessage,
   });
 
   final Product product;
@@ -63,6 +68,7 @@ class _ProductShareSheet extends StatefulWidget {
     Product product,
   )
   shareToUser;
+  final ChatErrorMessageCallback? errorMessage;
 
   @override
   State<_ProductShareSheet> createState() => _ProductShareSheetState();
@@ -171,15 +177,22 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
     setState(() => _sending = true);
     var sent = 0;
     var failed = 0;
+    String? failureDetails;
     for (final threadId in _selectedThreadIds) {
       try {
         if (await widget.shareToThread(threadId, widget.product)) {
           sent++;
         } else {
           failed++;
+          failureDetails ??= _failureMessage('share_product_to_thread');
         }
-      } catch (_) {
+      } catch (error, stackTrace) {
         failed++;
+        failureDetails ??= _failureMessage(
+          'share_product_to_thread',
+          error: error,
+          stackTrace: stackTrace,
+        );
       }
     }
     for (final user in _selectedUsers.values) {
@@ -188,23 +201,38 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
           sent++;
         } else {
           failed++;
+          failureDetails ??= _failureMessage('share_product_to_user');
         }
-      } catch (_) {
+      } catch (error, stackTrace) {
         failed++;
+        failureDetails ??= _failureMessage(
+          'share_product_to_user',
+          error: error,
+          stackTrace: stackTrace,
+        );
       }
     }
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
-    final message = failed == 0
+    final summary = failed == 0
         ? 'Отправлено: $sent'
         : 'Отправлено: $sent, не удалось: $failed';
+    final message = failureDetails == null
+        ? summary
+        : '$summary\n$failureDetails';
     if (sent == 0 && failed > 0) {
       setState(() => _sending = false);
       messenger.showSnackBar(
         SnackBar(
           content: Text(message),
           behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 2),
+          duration: const Duration(seconds: 10),
+          showCloseIcon: true,
+          action: SnackBarAction(
+            label: 'Копировать',
+            onPressed: () =>
+                unawaited(Clipboard.setData(ClipboardData(text: message))),
+          ),
         ),
       );
       return;
@@ -214,8 +242,40 @@ class _ProductShareSheetState extends State<_ProductShareSheet> {
       SnackBar(
         content: Text(message),
         behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
+        duration: failed == 0
+            ? const Duration(seconds: 2)
+            : const Duration(seconds: 10),
+        showCloseIcon: failed > 0,
+        action: failed > 0
+            ? SnackBarAction(
+                label: 'Копировать',
+                onPressed: () =>
+                    unawaited(Clipboard.setData(ClipboardData(text: message))),
+              )
+            : null,
       ),
+    );
+  }
+
+  String _failureMessage(
+    String operation, {
+    Object? error,
+    StackTrace? stackTrace,
+  }) {
+    String? repositoryMessage;
+    if (error == null) {
+      try {
+        repositoryMessage = widget.errorMessage?.call();
+      } catch (_) {
+        // A diagnostic callback must never make the share sheet unusable.
+      }
+    }
+    return chatOperationFailureMessage(
+      fallback: 'Не удалось отправить объявление.',
+      operation: operation,
+      repositoryMessage: repositoryMessage,
+      error: error,
+      stackTrace: stackTrace,
     );
   }
 
