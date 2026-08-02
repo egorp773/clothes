@@ -5,7 +5,9 @@ import 'package:image_picker/image_picker.dart';
 import '../core/app_appearance.dart';
 import '../models/account_deletion.dart';
 import '../models/app_profile.dart';
+import '../models/user_entitlements.dart';
 import '../widgets/app_image.dart';
+import 'seller_activation_screen.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({
@@ -60,6 +62,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late String _gender;
   late String _city;
   DateTime? _birthDate;
+  SellerType? _sellerType;
   XFile? _pickedAvatar;
   bool _removeAvatar = false;
   bool _saving = false;
@@ -101,6 +104,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     _gender = widget.profile.gender == 'female' ? 'female' : 'male';
     _city = widget.profile.city;
     _birthDate = DateTime.tryParse(widget.profile.birthDate);
+    _sellerType = widget.profile.sellerType;
   }
 
   @override
@@ -211,16 +215,46 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               const _SectionLabel('Дата рождения'),
               const SizedBox(height: 10),
               _TapValueField(
+                key: const Key('profile-birth-date'),
                 value: _birthDate == null
                     ? 'Не указана'
                     : _formatDate(_birthDate!),
-                trailing: const Icon(Icons.lock_outline, size: 17),
-                onTap: null,
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_birthDate != null)
+                      IconButton(
+                        key: const Key('profile-birth-date-clear'),
+                        tooltip: 'Очистить дату',
+                        onPressed: () => setState(() => _birthDate = null),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 32,
+                          height: 32,
+                        ),
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                      ),
+                    const Icon(Icons.calendar_month_outlined, size: 18),
+                  ],
+                ),
+                onTap: _selectBirthDate,
               ),
               const SizedBox(height: 6),
               const Text(
-                'Дата рождения подтверждается при регистрации. Для исправления обратитесь в поддержку.',
+                'Дата нужна только для возрастных ограничений. Вы можете изменить или удалить её сами.',
                 style: TextStyle(fontSize: 10.5, color: Color(0xFF7A7A80)),
+              ),
+              const SizedBox(height: 24),
+              const _SectionLabel(
+                'Тип продавца',
+                description: 'Будет использоваться при публикации вещей',
+              ),
+              const SizedBox(height: 10),
+              _TapValueField(
+                key: const Key('profile-seller-type'),
+                value: _sellerType?.displayName ?? 'Не указан',
+                trailing: const Icon(Icons.keyboard_arrow_down, size: 18),
+                onTap: _selectSellerType,
               ),
               const SizedBox(height: 26),
               const _SectionLabel(
@@ -461,6 +495,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (selected != null && mounted) setState(() => _city = selected);
   }
 
+  Future<void> _selectBirthDate() async {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final firstDate = DateTime(1900);
+    final current = _birthDate;
+    final initialDate = current == null || current.isBefore(firstDate)
+        ? DateTime(today.year - 18, today.month, today.day)
+        : current.isAfter(today)
+        ? today
+        : current;
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: today,
+      helpText: 'Дата рождения',
+      cancelText: 'Отмена',
+      confirmText: 'Готово',
+    );
+    if (selected != null && mounted) {
+      setState(() => _birthDate = DateUtils.dateOnly(selected));
+    }
+  }
+
+  Future<void> _selectSellerType() async {
+    final selected = await showSellerTypePicker(context, selected: _sellerType);
+    if (selected != null && mounted) setState(() => _sellerType = selected);
+  }
+
   Future<void> _save() async {
     if (_saving) return;
     final valid = _formKey.currentState?.validate() ?? false;
@@ -481,21 +543,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       lastName: lastName,
       middleName: _middleNameController.text.trim(),
       gender: _gender,
-      birthDate: widget.profile.birthDate,
+      birthDate: _birthDate == null ? '' : _isoDate(_birthDate!),
       city: _city.trim(),
       phone: phoneDigits.isEmpty ? '' : '+7$phoneDigits',
       email: _emailController.text.trim().toLowerCase(),
       avatarUrl: _removeAvatar ? '' : widget.profile.avatarUrl,
+      sellerType: _sellerType,
     );
     try {
-      final identityError = await widget.onUpdateIdentity?.call(
-        name: displayName,
-        handle: handle,
-      );
-      if (!mounted) return;
-      if (identityError != null) {
-        _showMessage(identityError);
-        return;
+      if (!widget.isSignedIn) {
+        final identityError = await widget.onUpdateIdentity?.call(
+          name: displayName,
+          handle: handle,
+        );
+        if (!mounted) return;
+        if (identityError != null) {
+          _showMessage(identityError);
+          return;
+        }
       }
       final error = await widget.onSave(updated, _pickedAvatar);
       if (!mounted) return;
@@ -646,6 +711,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   static String _formatDate(DateTime date) {
     String two(int value) => value.toString().padLeft(2, '0');
     return '${two(date.day)}/${two(date.month)}/${date.year}';
+  }
+
+  static String _isoDate(DateTime date) {
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${date.year}-${two(date.month)}-${two(date.day)}';
   }
 }
 
@@ -914,6 +984,7 @@ class _GenderChoice extends StatelessWidget {
 
 class _TapValueField extends StatelessWidget {
   const _TapValueField({
+    super.key,
     required this.value,
     required this.onTap,
     required this.trailing,

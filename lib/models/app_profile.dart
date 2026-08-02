@@ -1,3 +1,5 @@
+import 'user_entitlements.dart';
+
 class AppProfile {
   const AppProfile({
     required this.name,
@@ -14,6 +16,7 @@ class AppProfile {
     this.phone = '',
     this.email = '',
     this.avatarUrl = '',
+    this.sellerType,
   });
 
   final String name;
@@ -30,6 +33,7 @@ class AppProfile {
   final String phone;
   final String email;
   final String avatarUrl;
+  final SellerType? sellerType;
   ProfileStats get stats => ProfileStats(
     rating: rating,
     salesCount: salesCount,
@@ -62,6 +66,9 @@ class AppProfile {
       phone: json['phone'] as String? ?? '',
       email: json['email'] as String? ?? '',
       avatarUrl: json['avatarUrl'] as String? ?? '',
+      sellerType: SellerType.tryParse(
+        json['sellerType'] ?? json['seller_type'],
+      ),
     );
   }
 
@@ -81,6 +88,7 @@ class AppProfile {
       'phone': phone,
       'email': email,
       'avatarUrl': avatarUrl,
+      'sellerType': sellerType?.wireName,
     };
   }
 
@@ -96,6 +104,7 @@ class AppProfile {
     String? phone,
     String? email,
     String? avatarUrl,
+    SellerType? sellerType,
   }) {
     return AppProfile(
       name: name ?? this.name,
@@ -112,6 +121,7 @@ class AppProfile {
       phone: phone ?? this.phone,
       email: email ?? this.email,
       avatarUrl: avatarUrl ?? this.avatarUrl,
+      sellerType: sellerType ?? this.sellerType,
     );
   }
 
@@ -134,6 +144,27 @@ class AppProfile {
       phone: phone,
       email: email,
       avatarUrl: avatarUrl,
+      sellerType: sellerType,
+    );
+  }
+
+  AppProfile withSellerType(SellerType? value) {
+    return AppProfile(
+      name: name,
+      handle: handle,
+      city: city,
+      rating: rating,
+      salesCount: salesCount,
+      followersCount: followersCount,
+      firstName: firstName,
+      lastName: lastName,
+      middleName: middleName,
+      gender: gender,
+      birthDate: birthDate,
+      phone: phone,
+      email: email,
+      avatarUrl: avatarUrl,
+      sellerType: value,
     );
   }
 }

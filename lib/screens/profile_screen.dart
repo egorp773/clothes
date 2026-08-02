@@ -10,6 +10,7 @@ import '../models/order_dispute.dart';
 import '../models/product.dart';
 import '../models/profile_feature.dart';
 import '../widgets/app_image.dart';
+import '../widgets/app_bottom_nav.dart';
 import '../widgets/app_glass_surface.dart';
 import 'edit_profile_screen.dart';
 import '../features/listing_edit/screens/listing_edit_screen.dart';
@@ -144,123 +145,119 @@ class ProfileScreen extends StatelessWidget {
           order.status != AppOrderStatus.cancelled;
     }).toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     final topInset = MediaQuery.of(context).viewPadding.top;
+    final bottomInset = AppBottomNav.contentInsetFor(context);
     final profileOverview = _ProfileOverviewCard(
       profile: profile,
       onEditTap: () => _openEditProfile(context),
       onReviewsTap: () => _openReviews(context),
     );
 
-    return Scaffold(
-      backgroundColor: context.appBackdrop.scaffoldColor,
-      body: SafeArea(
-        top: false,
-        child: ListView(
-          physics: const BouncingScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(18, topInset + 12, 18, 136),
-          children: [
-            _ProfileTopBar(
-              hasUnreadNotifications: notifications.any(
-                (notification) => !notification.isRead,
+    return Material(
+      type: MaterialType.transparency,
+      child: ListView(
+        physics: const BouncingScrollPhysics(),
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        padding: EdgeInsets.fromLTRB(18, topInset + 12, 18, bottomInset),
+        children: [
+          _ProfileTopBar(
+            hasUnreadNotifications: notifications.any(
+              (notification) => !notification.isRead,
+            ),
+            onNotificationsTap: () => _openNotifications(context),
+            onSettingsTap: () => _openSettings(context),
+          ),
+          const SizedBox(height: 16),
+          if (context.appGlass.enabled)
+            AppGlassSurface(
+              key: const Key('profile-glass-overview'),
+              role: AppGlassRole.card,
+              borderRadius: BorderRadius.circular(22),
+              padding: const EdgeInsets.all(16),
+              interactiveGlint: false,
+              child: profileOverview,
+            )
+          else
+            profileOverview,
+          if (activeOrders.isNotEmpty)
+            _ActiveOrdersOverview(
+              orders: activeOrders,
+              currentUserId: currentUserId,
+              onTap: () => _openOrders(context),
+            ),
+          _ProfileShortcutSection(
+            favoritesCount: likedProducts.length + likedOutfits.length,
+            recentCount:
+                recentlyViewedProducts.length + recentlyViewedOutfits.length,
+            favoritesBackgroundImage: likedProducts.isNotEmpty
+                ? likedProducts.first.image
+                : likedOutfits.isNotEmpty &&
+                      likedOutfits.first.photos.isNotEmpty
+                ? likedOutfits.first.photos.first
+                : null,
+            recentBackgroundImage: recentlyViewedProducts.isNotEmpty
+                ? recentlyViewedProducts.first.image
+                : recentlyViewedOutfits.isNotEmpty &&
+                      recentlyViewedOutfits.first.photos.isNotEmpty
+                ? recentlyViewedOutfits.first.photos.first
+                : null,
+            onFavoritesTap: () => _openLikedProducts(context),
+            onRecentTap: () => _openRecentlyViewedProducts(context),
+          ),
+          _PhotoPreviewSection(
+            title: 'мои объявления',
+            count: products.length,
+            images: products.map((product) => product.image).take(3).toList(),
+            emptyText: 'Пока нет объявлений',
+            emptyIcon: Icons.sell_outlined,
+            topPadding: 22,
+            onOpen: () => _openProducts(context),
+          ),
+          _PhotoPreviewSection(
+            title: 'мои образы',
+            count: outfitCards.length,
+            images: outfitCards.map((outfit) => outfit.image).take(3).toList(),
+            emptyText: 'Пока нет образов',
+            emptyIcon: Icons.checkroom_outlined,
+            topPadding: 22,
+            onOpen: () => _openOutfits(context),
+          ),
+          const SizedBox(height: 24),
+          _ProfileMenuSection(
+            rows: [
+              _MenuRowData('мои заказы', _ProfileMenuAction.orders),
+              _MenuRowData('уведомления', _ProfileMenuAction.notifications),
+              _MenuRowData(
+                'настройки уведомлений',
+                _ProfileMenuAction.notificationSettings,
               ),
-              onNotificationsTap: () => _openNotifications(context),
-              onSettingsTap: () => _openSettings(context),
-            ),
-            const SizedBox(height: 16),
-            if (context.appGlass.enabled)
-              AppGlassSurface(
-                key: const Key('profile-glass-overview'),
-                role: AppGlassRole.card,
-                borderRadius: BorderRadius.circular(22),
-                padding: const EdgeInsets.all(16),
-                interactiveGlint: false,
-                child: profileOverview,
-              )
-            else
-              profileOverview,
-            if (activeOrders.isNotEmpty)
-              _ActiveOrdersOverview(
-                orders: activeOrders,
-                currentUserId: currentUserId,
-                onTap: () => _openOrders(context),
+              _MenuRowData('мои адреса', _ProfileMenuAction.addresses),
+              _MenuRowData(
+                'дашборд продавца',
+                _ProfileMenuAction.sellerDashboard,
               ),
-            _ProfileShortcutSection(
-              favoritesCount: likedProducts.length + likedOutfits.length,
-              recentCount:
-                  recentlyViewedProducts.length + recentlyViewedOutfits.length,
-              favoritesBackgroundImage: likedProducts.isNotEmpty
-                  ? likedProducts.first.image
-                  : likedOutfits.isNotEmpty &&
-                        likedOutfits.first.photos.isNotEmpty
-                  ? likedOutfits.first.photos.first
-                  : null,
-              recentBackgroundImage: recentlyViewedProducts.isNotEmpty
-                  ? recentlyViewedProducts.first.image
-                  : recentlyViewedOutfits.isNotEmpty &&
-                        recentlyViewedOutfits.first.photos.isNotEmpty
-                  ? recentlyViewedOutfits.first.photos.first
-                  : null,
-              onFavoritesTap: () => _openLikedProducts(context),
-              onRecentTap: () => _openRecentlyViewedProducts(context),
+            ],
+            onSelected: (action) => _openProfileMenu(context, action),
+          ),
+          const _CountrySection(),
+          _SupportSection(
+            onSupportTap: () =>
+                _openInformation(context, ProfileInformationTopic.support),
+            onFaqTap: () =>
+                _openInformation(context, ProfileInformationTopic.faq),
+          ),
+          _InfoSection(
+            onDeliveryTap: () => _openInformation(
+              context,
+              ProfileInformationTopic.deliveryAndPayment,
             ),
-            _PhotoPreviewSection(
-              title: 'мои объявления',
-              count: products.length,
-              images: products.map((product) => product.image).take(3).toList(),
-              emptyText: 'Пока нет объявлений',
-              emptyIcon: Icons.sell_outlined,
-              topPadding: 22,
-              onOpen: () => _openProducts(context),
-            ),
-            _PhotoPreviewSection(
-              title: 'мои образы',
-              count: outfitCards.length,
-              images: outfitCards
-                  .map((outfit) => outfit.image)
-                  .take(3)
-                  .toList(),
-              emptyText: 'Пока нет образов',
-              emptyIcon: Icons.checkroom_outlined,
-              topPadding: 22,
-              onOpen: () => _openOutfits(context),
-            ),
-            const SizedBox(height: 24),
-            _ProfileMenuSection(
-              rows: [
-                _MenuRowData('мои заказы', _ProfileMenuAction.orders),
-                _MenuRowData('уведомления', _ProfileMenuAction.notifications),
-                _MenuRowData(
-                  'настройки уведомлений',
-                  _ProfileMenuAction.notificationSettings,
-                ),
-                _MenuRowData('мои адреса', _ProfileMenuAction.addresses),
-                _MenuRowData(
-                  'дашборд продавца',
-                  _ProfileMenuAction.sellerDashboard,
-                ),
-              ],
-              onSelected: (action) => _openProfileMenu(context, action),
-            ),
-            const _CountrySection(),
-            _SupportSection(
-              onSupportTap: () =>
-                  _openInformation(context, ProfileInformationTopic.support),
-              onFaqTap: () =>
-                  _openInformation(context, ProfileInformationTopic.faq),
-            ),
-            _InfoSection(
-              onDeliveryTap: () => _openInformation(
-                context,
-                ProfileInformationTopic.deliveryAndPayment,
-              ),
-              onDocumentsTap: () =>
-                  _openInformation(context, ProfileInformationTopic.documents),
-              onCareersTap: () =>
-                  _openInformation(context, ProfileInformationTopic.careers),
-            ),
-            const SizedBox(height: 10),
-            _LogoutBlock(onSignOut: onSignOut),
-          ],
-        ),
+            onDocumentsTap: () =>
+                _openInformation(context, ProfileInformationTopic.documents),
+            onCareersTap: () =>
+                _openInformation(context, ProfileInformationTopic.careers),
+          ),
+          const SizedBox(height: 10),
+          _LogoutBlock(onSignOut: onSignOut),
+        ],
       ),
     );
   }

@@ -154,6 +154,19 @@ class AppBottomNav extends StatefulWidget {
   final ValueListenable<bool>? compactListenable;
   final int unreadCount;
 
+  static const double expandedPanelHeight = 60;
+  static const double minimumBottomGap = 8;
+
+  /// Bottom padding that keeps the final scrollable content clear of the
+  /// floating capsule and the iPhone home indicator.
+  static double contentInsetFor(BuildContext context, {double extra = 16}) {
+    final systemInset = MediaQuery.viewPaddingOf(context).bottom;
+    final bottomGap = systemInset > minimumBottomGap
+        ? systemInset
+        : minimumBottomGap;
+    return expandedPanelHeight + bottomGap + extra;
+  }
+
   @override
   State<AppBottomNav> createState() => _AppBottomNavState();
 }
@@ -210,16 +223,17 @@ class _AppBottomNavState extends State<AppBottomNav>
 
   @override
   Widget build(BuildContext context) {
+    final navigationGlassStyle = _navigationGlassStyle(context);
     return RepaintBoundary(
       key: const Key('app-bottom-nav'),
       child: SafeArea(
         top: false,
-        minimum: const EdgeInsets.only(bottom: 8),
+        minimum: const EdgeInsets.only(bottom: AppBottomNav.minimumBottomGap),
         child: SizedBox(
           // Keep the Scaffold bottom-navigation slot stable. Only the capsule
           // inside this box changes height, so scroll collapse does not
           // relayout the page body on every animation tick.
-          height: 60,
+          height: AppBottomNav.expandedPanelHeight,
           child: LayoutBuilder(
             builder: (context, constraints) {
               return AnimatedBuilder(
@@ -241,7 +255,11 @@ class _AppBottomNavState extends State<AppBottomNav>
                     compactWidth,
                     progress,
                   )!;
-                  final height = lerpDouble(60, 52, progress)!;
+                  final height = lerpDouble(
+                    AppBottomNav.expandedPanelHeight,
+                    52,
+                    progress,
+                  )!;
 
                   return Align(
                     alignment: Alignment.bottomCenter,
@@ -251,6 +269,9 @@ class _AppBottomNavState extends State<AppBottomNav>
                       height: height,
                       child: AppGlassSurface(
                         role: AppGlassRole.navigation,
+                        glassStyle: navigationGlassStyle,
+                        grouped: false,
+                        opaqueInHighContrast: true,
                         interactive: true,
                         borderRadius: BorderRadius.circular(999),
                         child: _NavigationMaterial(
@@ -268,6 +289,39 @@ class _AppBottomNavState extends State<AppBottomNav>
             },
           ),
         ),
+      ),
+    );
+  }
+
+  AppGlassStyle _navigationGlassStyle(BuildContext context) {
+    final brightness = Theme.of(context).brightness;
+    final isDark = brightness == Brightness.dark;
+    final base = AppGlassStyle.liquid(
+      brightness: brightness,
+      accent: context.appPalette.accent,
+    );
+    return base.copyWith(
+      enabled: true,
+      materialTint: isDark ? const Color(0xFF142A54) : const Color(0xFF0F203F),
+      rimColor: Colors.white,
+      depthColor: const Color(0xFF020714),
+      shadowColor: Colors.black,
+      accentGlint: const Color(0xFFBBD2FF),
+      navigation: AppGlassMaterial(
+        blurSigma: 34,
+        tintOpacity: isDark ? 0.72 : 0.70,
+        rimOpacity: isDark ? 0.34 : 0.42,
+        topHighlightOpacity: isDark ? 0.22 : 0.28,
+        bottomDepthOpacity: isDark ? 0.20 : 0.16,
+        shadowOpacity: isDark ? 0.42 : 0.34,
+        shadowBlur: 30,
+        shadowSpread: -8,
+        shadowOffset: const Offset(0, 12),
+        cornerRadius: 29,
+        padding: EdgeInsets.zero,
+        motionDuration: const Duration(milliseconds: 210),
+        glintOpacity: isDark ? 0.15 : 0.18,
+        glintRadius: 0.86,
       ),
     );
   }
@@ -539,26 +593,12 @@ class _NavigationMaterialState extends State<_NavigationMaterial>
   @override
   Widget build(BuildContext context) {
     final palette = context.appPalette;
-    final glassEnabled = context.appGlass.enabled;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return DecoratedBox(
       key: const Key('app-bottom-nav-material'),
       decoration: BoxDecoration(
-        color: glassEnabled ? Colors.transparent : palette.surface,
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(999),
-        border: glassEnabled
-            ? null
-            : Border.all(color: palette.border, width: 0.7),
-        boxShadow: glassEnabled
-            ? null
-            : [
-                BoxShadow(
-                  color: palette.shadow,
-                  blurRadius: 22,
-                  spreadRadius: -8,
-                  offset: const Offset(0, 9),
-                ),
-              ],
       ),
       child: Listener(
         key: const Key('bottom-nav-drag-region'),
@@ -578,7 +618,7 @@ class _NavigationMaterialState extends State<_NavigationMaterial>
                     painter: _NavLensPainter(
                       lens: _lens,
                       palette: palette,
-                      glassEnabled: glassEnabled,
+                      glassEnabled: true,
                       isDark: isDark,
                       progress: widget.progress,
                     ),
@@ -841,7 +881,6 @@ class _NavItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final isActive = currentIndex == index;
     final isVisuallyActive = visualIndex == index;
-    final palette = context.appPalette;
     final reduceMotion =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final iconOffset = lerpDouble(-5, 0, progress)!;
@@ -930,7 +969,9 @@ class _NavItem extends StatelessWidget {
                       fontWeight: isVisuallyActive
                           ? FontWeight.w700
                           : FontWeight.w500,
-                      color: isVisuallyActive ? palette.ink : palette.muted,
+                      color: isVisuallyActive
+                          ? Colors.white
+                          : Colors.white.withValues(alpha: 0.70),
                     ),
                   ),
                 ),
@@ -996,10 +1037,9 @@ class _NavIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.appPalette;
     final color = isActive
-        ? Color.lerp(palette.ink, palette.accentInk, 0.22)!
-        : palette.muted;
+        ? Colors.white
+        : Colors.white.withValues(alpha: 0.70);
     final size = emphasize ? 21.5 : 21.0;
     return switch (kind) {
       _NavIconKind.home => _AssetIcon(

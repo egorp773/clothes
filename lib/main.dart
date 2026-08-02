@@ -16,8 +16,10 @@ import 'models/created_outfit.dart';
 import 'models/message_thread.dart';
 import 'models/product.dart';
 import 'models/profile_feature.dart';
+import 'models/user_entitlements.dart';
 import 'screens/catalog_screen.dart';
 import 'screens/appearance_editor_screen.dart';
+import 'screens/edit_profile_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/messages_screen.dart';
 import 'screens/outfit_create_screen.dart';
@@ -166,6 +168,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   _CreateMode _createMode = _CreateMode.none;
   bool _returnToPublishOutfitAfterItem = false;
   bool _createItemForOutfitOnly = false;
+  bool _listingPreflightRunning = false;
   bool _isAppActive = true;
   int _modalSurfaceDepth = 0;
   final ValueNotifier<bool> _navigationCompact = ValueNotifier<bool>(false);
@@ -940,16 +943,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _openLoginScreen(onSignedIn: _openCreateItem);
       return;
     }
-    if (!_repository.canSell) {
-      unawaited(_openSellerActivation(onActivated: _openCreateItem));
-      return;
-    }
-    setState(() {
-      _createMode = _CreateMode.createItem;
-      _currentIndex = 2;
-      _returnToPublishOutfitAfterItem = false;
-      _createItemForOutfitOnly = false;
-    });
+    unawaited(
+      _runListingPreflight(() {
+        setState(() {
+          _createMode = _CreateMode.createItem;
+          _currentIndex = 2;
+          _returnToPublishOutfitAfterItem = false;
+          _createItemForOutfitOnly = false;
+        });
+      }),
+    );
   }
 
   Future<void> _publishOutfit(CreatedOutfit outfit) async {
@@ -1140,34 +1143,189 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       _openLoginScreen(onSignedIn: _openCreateItemForOutfit);
       return;
     }
-    if (!_repository.canSell) {
-      unawaited(_openSellerActivation(onActivated: _openCreateItemForOutfit));
-      return;
-    }
-    setState(() {
-      _returnToPublishOutfitAfterItem = true;
-      _createItemForOutfitOnly = false;
-      _createMode = _CreateMode.createItem;
-      _currentIndex = 2;
-    });
+    unawaited(
+      _runListingPreflight(() {
+        setState(() {
+          _returnToPublishOutfitAfterItem = true;
+          _createItemForOutfitOnly = false;
+          _createMode = _CreateMode.createItem;
+          _currentIndex = 2;
+        });
+      }),
+    );
   }
 
-  Future<void> _openSellerActivation({VoidCallback? onActivated}) async {
+  Future<void> _runListingPreflight(VoidCallback onReady) async {
+    if (_listingPreflightRunning) return;
+    _listingPreflightRunning = true;
+    try {
+      await _repository.refreshCurrentProfile();
+      if (!mounted) return;
+
+      var entitlements = _repository.entitlements;
+      if (!entitlements.isResolved) {
+        _showAppMessage(
+          _repository.entitlementsError ??
+              AppRepository.publishBlockMessage(PublishBlockReason.unresolved),
+        );
+        return;
+      }
+
+      if (!_hasAdultBirthDate(entitlements)) {
+        final openProfile = await _showAdultPublishingDialog();
+        if (openProfile != true || !mounted) return;
+        await _openBirthDateEditor();
+        if (!mounted) return;
+        await _repository.refreshCurrentProfile();
+        if (!mounted) return;
+        entitlements = _repository.entitlements;
+        if (!entitlements.isResolved || !_hasAdultBirthDate(entitlements)) {
+          return;
+        }
+      }
+
+      final earlyReason = entitlements.publishBlockReason;
+      if (earlyReason == PublishBlockReason.blocked ||
+          earlyReason == PublishBlockReason.reviewRequired) {
+        _showAppMessage(AppRepository.publishBlockMessage(earlyReason));
+        return;
+      }
+
+      if (entitlements.seller.type == null) {
+        final selected = await _trackModalSurface(
+          () => showSellerTypePicker(context, title: 'Как вы публикуете вещь?'),
+        );
+        if (selected == null || !mounted) return;
+        final error = await _repository.setMySellerType(selected);
+        if (!mounted) return;
+        if (error != null) {
+          _showAppMessage(error);
+          return;
+        }
+        entitlements = _repository.entitlements;
+      }
+
+      if (!entitlements.canPublish) {
+        _showAppMessage(
+          AppRepository.publishBlockMessage(entitlements.publishBlockReason),
+        );
+        return;
+      }
+      onReady();
+    } finally {
+      _listingPreflightRunning = false;
+    }
+  }
+
+  bool _hasAdultBirthDate(UserEntitlements entitlements) {
+    final birthDate =
+        entitlements.birthDate ??
+        DateTime.tryParse(_repository.profile.birthDate);
+    return birthDate != null && isAtLeast18(birthDate);
+  }
+
+  Future<bool?> _showAdultPublishingDialog() {
+    return _trackModalSurface(
+      () => showDialog<bool>(
+        context: context,
+        barrierDismissible: true,
+        builder: (dialogContext) {
+          final palette = dialogContext.appPalette;
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+            backgroundColor: palette.surfaceRaised,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(26),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 24, 22, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      color: palette.surfaceMuted,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.cake_outlined,
+                      color: palette.ink,
+                      size: 26,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Публиковать вещи можно с 18 лет',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 19,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.35,
+                      color: palette.ink,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Укажите дату рождения в профиле и убедитесь, что она указана верно. Если вам ещё нет 18 лет, публикация пока недоступна.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontFamily: 'Montserrat',
+                      fontSize: 12.5,
+                      height: 1.45,
+                      fontWeight: FontWeight.w500,
+                      color: palette.muted,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(dialogContext, true),
+                      child: const Text('Проверить дату рождения'),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('Не сейчас'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _openBirthDateEditor() async {
+    final email = _repository.currentUser?.email ?? '';
     await Navigator.of(context, rootNavigator: true).push<void>(
       MaterialPageRoute<void>(
         fullscreenDialog: true,
-        builder: (context) => AnimatedBuilder(
-          animation: _repository,
-          builder: (context, _) => SellerActivationScreen(
-            entitlements: _repository.entitlements,
-            onRequestActivation: _repository.requestPrivateSellerActivation,
-            onRefresh: _repository.refreshUserEntitlements,
-          ),
+        builder: (context) => EditProfileScreen(
+          profile: _repository.profile,
+          accountEmail: email.endsWith('@telegram.local')
+              ? _repository.profile.handle
+              : email,
+          isSignedIn: _repository.isSignedIn,
+          onUpdateIdentity: _repository.updateProfile,
+          onSave: _repository.savePersonalProfile,
+          onConfirmEmail: _repository.requestEmailConfirmation,
+          onDeleteAccount: _repository.deleteAccount,
         ),
       ),
     );
-    if (!mounted || !_repository.canSell) return;
-    onActivated?.call();
+  }
+
+  void _showAppMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _openLoginScreen({VoidCallback? onSignedIn}) {
@@ -1238,7 +1396,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
 
         return Scaffold(
           backgroundColor: context.appBackdrop.scaffoldColor,
-          extendBody: context.appGlass.enabled,
+          extendBody: true,
           body: SafeArea(
             top: false,
             bottom: false,
@@ -1411,7 +1569,7 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
           ),
           bottomNavigationBar:
               (_currentIndex == 2 && _createMode != _CreateMode.none) ||
-                  (context.appGlass.enabled && _modalSurfaceDepth > 0)
+                  _modalSurfaceDepth > 0
               ? null
               : AppBottomNav(
                   currentIndex: _currentIndex,

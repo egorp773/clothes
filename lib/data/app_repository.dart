@@ -16,7 +16,9 @@ import 'package:uuid/uuid.dart';
 import '../core/oauth_callback.dart';
 import '../core/app_config.dart';
 import '../core/pkce.dart';
+import '../core/secure_media_upload_client.dart';
 import '../core/supabase_config.dart';
+import '../core/upload_image_normalizer.dart';
 import '../features/chat/chat_media_send_coordinator.dart';
 import '../features/chat/chat_media_url_cache.dart';
 import '../features/chat/chat_sync_coordinator.dart';
@@ -455,7 +457,7 @@ class AppRepository extends ChangeNotifier {
       (_hasSupabase && isSignedIn && _entitlements.canBuy) ||
       AppConfig.allowUnsafeLocalDemo;
   bool get canSell =>
-      (_hasSupabase && isSignedIn && _entitlements.canSell) ||
+      (_hasSupabase && isSignedIn && _entitlements.canPublish) ||
       AppConfig.allowUnsafeLocalDemo;
   MessageNotification? get latestMessageNotification =>
       _latestMessageNotification;
@@ -940,9 +942,6 @@ class AppRepository extends ChangeNotifier {
       if (_registrationDocuments.isEmpty) {
         await refreshRegistrationDocuments(notify: false);
       }
-      if (_registrationDocuments.isEmpty) {
-        throw StateError('Active mandatory documents are unavailable');
-      }
       final response = await _client.rpc('get_user_entitlements');
       final raw = response is Map
           ? Map<String, dynamic>.from(response)
@@ -981,10 +980,6 @@ class AppRepository extends ChangeNotifier {
           },
       ];
       _entitlements = UserEntitlements.fromJson(raw);
-      if (!_entitlements.canUseMarketplace) {
-        _entitlementsError =
-            'Не завершены обязательные согласия или проверка возраста 18+';
-      }
     } catch (error, stackTrace) {
       debugPrint('Entitlements fetch error: $error\n$stackTrace');
       _entitlements = UserEntitlements.unavailable();
@@ -996,49 +991,44 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
-  Future<String?> requestPrivateSellerActivation() async {
-    await refreshUserEntitlements();
-    if (!_entitlements.canUseMarketplace) {
-      return 'Сначала завершите обязательную регистрацию и проверку 18+';
-    }
+  Future<String?> setMySellerType(SellerType type) async {
     if (!_hasSupabase || _currentUser == null) {
       return 'Войдите в аккаунт';
     }
-    if (_entitlements.seller.type != null &&
-        _entitlements.seller.type != SellerType.privateIndividual) {
-      return 'Этот тип продавца пока не поддерживается';
-    }
     try {
-      await _client.rpc('request_private_seller_activation');
-      await refreshUserEntitlements();
+      await _setMySellerTypeRemote(type);
+      await refreshUserEntitlements(notify: false);
+      if (_entitlements.seller.type != type) {
+        throw StateError('Seller type was not confirmed by server');
+      }
+      _profile = _profile.copyWith(sellerType: type);
+      await _prefs.remove(_scopedStorageKey(_profileKey));
+      notifyListeners();
       return null;
     } catch (error, stackTrace) {
-      debugPrint('Seller activation error: $error\n$stackTrace');
-      return 'Не удалось отправить заявку продавца';
+      debugPrint('Seller type update error: $error\n$stackTrace');
+      return 'Не удалось сохранить тип продавца. Попробуйте ещё раз';
     }
   }
 
   Future<String?> assertCanPublishListing() async {
     await refreshUserEntitlements();
-    if (_entitlements.canSell) return null;
-    final seller = _entitlements.seller;
-    if (!_entitlements.canUseMarketplace) {
-      return 'Не завершены обязательные согласия или проверка возраста 18+';
-    }
-    if (seller.type == null) return 'Сначала активируйте профиль продавца';
-    if (seller.type != SellerType.privateIndividual) {
-      return 'В этой версии разрешены только частные продавцы';
-    }
-    if (seller.status == SellerAccountStatus.blocked ||
-        seller.moderationStatus == SellerModerationStatus.blocked ||
-        seller.salesBlocked) {
-      return 'Продажи заблокированы';
-    }
-    if (seller.verificationStatus == SellerVerificationStatus.reviewRequired) {
-      return 'Для публикации требуется дополнительная проверка';
-    }
-    return 'Профиль продавца ещё не подтверждён';
+    if (_entitlements.canPublish) return null;
+    return publishBlockMessage(_entitlements.publishBlockReason);
   }
+
+  static String publishBlockMessage(
+    PublishBlockReason? reason,
+  ) => switch (reason) {
+    PublishBlockReason.missingBirthDate || PublishBlockReason.underage =>
+      'Публиковать вещи можно с 18 лет. Проверьте дату рождения в профиле',
+    PublishBlockReason.sellerTypeRequired => 'Укажите тип продавца',
+    PublishBlockReason.blocked =>
+      'Публикация временно заблокирована. Если это ошибка, напишите в поддержку',
+    PublishBlockReason.reviewRequired =>
+      'Профиль на проверке. Мы сообщим, когда публикация снова станет доступна',
+    _ => 'Не удалось проверить возможность публикации. Попробуйте ещё раз',
+  };
 
   Future<void> _activateAuthorizedSession(User user) async {
     _chatRepository ??= ChatRepository(client: _client, preferences: _prefs)
@@ -1409,6 +1399,18 @@ class AppRepository extends ChangeNotifier {
     AppProfile updatedProfile,
     XFile? avatarFile,
   ) async {
+    final cleanName = updatedProfile.name.trim().isEmpty
+        ? 'Ваш профиль'
+        : updatedProfile.name.trim();
+    final cleanHandle = _normalizeHandle(updatedProfile.handle);
+    if (!_isValidHandle(cleanHandle)) {
+      return 'Username должен быть 3-24 символа: латиница, цифры и _';
+    }
+    if (_hasSupabase && currentUserId.isNotEmpty) {
+      final isTaken = await _isHandleTaken(cleanHandle, currentUserId);
+      if (isTaken) return 'Такой username уже занят';
+    }
+
     var avatarUrl = updatedProfile.avatarUrl;
     if (avatarFile != null) {
       avatarUrl = _hasSupabase
@@ -1417,31 +1419,65 @@ class AppRepository extends ChangeNotifier {
       if (avatarUrl.isEmpty) return 'Не удалось сохранить фото профиля';
     }
 
-    _profile = updatedProfile.copyWith(avatarUrl: avatarUrl);
-    await _prefs.remove(_scopedStorageKey(_profileKey));
-    notifyListeners();
-
+    final candidate = updatedProfile.copyWith(
+      name: cleanName,
+      handle: cleanHandle,
+      avatarUrl: avatarUrl,
+    );
     final user = _hasSupabase ? _client.auth.currentUser : null;
-    if (user == null) return null;
+    if (user == null) {
+      _profile = candidate;
+      await _prefs.remove(_scopedStorageKey(_profileKey));
+      notifyListeners();
+      return null;
+    }
     try {
-      await _upsertProfile(userId: user.id, profile: _profile);
-      await _savePrivateProfileDetails(user.id, _profile);
+      await _upsertProfile(userId: user.id, profile: candidate);
+      await _savePrivateProfileDetails(user.id, candidate);
+      await _updateMyBirthDateRemote(candidate.birthDate);
+      if (candidate.sellerType != null) {
+        await _setMySellerTypeRemote(candidate.sellerType!);
+      }
       final response = await _client.auth.updateUser(
         UserAttributes(
           data: {
             ...?user.userMetadata,
-            'full_name': _profile.name,
-            'avatar_url': _profile.avatarUrl,
+            'full_name': candidate.name,
+            'username': candidate.handle.substring(1),
+            'preferred_username': candidate.handle.substring(1),
+            'avatar_url': candidate.avatarUrl,
           },
         ),
       );
       _currentUser = response.user ?? _client.auth.currentUser;
+      _profile = candidate;
+      await refreshUserEntitlements(notify: false);
+      _profile = _profile.withSellerType(
+        _entitlements.seller.type ?? candidate.sellerType,
+      );
+      await _prefs.remove(_scopedStorageKey(_profileKey));
       await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
-    } catch (e) {
-      debugPrint('Personal profile update error: $e');
-      return 'Данные сохранены на устройстве, но не синхронизированы';
+      notifyListeners();
+    } catch (error, stackTrace) {
+      debugPrint('Personal profile update error: $error\n$stackTrace');
+      return 'Не удалось сохранить профиль. Проверьте связь и попробуйте ещё раз';
     }
     return null;
+  }
+
+  Future<void> _updateMyBirthDateRemote(String value) async {
+    final normalized = value.trim();
+    await _client.rpc(
+      'update_my_birth_date',
+      params: {'p_birth_date': normalized.isEmpty ? null : normalized},
+    );
+  }
+
+  Future<void> _setMySellerTypeRemote(SellerType type) async {
+    await _client.rpc(
+      'set_my_seller_type',
+      params: {'p_seller_type': type.wireName},
+    );
   }
 
   Future<String?> requestEmailConfirmation(String email) async {
@@ -1565,9 +1601,8 @@ class AppRepository extends ChangeNotifier {
 
   Future<String?> _inlineImage(XFile imageFile) async {
     try {
-      final bytes = await imageFile.readAsBytes();
-      final mimeType = _mimeTypeForImage(imageFile.name, imageFile.path);
-      return 'data:$mimeType;base64,${base64Encode(bytes)}';
+      final image = await UploadImageNormalizer.fromXFile(imageFile);
+      return 'data:${image.contentType};base64,${base64Encode(image.bytes)}';
     } catch (e) {
       debugPrint('Inline avatar error: $e');
       return null;
@@ -1587,7 +1622,6 @@ class AppRepository extends ChangeNotifier {
         'gender': profile.gender,
         'phone': profile.phone,
         'email': profile.email,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
       }, onConflict: 'user_id');
     } on PostgrestException catch (e) {
       if (e.code != 'PGRST205') rethrow;
@@ -1610,7 +1644,9 @@ class AppRepository extends ChangeNotifier {
         lastName: row['last_name'] as String? ?? _profile.lastName,
         middleName: row['middle_name'] as String? ?? _profile.middleName,
         gender: row['gender'] as String? ?? _profile.gender,
-        birthDate: row['birth_date']?.toString() ?? _profile.birthDate,
+        birthDate: row.containsKey('birth_date')
+            ? row['birth_date']?.toString() ?? ''
+            : _profile.birthDate,
         phone: row['phone'] as String? ?? _profile.phone,
         email: row['email'] as String? ?? _profile.email,
       );
@@ -1739,6 +1775,13 @@ class AppRepository extends ChangeNotifier {
               ),
             );
         await _loadPrivateProfileDetails(user.id);
+        final entitlementBirthDate = _entitlements.birthDate;
+        if (entitlementBirthDate != null) {
+          _profile = _profile.copyWith(
+            birthDate: entitlementBirthDate.toIso8601String().split('T').first,
+          );
+        }
+        _profile = _profile.withSellerType(_entitlements.seller.type);
         await _prefs.remove(_scopedStorageKey(_profileKey));
         await _syncOwnedProductSellerFields(userId: user.id, profile: _profile);
         if (notify) notifyListeners();
@@ -1840,7 +1883,7 @@ class AppRepository extends ChangeNotifier {
       'id': userId,
       'name': profile.name,
       'handle': profile.handle,
-      'avatar_url': _currentAvatarUrl(),
+      'avatar_url': profile.avatarUrl,
       'city': profile.city,
     }, onConflict: 'id');
   }
@@ -1944,10 +1987,7 @@ class AppRepository extends ChangeNotifier {
     try {
       await _client
           .from('profiles')
-          .update({
-            'last_seen_at': now.toIso8601String(),
-            'updated_at': now.toIso8601String(),
-          })
+          .update({'last_seen_at': now.toIso8601String()})
           .eq('id', currentUserId);
     } catch (e) {
       debugPrint('Presence update error: $e');
@@ -1988,22 +2028,6 @@ class AppRepository extends ChangeNotifier {
     required AppProfile profile,
   }) async {
     if (userId.isEmpty) return;
-
-    if (_hasSupabase) {
-      try {
-        await _client
-            .from('products')
-            .update({
-              'seller_name': profile.name,
-              'seller_handle': profile.handle,
-            })
-            .eq('seller_id', userId);
-        // Outfit author snapshots are synchronized by the database profile
-        // trigger. Clients cannot mutate those server-owned fields.
-      } catch (e) {
-        debugPrint('Seller product sync error: $e');
-      }
-    }
 
     var changed = false;
     _products = _products.map((product) {
@@ -3478,11 +3502,6 @@ class AppRepository extends ChangeNotifier {
         ).hasMatch(normalizedDisputeId)) {
       return null;
     }
-    final extension = path.extension(evidence.name).toLowerCase();
-    final safeExtension =
-        const {'.jpg', '.jpeg', '.png', '.webp'}.contains(extension)
-        ? extension
-        : '.jpg';
     try {
       final disputeRows = await _client
           .from('disputes')
@@ -3491,11 +3510,13 @@ class AppRepository extends ChangeNotifier {
           .inFilter('status', const ['open', 'under_review'])
           .limit(1);
       if (disputeRows.isEmpty) return null;
-      final bytes = await evidence.readAsBytes();
+      final image = await UploadImageNormalizer.fromXFile(evidence);
+      if (image.contentType == 'image/gif') return null;
+      final bytes = image.bytes;
       if (bytes.isEmpty || bytes.length > 20 * 1024 * 1024) return null;
       final contentHash = sha256HexBytes(bytes);
       final objectPath =
-          '$currentUserId/$normalizedDisputeId/$contentHash$safeExtension';
+          '$currentUserId/$normalizedDisputeId/$contentHash${image.extension}';
       final existing = await _client
           .from('dispute_evidence')
           .select('id')
@@ -3503,23 +3524,13 @@ class AppRepository extends ChangeNotifier {
           .eq('storage_path', objectPath)
           .limit(1);
       if (existing.isNotEmpty) return objectPath;
-      try {
-        await _client.storage
-            .from('dispute-evidence')
-            .uploadBinary(
-              objectPath,
-              bytes,
-              fileOptions: FileOptions(
-                cacheControl: 'private, max-age=0',
-                contentType: _mimeTypeForImage(evidence.name, evidence.path),
-                upsert: false,
-              ),
-            );
-      } on StorageException catch (error) {
-        // The content-addressed path makes a retry idempotent. A conflict can
-        // only refer to the same participant/dispute/hash namespace.
-        if (error.statusCode != '409') rethrow;
-      }
+      await SecureMediaUploadClient(_client).uploadBinary(
+        bucket: 'dispute-evidence',
+        objectPath: objectPath,
+        contentType: image.contentType,
+        bytes: bytes,
+        cacheControl: 'private, max-age=0',
+      );
       final originalName = path.basename(evidence.name);
       final response = await _client.functions.invoke(
         'finalize-dispute-evidence',
@@ -4141,11 +4152,9 @@ class AppRepository extends ChangeNotifier {
     try {
       final user = await _ensureAuthSession();
       if (user == null) return null;
-      final objectPath =
-          '${user.id}/avatar/${_uuid.v4()}${_safeImageExtension(imageFile)}';
-      await _uploadImageObject(
+      final objectPath = await _uploadImageObject(
         bucket: _profileImagesBucketName,
-        objectPath: objectPath,
+        objectPathWithoutExtension: '${user.id}/avatar/${_uuid.v4()}',
         imageFile: imageFile,
         cacheControl: '3600',
       );
@@ -4158,41 +4167,25 @@ class AppRepository extends ChangeNotifier {
     }
   }
 
-  Future<void> _uploadImageObject({
+  Future<String> _uploadImageObject({
     required String bucket,
-    required String objectPath,
+    required String objectPathWithoutExtension,
     required XFile imageFile,
     required String cacheControl,
   }) async {
-    final options = FileOptions(
-      cacheControl: cacheControl,
-      contentType: _mimeTypeForImage(imageFile.name, imageFile.path),
-      upsert: false,
-    );
-    if (kIsWeb || imageFile.path.isEmpty) {
-      await _client.storage
-          .from(bucket)
-          .uploadBinary(
-            objectPath,
-            await imageFile.readAsBytes(),
-            fileOptions: options,
-          );
-      return;
+    final image = await UploadImageNormalizer.fromXFile(imageFile);
+    if (image.contentType == 'image/gif') {
+      throw const FormatException('Animated images are not supported here');
     }
-    await _client.storage
-        .from(bucket)
-        .upload(objectPath, File(imageFile.path), fileOptions: options);
-  }
-
-  String _safeImageExtension(XFile imageFile) {
-    final namedExtension = path.extension(imageFile.name).toLowerCase();
-    final pathExtension = path.extension(imageFile.path).toLowerCase();
-    final extension = namedExtension.isNotEmpty
-        ? namedExtension
-        : pathExtension;
-    return const {'.jpg', '.jpeg', '.png', '.webp'}.contains(extension)
-        ? extension
-        : '.jpg';
+    final objectPath = '$objectPathWithoutExtension${image.extension}';
+    await SecureMediaUploadClient(_client).uploadBinary(
+      bucket: bucket,
+      objectPath: objectPath,
+      contentType: image.contentType,
+      bytes: image.bytes,
+      cacheControl: cacheControl,
+    );
+    return objectPath;
   }
 
   String? _storageObjectPath(
@@ -4395,24 +4388,6 @@ class AppRepository extends ChangeNotifier {
     return row;
   }
 
-  String _mimeTypeForImage(String name, String fallbackPath) {
-    final ext = path.extension(name).isNotEmpty
-        ? path.extension(name).toLowerCase()
-        : path.extension(fallbackPath).toLowerCase();
-    switch (ext) {
-      case '.png':
-        return 'image/png';
-      case '.webp':
-        return 'image/webp';
-      case '.gif':
-        return 'image/gif';
-      case '.jpg':
-      case '.jpeg':
-      default:
-        return 'image/jpeg';
-    }
-  }
-
   // ─── Products ───
 
   /// Caches a listing that was already atomically published by the dedicated
@@ -4485,11 +4460,9 @@ class AppRepository extends ChangeNotifier {
         'create_private_outfit_accessory',
         params: {'p_accessory_id': id, 'p_title': cleanTitle},
       );
-      objectPath =
-          '${user!.id}/$id/${_uuid.v4()}${_safeImageExtension(imageFile)}';
-      await _uploadImageObject(
+      objectPath = await _uploadImageObject(
         bucket: _accessoryImagesBucketName,
-        objectPath: objectPath,
+        objectPathWithoutExtension: '${user!.id}/$id/${_uuid.v4()}',
         imageFile: imageFile,
         cacheControl: 'private, max-age=0',
       );
@@ -5149,15 +5122,13 @@ class AppRepository extends ChangeNotifier {
     required XFile imageFile,
     required List<String> uploadedPaths,
   }) async {
-    final objectPath =
-        '$userId/$outfitId/${_uuid.v4()}${_safeImageExtension(imageFile)}';
-    uploadedPaths.add(objectPath);
-    await _uploadImageObject(
+    final objectPath = await _uploadImageObject(
       bucket: _outfitImagesBucketName,
-      objectPath: objectPath,
+      objectPathWithoutExtension: '$userId/$outfitId/${_uuid.v4()}',
       imageFile: imageFile,
       cacheControl: 'private, max-age=0',
     );
+    uploadedPaths.add(objectPath);
     return objectPath;
   }
 
@@ -5185,17 +5156,13 @@ class AppRepository extends ChangeNotifier {
         : 'image/${extension.substring(1)}';
     final objectPath = '$userId/$outfitId/${_uuid.v4()}$extension';
     uploadedPaths.add(objectPath);
-    await _client.storage
-        .from(_outfitImagesBucketName)
-        .uploadBinary(
-          objectPath,
-          bytes,
-          fileOptions: FileOptions(
-            cacheControl: 'private, max-age=0',
-            contentType: contentType,
-            upsert: false,
-          ),
-        );
+    await SecureMediaUploadClient(_client).uploadBinary(
+      bucket: _outfitImagesBucketName,
+      objectPath: objectPath,
+      contentType: contentType,
+      bytes: bytes,
+      cacheControl: 'private, max-age=0',
+    );
     return objectPath;
   }
 
@@ -6475,70 +6442,67 @@ class AppRepository extends ChangeNotifier {
     required String actorId,
     required XFile mediaFile,
   }) async {
-    int size;
+    int sourceSize;
     try {
-      size = await mediaFile.length();
+      sourceSize = await mediaFile.length();
     } catch (e) {
       debugPrint('Chat media size read error: $e');
       return null;
     }
 
-    if (size <= 0 || size > _maxChatImageBytes) {
+    if (sourceSize <= 0 || sourceSize > _maxChatImageBytes) {
       _authError = 'Фотография должна быть не больше 20 МБ';
       notifyListeners();
       return null;
     }
 
-    final mimeType = _mimeTypeForChatMedia(mediaFile.name, mediaFile.path);
-    if (mimeType == null) {
+    late final NormalizedUploadImage image;
+    try {
+      image = await UploadImageNormalizer.fromXFile(mediaFile);
+    } on FormatException {
       _authError = 'Поддерживаются JPEG, PNG, WebP, GIF и HEIC';
       notifyListeners();
       return null;
     }
+    final size = image.bytes.length;
+    if (size <= 0 || size > _maxChatImageBytes) {
+      _authError = 'Фотография должна быть не больше 20 МБ';
+      notifyListeners();
+      return null;
+    }
+    final mimeType = image.contentType;
+    final attachmentName =
+        '${path.basenameWithoutExtension(mediaFile.name)}${image.extension}';
 
     if (!_hasSupabase) {
-      final localUrl = await _inlineImage(mediaFile);
-      if (localUrl == null || localUrl.isEmpty) return null;
+      final localUrl = 'data:$mimeType;base64,${base64Encode(image.bytes)}';
       return ChatAttachment(
         url: localUrl,
-        name: mediaFile.name,
+        name: attachmentName,
         mimeType: mimeType,
         size: size,
       );
     }
 
-    final extension = _chatMediaExtension(mediaFile.name, mediaFile.path);
-    final storagePath = 'threads/$threadId/$actorId/${_uuid.v4()}$extension';
+    final storagePath =
+        'threads/$threadId/$actorId/${_uuid.v4()}${image.extension}';
     final storage = _client.storage.from(_chatMediaBucketName);
     var uploadStarted = false;
     try {
-      final options = FileOptions(
-        cacheControl: '3600',
-        upsert: false,
+      uploadStarted = true;
+      await SecureMediaUploadClient(_client).uploadBinary(
+        bucket: _chatMediaBucketName,
+        objectPath: storagePath,
         contentType: mimeType,
+        bytes: image.bytes,
       );
-      if (kIsWeb || mediaFile.path.isEmpty) {
-        uploadStarted = true;
-        await storage.uploadBinary(
-          storagePath,
-          await mediaFile.readAsBytes(),
-          fileOptions: options,
-        );
-      } else {
-        uploadStarted = true;
-        await storage.upload(
-          storagePath,
-          File(mediaFile.path),
-          fileOptions: options,
-        );
-      }
       final signedUrl = await storage.createSignedUrl(
         storagePath,
         _chatMediaSignedUrlSeconds,
       );
       return ChatAttachment(
         url: signedUrl,
-        name: mediaFile.name,
+        name: attachmentName,
         mimeType: mimeType,
         size: size,
         bucket: _chatMediaBucketName,
@@ -6559,34 +6523,6 @@ class AppRepository extends ChangeNotifier {
       _authError = 'Не удалось загрузить медиа. Проверьте подключение.';
       notifyListeners();
       return null;
-    }
-  }
-
-  String _chatMediaExtension(String name, String fallbackPath) {
-    final fromName = path.extension(name).toLowerCase();
-    if (fromName.isNotEmpty) return fromName;
-    final fromPath = path.extension(fallbackPath).toLowerCase();
-    if (fromPath.isNotEmpty) return fromPath;
-    return '.jpg';
-  }
-
-  String? _mimeTypeForChatMedia(String name, String fallbackPath) {
-    final extension = _chatMediaExtension(name, fallbackPath);
-    switch (extension) {
-      case '.jpg':
-      case '.jpeg':
-        return 'image/jpeg';
-      case '.png':
-        return 'image/png';
-      case '.webp':
-        return 'image/webp';
-      case '.gif':
-        return 'image/gif';
-      case '.heic':
-      case '.heif':
-        return 'image/heic';
-      default:
-        return null;
     }
   }
 

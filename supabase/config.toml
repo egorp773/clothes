@@ -109,6 +109,9 @@ verify_jwt = true
 [functions.send-message-push]
 verify_jwt = true
 
+[functions.create-media-upload]
+verify_jwt = true
+
 # OAuth start/callback endpoints validate provider signatures, a one-time
 # server-side state and an exact redirect allowlist themselves. They cannot rely
 # on a Supabase user JWT before authentication is complete.

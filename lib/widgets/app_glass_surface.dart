@@ -22,6 +22,8 @@ class AppGlassSurface extends StatefulWidget {
     this.interactiveGlint = true,
     this.enableRefraction = true,
     this.blendMode = BlendMode.srcOver,
+    this.glassStyle,
+    this.opaqueInHighContrast = false,
   });
 
   final Widget child;
@@ -46,6 +48,20 @@ class AppGlassSurface extends StatefulWidget {
   /// glint, so false simply disables the interactive optical cue.
   final bool enableRefraction;
   final BlendMode blendMode;
+
+  /// Overrides the ambient glass style for a surface that must retain its
+  /// optical treatment independently of the user's global glass preference.
+  ///
+  /// Most surfaces should inherit [BuildContext.appGlass]. Floating chrome,
+  /// such as the root navigation capsule, can provide a dedicated style so it
+  /// remains readable over arbitrary moving content.
+  final AppGlassStyle? glassStyle;
+
+  /// Replaces backdrop sampling with the style's opaque material tint when the
+  /// platform asks for higher contrast. Flutter does not expose iOS' Reduce
+  /// Transparency flag separately, so high contrast is the closest supported
+  /// accessibility signal and provides the same legibility-first fallback.
+  final bool opaqueInHighContrast;
 
   @override
   State<AppGlassSurface> createState() => _AppGlassSurfaceState();
@@ -125,7 +141,7 @@ class _AppGlassSurfaceState extends State<AppGlassSurface>
 
   @override
   Widget build(BuildContext context) {
-    final glass = context.appGlass;
+    final glass = widget.glassStyle ?? context.appGlass;
     final material = glass.materialFor(widget.role);
     final resolvedPadding = widget.padding ?? material.padding;
     final content = Padding(padding: resolvedPadding, child: widget.child);
@@ -183,7 +199,10 @@ class _AppGlassSurfaceState extends State<AppGlassSurface>
       ],
     );
 
-    final backdrop = widget.grouped
+    final useOpaqueFallback = widget.opaqueInHighContrast && highContrast;
+    final backdrop = useOpaqueFallback
+        ? ColoredBox(color: glass.materialTint, child: glassContent)
+        : widget.grouped
         ? BackdropFilter.grouped(
             filterConfig: filterConfig,
             blendMode: widget.blendMode,

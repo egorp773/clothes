@@ -1,164 +1,146 @@
 import 'package:flutter/material.dart';
 
+import '../core/app_appearance.dart';
 import '../models/user_entitlements.dart';
 
-class SellerActivationScreen extends StatefulWidget {
-  const SellerActivationScreen({
-    super.key,
-    required this.entitlements,
-    required this.onRequestActivation,
-    required this.onRefresh,
-  });
-
-  final UserEntitlements entitlements;
-  final Future<String?> Function() onRequestActivation;
-  final Future<void> Function() onRefresh;
-
-  @override
-  State<SellerActivationScreen> createState() => _SellerActivationScreenState();
+Future<SellerType?> showSellerTypePicker(
+  BuildContext context, {
+  SellerType? selected,
+  String title = 'Тип продавца',
+}) {
+  return showModalBottomSheet<SellerType>(
+    context: context,
+    backgroundColor: Colors.transparent,
+    barrierColor: Colors.black.withValues(alpha: 0.42),
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (context) =>
+        _SellerTypePickerSheet(selected: selected, title: title),
+  );
 }
 
-class _SellerActivationScreenState extends State<SellerActivationScreen> {
-  bool _loading = false;
-  String? _error;
+class _SellerTypePickerSheet extends StatelessWidget {
+  const _SellerTypePickerSheet({required this.selected, required this.title});
 
-  SellerEntitlement get _seller => widget.entitlements.seller;
+  final SellerType? selected;
+  final String title;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Профиль продавца')),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            const Text(
-              'Платформа предоставляет IT-сервис. Вещь продаёт пользователь напрямую покупателю.',
-            ),
-            const SizedBox(height: 20),
-            ListTile(
-              key: const Key('seller-type-private-individual'),
-              leading: const Icon(Icons.radio_button_checked),
-              title: const Text('Частное физическое лицо'),
-              subtitle: const Text(
-                'Продажа собственных вещей без профессиональной торговли',
+    final palette = context.appPalette;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: palette.surfaceRaised,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: palette.border,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
               ),
-            ),
-            for (final type in SellerType.values.where(
-              (value) => value != SellerType.privateIndividual,
-            ))
-              ListTile(
-                key: Key('seller-type-${type.wireName}'),
-                enabled: false,
-                leading: const Icon(Icons.radio_button_unchecked),
-                title: Text(_sellerTypeTitle(type)),
-                subtitle: const Text('В этой версии приложения недоступно'),
-              ),
-            const SizedBox(height: 16),
-            _SellerStatusCard(seller: _seller),
-            if (_error != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: 18),
               Text(
-                _error!,
-                key: const Key('seller-activation-error'),
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+                title,
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.45,
+                  color: palette.ink,
+                ),
               ),
+              const SizedBox(height: 6),
+              Text(
+                'Выбор сохранится в профиле. Его можно изменить в любой момент.',
+                style: TextStyle(
+                  fontFamily: 'Montserrat',
+                  fontSize: 12,
+                  height: 1.4,
+                  fontWeight: FontWeight.w500,
+                  color: palette.muted,
+                ),
+              ),
+              const SizedBox(height: 16),
+              for (final type in SellerType.values) ...[
+                _SellerTypeTile(
+                  type: type,
+                  selected: type == selected,
+                  onTap: () => Navigator.of(context).pop(type),
+                ),
+                if (type != SellerType.values.last) const SizedBox(height: 8),
+              ],
             ],
-            const SizedBox(height: 20),
-            if (_seller.status == SellerAccountStatus.absent)
-              FilledButton(
-                key: const Key('seller-activation-submit'),
-                onPressed: _loading ? null : _request,
-                child: _loading
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Отправить заявку'),
-              )
-            else
-              OutlinedButton(
-                key: const Key('seller-activation-refresh'),
-                onPressed: _loading ? null : _refresh,
-                child: const Text('Обновить статус'),
-              ),
-          ],
+          ),
         ),
       ),
     );
   }
-
-  Future<void> _request() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    final error = await widget.onRequestActivation();
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      _error = error;
-    });
-    if (error == null) await _refresh();
-  }
-
-  Future<void> _refresh() async {
-    setState(() => _loading = true);
-    try {
-      await widget.onRefresh();
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  String _sellerTypeTitle(SellerType type) => switch (type) {
-    SellerType.privateIndividual => 'Частное физическое лицо',
-    SellerType.selfEmployed => 'Самозанятый',
-    SellerType.individualEntrepreneur => 'Индивидуальный предприниматель',
-    SellerType.legalEntity => 'Юридическое лицо',
-  };
 }
 
-class _SellerStatusCard extends StatelessWidget {
-  const _SellerStatusCard({required this.seller});
+class _SellerTypeTile extends StatelessWidget {
+  const _SellerTypeTile({
+    required this.type,
+    required this.selected,
+    required this.onTap,
+  });
 
-  final SellerEntitlement seller;
+  final SellerType type;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final (title, body) = switch (seller.status) {
-      SellerAccountStatus.absent => (
-        'Продавец не активирован',
-        'Для публикации нужна отдельная заявка.',
-      ),
-      SellerAccountStatus.pending => (
-        'Заявка проверяется',
-        'Публикация будет закрыта до серверного подтверждения.',
-      ),
-      SellerAccountStatus.blocked => (
-        'Продажи заблокированы',
-        'Объявления и новые сделки недоступны.',
-      ),
-      SellerAccountStatus.verified
-          when seller.verificationStatus ==
-              SellerVerificationStatus.reviewRequired =>
-        ('Нужна дополнительная проверка', 'Публикация временно закрыта.'),
-      SellerAccountStatus.verified when seller.canSell => (
-        'Продавец подтверждён',
-        'Можно публиковать собственные вещи.',
-      ),
-      _ => ('Публикация недоступна', 'Сервер не подтвердил право продавать.'),
-    };
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 4),
-            Text(body),
-          ],
+    final palette = context.appPalette;
+    return Material(
+      color: selected ? palette.surfaceMuted : Colors.transparent,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        key: Key('seller-type-${type.wireName}'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 54),
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: selected ? palette.ink : palette.border,
+              width: selected ? 1.2 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  type.displayName,
+                  style: TextStyle(
+                    fontFamily: 'Montserrat',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: palette.ink,
+                  ),
+                ),
+              ),
+              Icon(
+                selected ? Icons.check_circle_rounded : Icons.circle_outlined,
+                size: 21,
+                color: selected ? palette.ink : palette.muted,
+              ),
+            ],
+          ),
         ),
       ),
     );

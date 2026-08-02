@@ -1,10 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:path/path.dart' as path;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/product_media_hydration.dart';
+import '../../../core/secure_media_upload_client.dart';
 import '../../../core/supabase_config.dart';
+import '../../../core/upload_image_normalizer.dart';
 import '../../../models/product.dart';
 
 class ListingEditException implements Exception {
@@ -150,50 +151,23 @@ class ListingEditRepository {
     }
     for (var index = 0; index < photos.length; index++) {
       final photo = photos[index];
-      final bytes = await photo.readAsBytes();
-      if (bytes.isEmpty || bytes.length > _maxImageBytes) {
+      final image = await UploadImageNormalizer.fromXFile(photo);
+      if (image.bytes.isEmpty || image.bytes.length > _maxImageBytes) {
         throw const ListingEditException(
           'Каждое фото должно быть не больше 15 МБ',
         );
       }
-      final extension = _safeExtension(photo.name, photo.path);
       final objectPath =
           '$prefix/${index.toString().padLeft(2, '0')}-'
-          '$idempotencyKey$extension';
-      await client.storage
-          .from(_draftBucket)
-          .uploadBinary(
-            objectPath,
-            bytes,
-            fileOptions: FileOptions(
-              contentType: _contentType(extension),
-              cacheControl: '3600',
-              upsert: false,
-            ),
-          );
+          '$idempotencyKey${image.extension}';
+      await SecureMediaUploadClient(client).uploadBinary(
+        bucket: _draftBucket,
+        objectPath: objectPath,
+        contentType: image.contentType,
+        bytes: image.bytes,
+      );
     }
   }
-
-  static String _safeExtension(String name, String sourcePath) {
-    final extension = path
-        .extension(name.isNotEmpty ? name : sourcePath)
-        .toLowerCase();
-    return switch (extension) {
-      '.jpg' || '.jpeg' => '.jpg',
-      '.png' => '.png',
-      '.webp' => '.webp',
-      _ => throw const ListingEditException(
-        'Поддерживаются только JPEG, PNG и WebP',
-      ),
-    };
-  }
-
-  static String _contentType(String extension) => switch (extension) {
-    '.jpg' => 'image/jpeg',
-    '.png' => 'image/png',
-    '.webp' => 'image/webp',
-    _ => 'application/octet-stream',
-  };
 
   static String _friendlyError(String code) {
     if (code.contains('listing_has_order_history')) {

@@ -11,6 +11,38 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('profile stays transparent and clears the floating iPhone nav', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.viewPadding = const FakeViewPadding(top: 47, bottom: 34);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewPadding);
+
+    await tester.pumpWidget(MaterialApp(home: _profileScreen()));
+
+    final profile = find.byType(ProfileScreen);
+    expect(
+      find.descendant(of: profile, matching: find.byType(Scaffold)),
+      findsNothing,
+    );
+    final material = tester.widget<Material>(
+      find.descendant(of: profile, matching: find.byType(Material)).first,
+    );
+    expect(material.type, MaterialType.transparency);
+
+    final listView = tester.widget<ListView>(
+      find.descendant(of: profile, matching: find.byType(ListView)).first,
+    );
+    final padding = listView.padding! as EdgeInsets;
+    expect(padding.top, 59);
+    expect(padding.bottom, 110);
+    expect(
+      listView.keyboardDismissBehavior,
+      ScrollViewKeyboardDismissBehavior.onDrag,
+    );
+  });
+
   testWidgets(
     'settings opens its own screen and recent history can be cleared',
     (tester) async {

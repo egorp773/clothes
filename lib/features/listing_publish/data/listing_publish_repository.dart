@@ -11,6 +11,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/supabase_config.dart';
+import '../../../core/secure_media_upload_client.dart';
+import '../../../core/upload_image_normalizer.dart';
 import '../models/listing_draft.dart';
 
 class ListingPublishException implements Exception {
@@ -96,14 +98,15 @@ class ListingPublishRepository {
   }) async {
     final id = const Uuid().v4();
     try {
-      final bytes = await source.readAsBytes();
+      final image = await UploadImageNormalizer.fromXFile(source);
+      final bytes = image.bytes;
       if (bytes.isEmpty || bytes.length > _maxImageBytes) {
         throw const ListingPublishException(
           'Фотография должна быть не больше 15 МБ',
         );
       }
-      final extension = supportedImageExtension(bytes);
-      final mime = _mimeTypeForExtension(extension);
+      final extension = image.extension;
+      final mime = image.contentType;
       if (kIsWeb) {
         return ListingPhoto(
           id: id,
@@ -173,20 +176,21 @@ class ListingPublishRepository {
 
     photo.uploadStatus = ListingPhotoUploadStatus.uploading;
     try {
-      final bytes = await _readPhotoBytes(photo.localPath);
-      final extension = supportedImageExtension(bytes);
+      final normalized = await UploadImageNormalizer.fromBytes(
+        await _readPhotoBytes(photo.localPath),
+        fileName: photo.localPath,
+      );
+      final extension = supportedImageExtension(normalized.bytes);
       final storagePath = canonicalDraftStoragePath(
         userId: user.id,
         listingId: draft.id,
         fileName: '${photo.id}$extension',
       );
-      await client.storage
-          .from(_bucketName)
-          .uploadBinary(
-            storagePath,
-            bytes,
-            fileOptions: const FileOptions(cacheControl: '3600', upsert: false),
-          );
+      await _uploadDraftPhotoIdempotently(
+        client: client,
+        storagePath: storagePath,
+        image: normalized,
+      );
       photo.storagePath = storagePath;
       // A private object path is an upload receipt, not a display URL. The
       // publish Edge function promotes/copies it and returns display URLs.
@@ -199,6 +203,19 @@ class ListingPublishRepository {
       debugPrint('Listing photo upload error: $error\n$stackTrace');
       return false;
     }
+  }
+
+  Future<void> _uploadDraftPhotoIdempotently({
+    required SupabaseClient client,
+    required String storagePath,
+    required NormalizedUploadImage image,
+  }) async {
+    await SecureMediaUploadClient(client).uploadBinary(
+      bucket: _bucketName,
+      objectPath: storagePath,
+      contentType: image.contentType,
+      bytes: image.bytes,
+    );
   }
 
   Future<void> deletePhoto(ListingDraft draft, ListingPhoto photo) async {
@@ -621,17 +638,6 @@ class ListingPublishRepository {
       );
       if (await directory.exists()) await directory.delete(recursive: true);
     } catch (_) {}
-  }
-
-  static String _mimeTypeForExtension(String extension) {
-    switch (extension) {
-      case '.png':
-        return 'image/png';
-      case '.webp':
-        return 'image/webp';
-      default:
-        return 'image/jpeg';
-    }
   }
 
   /// Storage and the authoritative publication function accept exactly these

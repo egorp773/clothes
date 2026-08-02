@@ -160,13 +160,50 @@ enum SellerType {
 
   final String wireName;
 
-  bool get isEnabledInCurrentRelease => this == privateIndividual;
+  bool get isEnabledInCurrentRelease => true;
+
+  String get displayName => switch (this) {
+    SellerType.privateIndividual => 'Частное лицо',
+    SellerType.selfEmployed => 'Самозанятый',
+    SellerType.individualEntrepreneur => 'ИП',
+    SellerType.legalEntity => 'Юридическое лицо',
+  };
 
   static SellerType? tryParse(Object? value) {
     final normalized = value?.toString().trim().toLowerCase() ?? '';
     return SellerType.values
         .where((type) => type.wireName == normalized)
         .firstOrNull;
+  }
+}
+
+enum PublishBlockReason {
+  missingBirthDate('missing_birth_date'),
+  underage('underage'),
+  sellerTypeRequired('seller_type_required'),
+  blocked('blocked'),
+  reviewRequired('review_required'),
+  unresolved('unresolved'),
+  unknown('unknown');
+
+  const PublishBlockReason(this.wireName);
+
+  final String wireName;
+
+  static PublishBlockReason? tryParse(Object? value) {
+    final normalized = value?.toString().trim().toLowerCase() ?? '';
+    return switch (normalized) {
+      'missing_birth_date' || 'birth_date_required' => missingBirthDate,
+      'underage' || 'age_restricted' || 'age_required' => underage,
+      'seller_type_required' || 'seller_required' => sellerTypeRequired,
+      'blocked' || 'sales_blocked' || 'moderation_blocked' => blocked,
+      'review_required' ||
+      'moderation_review' ||
+      'under_review' => reviewRequired,
+      'unresolved' || 'unavailable' => unresolved,
+      'unknown' => unknown,
+      _ => null,
+    };
   }
 }
 
@@ -266,9 +303,8 @@ class SellerEntitlement {
 
   bool get canSell =>
       serverCanPublish &&
-      type?.isEnabledInCurrentRelease == true &&
-      status == SellerAccountStatus.verified &&
-      verificationStatus == SellerVerificationStatus.verified &&
+      type != null &&
+      status != SellerAccountStatus.blocked &&
       moderationStatus == SellerModerationStatus.clear &&
       !salesBlocked &&
       !publicationsHidden;
@@ -299,30 +335,39 @@ class SellerEntitlement {
 class UserEntitlements {
   UserEntitlements({
     required this.isResolved,
+    required this.accountActive,
     required this.legalOnboardingComplete,
     required this.ageVerified,
     required this.birthDate,
     required this.verificationMethod,
     required this.documents,
     required this.seller,
-  });
+    bool? canPublish,
+    this.publishBlockReason,
+  }) : canPublish = canPublish ?? seller.canSell;
 
   UserEntitlements.unavailable()
     : isResolved = false,
+      accountActive = false,
       legalOnboardingComplete = false,
       ageVerified = false,
       birthDate = null,
       verificationMethod = '',
       documents = const [],
-      seller = const SellerEntitlement.absent();
+      seller = const SellerEntitlement.absent(),
+      canPublish = false,
+      publishBlockReason = PublishBlockReason.unresolved;
 
   final bool isResolved;
+  final bool accountActive;
   final bool legalOnboardingComplete;
   final bool ageVerified;
   final DateTime? birthDate;
   final String verificationMethod;
   final List<LegalDocumentRequirement> documents;
   final SellerEntitlement seller;
+  final bool canPublish;
+  final PublishBlockReason? publishBlockReason;
 
   bool get hasUsableMandatoryDocuments {
     for (final type in LegalDocumentType.values.where(
@@ -340,14 +385,10 @@ class UserEntitlements {
           .where((document) => document.type.isMandatory)
           .every((document) => document.isAccepted);
 
-  bool get canUseMarketplace =>
-      isResolved &&
-      legalOnboardingComplete &&
-      allMandatoryDocumentsAccepted &&
-      ageVerified;
+  bool get canUseMarketplace => isResolved && accountActive;
 
   bool get canBuy => canUseMarketplace;
-  bool get canSell => canUseMarketplace && seller.canSell;
+  bool get canSell => isResolved && canPublish;
 
   factory UserEntitlements.fromJson(Map<String, dynamic> source) {
     final json = _unwrapMap(source);
@@ -396,12 +437,33 @@ class UserEntitlements {
         legalRaw['legal_onboarding_complete'] == true ||
         legalRaw['mandatory_consents_complete'] == true ||
         legalRaw['completed'] == true;
+    final accountStatus = (json['account_status'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final accountActive = json['account_active'] is bool
+        ? json['account_active'] == true
+        : accountStatus.isNotEmpty
+        ? accountStatus == 'active'
+        : json['buyer_enabled'] is bool
+        ? json['buyer_enabled'] == true
+        : legalComplete && ageRaw['age_verified'] == true;
     final birthDate = DateTime.tryParse(
       (ageRaw['birth_date'] ?? '').toString(),
     );
+    final rawCanPublish = json['can_publish'] ?? json['seller_can_publish'];
+    final canPublish = rawCanPublish is bool ? rawCanPublish : seller.canSell;
+    final serverReason = PublishBlockReason.tryParse(
+      json['publish_block_reason'] ?? json['seller_publish_block_reason'],
+    );
+    final derivedReason = canPublish
+        ? null
+        : serverReason ??
+              _derivePublishBlockReason(birthDate: birthDate, seller: seller);
 
     return UserEntitlements(
       isResolved: true,
+      accountActive: accountActive,
       legalOnboardingComplete: legalComplete,
       ageVerified: ageRaw['age_verified'] == true,
       birthDate: birthDate,
@@ -410,7 +472,28 @@ class UserEntitlements {
           .trim(),
       documents: List.unmodifiable(documents),
       seller: seller,
+      canPublish: canPublish,
+      publishBlockReason: derivedReason,
     );
+  }
+
+  static PublishBlockReason _derivePublishBlockReason({
+    required DateTime? birthDate,
+    required SellerEntitlement seller,
+  }) {
+    if (birthDate == null) return PublishBlockReason.missingBirthDate;
+    if (!isAtLeast18(birthDate)) return PublishBlockReason.underage;
+    if (seller.type == null) return PublishBlockReason.sellerTypeRequired;
+    if (seller.status == SellerAccountStatus.blocked ||
+        seller.moderationStatus == SellerModerationStatus.blocked ||
+        seller.salesBlocked) {
+      return PublishBlockReason.blocked;
+    }
+    if (seller.verificationStatus == SellerVerificationStatus.reviewRequired ||
+        seller.moderationStatus == SellerModerationStatus.review) {
+      return PublishBlockReason.reviewRequired;
+    }
+    return PublishBlockReason.unknown;
   }
 
   static Map<String, dynamic> _unwrapMap(Map<String, dynamic> source) {

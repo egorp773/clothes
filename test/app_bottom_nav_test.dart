@@ -2,6 +2,7 @@ import 'package:clothes/core/app_appearance.dart';
 import 'package:clothes/models/profile_feature.dart';
 import 'package:clothes/screens/catalog_screen.dart';
 import 'package:clothes/widgets/app_bottom_nav.dart';
+import 'package:clothes/widgets/app_glass_surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -577,44 +578,85 @@ void main() {
     expect(compactChanges, <bool>[true, false, true, true, false]);
   });
 
-  testWidgets('glass-off navigation keeps stable fallback and touch targets', (
+  testWidgets(
+    'navigation keeps dedicated navy glass when global glass is off',
+    (tester) async {
+      _setViewport(tester, const Size(320, 568));
+      final compact = ValueNotifier<bool>(false);
+      addTearDown(compact.dispose);
+      final selected = <int>[];
+
+      await _pumpNavigation(
+        tester,
+        compact: compact,
+        appearance: const AppAppearanceSettings(liquidGlassEnabled: false),
+        onTabSelected: selected.add,
+      );
+
+      expect(find.byType(BackdropFilter), findsOneWidget);
+      expect(
+        tester.getSize(find.byKey(const Key('app-bottom-nav-panel'))),
+        const Size(296, 60),
+      );
+      final surface = tester.widget<AppGlassSurface>(
+        find.descendant(
+          of: find.byKey(const Key('app-bottom-nav-panel')),
+          matching: find.byType(AppGlassSurface),
+        ),
+      );
+      expect(surface.grouped, isFalse);
+      expect(surface.opaqueInHighContrast, isTrue);
+      expect(surface.glassStyle?.enabled, isTrue);
+      expect(surface.glassStyle?.materialTint, const Color(0xFF0F203F));
+      expect(surface.glassStyle?.navigation.blurSigma, 34);
+      expect(surface.glassStyle?.navigation.tintOpacity, 0.70);
+
+      await tester.tap(find.byKey(const Key('bottom-nav-item-4')));
+      await tester.pump();
+      expect(selected, <int>[4]);
+
+      compact.value = true;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(
+        tester.getSize(find.byKey(const Key('app-bottom-nav-panel'))),
+        const Size(264, 52),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('navigation uses opaque dark navy fallback in high contrast', (
     tester,
   ) async {
-    _setViewport(tester, const Size(320, 568));
+    _setViewport(tester, const Size(390, 844));
     final compact = ValueNotifier<bool>(false);
     addTearDown(compact.dispose);
-    final selected = <int>[];
 
     await _pumpNavigation(
       tester,
       compact: compact,
       appearance: const AppAppearanceSettings(liquidGlassEnabled: false),
-      onTabSelected: selected.add,
+      brightness: Brightness.dark,
+      highContrast: true,
     );
 
     expect(find.byType(BackdropFilter), findsNothing);
+    final surface = tester.widget<AppGlassSurface>(
+      find.descendant(
+        of: find.byKey(const Key('app-bottom-nav-panel')),
+        matching: find.byType(AppGlassSurface),
+      ),
+    );
+    expect(surface.glassStyle?.materialTint, const Color(0xFF142A54));
+    expect(surface.glassStyle?.navigation.tintOpacity, 0.72);
     expect(
-      tester.getSize(find.byKey(const Key('app-bottom-nav-panel'))),
-      const Size(296, 60),
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is ColoredBox && widget.color == const Color(0xFF142A54),
+      ),
+      findsOneWidget,
     );
-    final material = tester.widget<DecoratedBox>(
-      find.byKey(const Key('app-bottom-nav-material')),
-    );
-    final decoration = material.decoration as BoxDecoration;
-    expect(decoration.color, AppPalette.light.surface);
-
-    await tester.tap(find.byKey(const Key('bottom-nav-item-4')));
-    await tester.pump();
-    expect(selected, <int>[4]);
-
-    compact.value = true;
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
-    expect(
-      tester.getSize(find.byKey(const Key('app-bottom-nav-panel'))),
-      const Size(264, 52),
-    );
-    expect(tester.takeException(), isNull);
   });
 
   testWidgets('chat unread badge is hidden at zero and exposes semantics', (
@@ -711,14 +753,16 @@ Future<void> _pumpNavigation(
   bool disableAnimations = false,
   int unreadCount = 0,
   Brightness brightness = Brightness.light,
+  bool highContrast = false,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: buildAppTheme(brightness, settings: appearance),
       builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(
-          context,
-        ).copyWith(disableAnimations: disableAnimations),
+        data: MediaQuery.of(context).copyWith(
+          disableAnimations: disableAnimations,
+          highContrast: highContrast,
+        ),
         child: child!,
       ),
       home: BackdropGroup(
