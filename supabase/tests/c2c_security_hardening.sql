@@ -394,7 +394,7 @@ update public.products
 set status = 'published', is_hidden = false
 where id = '30000000-0000-0000-0000-000000000001';
 update public.seller_accounts
-set status = 'pending', verification_status = 'review_required'
+set status = 'blocked', verification_status = 'review_required'
 where user_id = '10000000-0000-0000-0000-000000000001';
 
 select extensions.is(
@@ -404,7 +404,7 @@ select extensions.is(
     where product.id = '30000000-0000-0000-0000-000000000001'
   ),
   true,
-  'seller eligibility degradation atomically hides published listings'
+  'seller blocking atomically hides published listings'
 );
 
 update public.seller_accounts
